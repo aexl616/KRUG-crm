@@ -30,9 +30,12 @@ const defaultState = {
       employee: "Сотрудник"
     }
   ],
+  bookings: [],
   payouts: [],
   payoutResetVersion: PAYOUT_RESET_VERSION
 };
+
+const bookingStatuses = ["заявка", "подтверждено", "в процессе", "завершено", "отменено"];
 
 const budgetWallets = ["общак", "AE XL", "AURA 13", "Даня", "Даня в кепке"];
 const serviceCatalog = [
@@ -140,7 +143,11 @@ let state = loadState();
 state = normalizeState(state);
 let view = "dashboard";
 let editingPaymentId = null;
+let editingBookingId = null;
 let clientFilter = "";
+let bookingDateFilter = "";
+let bookingStatusFilter = "";
+let bookingServiceFilter = "";
 let selectedClientName = null;
 let payoutModalOpen = false;
 
@@ -175,10 +182,26 @@ function normalizeState(nextState) {
       employee: payment.employee || soundEngineer || performer || ""
     };
   });
+  const bookings = (nextState.bookings || []).map((booking) => ({
+    id: booking.id || crypto.randomUUID(),
+    date: booking.date || new Date().toISOString().slice(0, 10),
+    time: booking.time || "12:00",
+    duration: booking.duration || "1 час",
+    client: booking.client || "",
+    phone: booking.phone || "",
+    telegram: booking.telegram || "",
+    service: serviceAliases[booking.service] || booking.service || firstServiceForCategory("recording"),
+    amount: Number(booking.amount || booking.cost || 0),
+    employee: booking.employee || nextState.users?.[0]?.name || "",
+    comment: booking.comment || "",
+    status: bookingStatuses.includes(booking.status) ? booking.status : "заявка",
+    paymentId: booking.paymentId || ""
+  }));
   return {
     ...nextState,
     services: [...services],
     payments,
+    bookings,
     payouts: shouldResetPayouts ? [] : nextState.payouts || [],
     payoutResetVersion: PAYOUT_RESET_VERSION
   };
@@ -246,6 +269,11 @@ function clientSuggestions(query) {
 }
 
 function render() {
+  if (view === "clientBooking") {
+    renderClientBooking();
+    return;
+  }
+
   if (!currentUser()) {
     renderLogin();
     return;
@@ -257,6 +285,7 @@ function render() {
       <section class="content">
         ${renderTopbar()}
         ${view === "dashboard" ? renderDashboard() : ""}
+        ${view === "bookings" ? renderBookings() : ""}
         ${view === "payments" ? renderPayments() : ""}
         ${view === "clients" ? renderClients() : ""}
         ${view === "budget" ? renderBudget() : ""}
@@ -295,6 +324,7 @@ function renderLogin() {
             <input name="password" type="password" autocomplete="current-password" required value="admin123" />
           </div>
           <button class="btn" type="submit">Войти</button>
+          <button class="btn secondary" type="button" data-view="clientBooking">Клиентская запись</button>
           <div class="hint">Админ: admin / admin123. Сотрудник: staff / staff123.</div>
         </div>
       </form>
@@ -311,6 +341,106 @@ function renderLogin() {
     }
     state.sessionUserId = user.id;
     saveState();
+    render();
+  });
+
+  document.querySelector("[data-view='clientBooking']")?.addEventListener("click", () => {
+    view = "clientBooking";
+    render();
+  });
+}
+
+function renderClientBooking() {
+  const selectedService = firstServiceForCategory("recording");
+  const priceRule = servicePriceRule(selectedService);
+  app.innerHTML = `
+    <section class="login-screen client-booking-screen">
+      <form class="card login-card client-booking-card" id="clientBookingForm">
+        <div class="brand">
+          <img class="brand-mark" src="krug-logo.svg" alt="КРУГ" />
+          <div>
+            <strong>КРУГ</strong>
+            <span>клиентская запись</span>
+          </div>
+        </div>
+        <h1>Записаться в студию</h1>
+        <div class="form-grid">
+          <div class="field full">
+            <label>Услуга</label>
+            <select name="service" id="clientBookingService" required>
+              ${state.services.map((service) => `<option ${service === selectedService ? "selected" : ""}>${service}</option>`).join("")}
+            </select>
+          </div>
+          <div class="field">
+            <label>Дата</label>
+            <input name="date" type="date" required value="${new Date().toISOString().slice(0, 10)}" />
+          </div>
+          <div class="field">
+            <label>Время</label>
+            <input name="time" type="time" required value="12:00" />
+          </div>
+          <div class="field">
+            <label>Имя</label>
+            <input name="client" required />
+          </div>
+          <div class="field">
+            <label>Телефон</label>
+            <input name="phone" />
+          </div>
+          <div class="field">
+            <label>Telegram</label>
+            <input name="telegram" />
+          </div>
+          <div class="field">
+            <label>Длительность</label>
+            <input name="duration" value="1 час" />
+          </div>
+          <div class="field full">
+            <label>Комментарий</label>
+            <textarea name="comment"></textarea>
+          </div>
+          <button class="btn" type="submit">Отправить заявку</button>
+          <button class="btn secondary" type="button" data-action="backFromClientBooking">${currentUser() ? "Вернуться в CRM" : "Войти в CRM"}</button>
+        </div>
+        <p class="muted client-booking-note">После отправки заявка появится у студии в разделе “Записи”.</p>
+      </form>
+    </section>
+  `;
+
+  document.querySelector("#clientBookingService")?.addEventListener("change", (event) => {
+    const rule = servicePriceRule(event.target.value);
+    document.querySelector("#clientBookingForm").dataset.amount = String(rule.price || 0);
+  });
+  document.querySelector("#clientBookingForm").dataset.amount = String(priceRule.price || 0);
+  document.querySelector("#clientBookingForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(event.target));
+    if (!data.phone.trim() && !data.telegram.trim()) {
+      alert("Укажи телефон или telegram, чтобы студия могла связаться.");
+      return;
+    }
+    state.bookings.push({
+      id: crypto.randomUUID(),
+      date: data.date,
+      time: data.time,
+      duration: data.duration.trim() || "1 час",
+      client: data.client.trim(),
+      phone: data.phone.trim(),
+      telegram: data.telegram.trim(),
+      service: data.service,
+      amount: Number(event.target.dataset.amount || 0),
+      employee: "",
+      comment: data.comment.trim(),
+      status: "заявка",
+      paymentId: ""
+    });
+    saveState();
+    alert("Заявка отправлена. Студия увидит её в разделе “Записи”.");
+    event.target.reset();
+    renderClientBooking();
+  });
+  document.querySelector("[data-action='backFromClientBooking']")?.addEventListener("click", () => {
+    view = currentUser() ? "bookings" : "dashboard";
     render();
   });
 }
@@ -338,6 +468,7 @@ function renderSidebar() {
 function navButtons() {
   const items = [
     ["dashboard", "Главная"],
+    ["bookings", "Записи"],
     ["payments", "Платежи"],
     ["clients", "Клиенты"],
     ["budget", "Бюджет"],
@@ -362,6 +493,8 @@ function renderTopbar() {
         <p class="muted">${pageSubtitle()}</p>
       </div>
       <div class="actions">
+        <button class="btn secondary" data-view="clientBooking">Клиентская запись</button>
+        <button class="btn" data-view="bookings">+ Запись</button>
         <button class="btn" data-view="payments">+ Доход</button>
         ${isAdmin() ? '<button class="btn secondary" data-view="settings">Настройки</button>' : ""}
       </div>
@@ -372,6 +505,7 @@ function renderTopbar() {
 function pageTitle() {
   return {
     dashboard: "Дашборд",
+    bookings: "Записи",
     payments: "Платежи",
     clients: "Клиенты",
     budget: "Бюджет",
@@ -383,6 +517,7 @@ function pageTitle() {
 function pageSubtitle() {
   return {
     dashboard: "Ключевые цифры по доходу студии.",
+    bookings: "Заявки, расписание и статусы студийных записей.",
     payments: "Добавление, поиск и редактирование оплат.",
     clients: "База клиентов, история оплат и посещений.",
     budget: "Пять копилок студии и распределение дохода по правилам.",
@@ -797,6 +932,7 @@ function renderDashboard() {
       <section class="card section wide-card">
         <h2>Быстрые действия</h2>
         <div class="quick-actions">
+          <button class="quick-action" data-view="bookings"><span>○</span>Записи</button>
           <button class="quick-action" data-view="payments"><span>+</span>Новый платёж</button>
           <button class="quick-action" data-view="clients"><span>◎</span>Клиенты</button>
           <button class="quick-action" data-view="budget"><span>₽</span>Бюджет</button>
@@ -804,6 +940,152 @@ function renderDashboard() {
         </div>
       </section>
     </div>
+  `;
+}
+
+function filteredBookings() {
+  return [...state.bookings]
+    .sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`))
+    .filter((booking) => !bookingDateFilter || booking.date === bookingDateFilter)
+    .filter((booking) => !bookingStatusFilter || booking.status === bookingStatusFilter)
+    .filter((booking) => !bookingServiceFilter || booking.service === bookingServiceFilter);
+}
+
+function renderBookings() {
+  const bookings = filteredBookings();
+  const services = [...new Set([...state.services, ...state.bookings.map((booking) => booking.service).filter(Boolean)])];
+
+  return `
+    <div class="grid two-col bookings-page">
+      <section class="card section">
+        <div class="toolbar booking-filters">
+          <input id="bookingDateFilter" type="date" value="${bookingDateFilter}" />
+          <select id="bookingStatusFilter">
+            <option value="">Все статусы</option>
+            ${bookingStatuses.map((status) => `<option value="${status}" ${bookingStatusFilter === status ? "selected" : ""}>${status}</option>`).join("")}
+          </select>
+          <select id="bookingServiceFilter">
+            <option value="">Все услуги</option>
+            ${services.map((service) => `<option value="${service}" ${bookingServiceFilter === service ? "selected" : ""}>${service}</option>`).join("")}
+          </select>
+        </div>
+        <div class="booking-list">
+          ${bookings.map(renderBookingCard).join("") || '<p class="muted">Записей пока нет</p>'}
+        </div>
+      </section>
+      ${renderBookingForm()}
+    </div>
+  `;
+}
+
+function renderBookingCard(booking) {
+  const canConfirm = booking.status === "заявка";
+  const canStart = ["заявка", "подтверждено"].includes(booking.status);
+  const canComplete = booking.status !== "завершено" && booking.status !== "отменено";
+  const canCancel = booking.status !== "завершено" && booking.status !== "отменено";
+  return `
+    <article class="booking-card">
+      <div class="booking-card-head">
+        <div>
+          <h3>${booking.client || "Без имени"}</h3>
+          <span class="muted">${formatDate(booking.date)} в ${booking.time} · ${booking.duration}</span>
+        </div>
+        <span class="status-pill status-${booking.status.replaceAll(" ", "-")}">${booking.status}</span>
+      </div>
+      <div class="booking-meta">
+        <span>${booking.phone || "телефон не указан"}</span>
+        <span>${booking.telegram || "telegram не указан"}</span>
+        <span>${booking.employee || "сотрудник не указан"}</span>
+      </div>
+      <div class="booking-service">
+        <span class="pill">${booking.service}</span>
+        <strong>${money(booking.amount)}</strong>
+      </div>
+      ${booking.comment ? `<p class="muted booking-comment">${booking.comment}</p>` : ""}
+      <div class="row-actions booking-actions">
+        ${canConfirm ? `<button class="btn secondary" data-booking-status="${booking.id}" data-status="подтверждено">Подтвердить</button>` : ""}
+        ${canStart ? `<button class="btn secondary" data-booking-status="${booking.id}" data-status="в процессе">Начать</button>` : ""}
+        ${canComplete ? `<button class="btn" data-booking-status="${booking.id}" data-status="завершено">Завершить</button>` : ""}
+        ${canCancel ? `<button class="btn danger" data-booking-status="${booking.id}" data-status="отменено">Отменить</button>` : ""}
+        <button class="icon-btn" title="Редактировать" data-edit-booking="${booking.id}">✎</button>
+        ${isAdmin() ? `<button class="icon-btn" title="Удалить" data-delete-booking="${booking.id}">×</button>` : ""}
+      </div>
+    </article>
+  `;
+}
+
+function renderBookingForm() {
+  const booking = state.bookings.find((item) => item.id === editingBookingId) || {};
+  const selectedCategory = booking.service ? classifyService(booking.service) : "recording";
+  const normalizedCategory = selectedCategory === "unknown" ? "custom" : selectedCategory;
+  const categoryServices = servicesForCategory(normalizedCategory);
+  if (booking.service && !categoryServices.includes(booking.service)) categoryServices.push(booking.service);
+  const selectedService = categoryServices.includes(booking.service) ? booking.service : firstServiceForCategory(normalizedCategory);
+  const priceRule = servicePriceRule(selectedService);
+  const amountValue = booking.amount || priceRule.price || "";
+  const defaultUser = currentUser()?.name || state.users[0]?.name || "";
+
+  return `
+    <section class="card section">
+      <h2>${editingBookingId ? "Редактировать запись" : "Добавить запись"}</h2>
+      <form id="bookingForm" class="form-grid">
+        <input type="hidden" name="id" value="${booking.id || ""}" />
+        <div class="field">
+          <label>Имя клиента</label>
+          <div class="client-picker">
+            <input name="client" id="clientInput" autocomplete="off" required value="${booking.client || ""}" />
+            <div class="client-suggestions" id="clientSuggestions"></div>
+          </div>
+        </div>
+        <div class="field">
+          <label>Телефон</label>
+          <input name="phone" value="${booking.phone || ""}" />
+        </div>
+        <div class="field">
+          <label>Telegram</label>
+          <input name="telegram" value="${booking.telegram || ""}" />
+        </div>
+        <div class="field">
+          <label>Категория</label>
+          <select name="category" id="categorySelect">${serviceCategories.map((category) => `<option value="${category.key}" ${normalizedCategory === category.key ? "selected" : ""}>${category.label}</option>`).join("")}</select>
+        </div>
+        <div class="field full">
+          <label>Услуга</label>
+          <select name="service" id="serviceSelect" required>${categoryServices.map((service) => `<option ${selectedService === service ? "selected" : ""}>${service}</option>`).join("")}</select>
+        </div>
+        <div class="field">
+          <label>Дата</label>
+          <input name="date" type="date" required value="${booking.date || new Date().toISOString().slice(0, 10)}" />
+        </div>
+        <div class="field">
+          <label>Время</label>
+          <input name="time" type="time" required value="${booking.time || "12:00"}" />
+        </div>
+        <div class="field">
+          <label>Длительность</label>
+          <input name="duration" value="${booking.duration || "1 час"}" />
+        </div>
+        <div class="field">
+          <label>Стоимость</label>
+          <input name="amount" id="amountInput" type="number" min="${priceRule.min}" step="1" required value="${amountValue}" ${priceRule.mode === "fixed" ? "readonly" : ""} />
+          <span class="field-note" id="priceHint">${priceRule.hint}</span>
+        </div>
+        <div class="field">
+          <label>Сотрудник</label>
+          <select name="employee">${state.users.map((user) => `<option ${((booking.employee || defaultUser) === user.name) ? "selected" : ""}>${user.name}</option>`).join("")}</select>
+        </div>
+        <div class="field">
+          <label>Статус</label>
+          <select name="status">${bookingStatuses.map((status) => `<option ${((booking.status || "подтверждено") === status) ? "selected" : ""}>${status}</option>`).join("")}</select>
+        </div>
+        <div class="field full">
+          <label>Комментарий</label>
+          <textarea name="comment">${booking.comment || ""}</textarea>
+        </div>
+        <button class="btn" type="submit">${editingBookingId ? "Сохранить" : "Добавить"}</button>
+        ${editingBookingId ? '<button class="btn secondary" type="button" data-action="cancelBookingEdit">Отмена</button>' : ""}
+      </form>
+    </section>
   `;
 }
 
@@ -936,7 +1218,14 @@ function filteredPayments() {
 }
 
 function renderClients() {
-  const clients = sortedEntries(groupSum(state.payments, (item) => item.client)).filter(([name]) => !clientFilter || name.toLowerCase().includes(clientFilter.toLowerCase()));
+  const clientNames = [...new Set([
+    ...state.payments.map((item) => item.client),
+    ...state.bookings.map((item) => item.client)
+  ].map((name) => String(name || "").trim()).filter(Boolean))];
+  const clients = clientNames
+    .map((name) => [name, clientStats(name).total])
+    .sort((a, b) => b[1] - a[1])
+    .filter(([name]) => !clientFilter || name.toLowerCase().includes(clientFilter.toLowerCase()));
   if (selectedClientName) return renderClientDetail(selectedClientName);
 
   return `
@@ -954,14 +1243,14 @@ function renderClients() {
 }
 
 function renderClientCard(name, total) {
-  const history = state.payments.filter((item) => item.client === name).sort((a, b) => b.date.localeCompare(a.date));
-  const last = history[0];
+  const stats = clientStats(name);
+  const lastLabel = stats.lastDate ? formatDate(stats.lastDate) : "пока нет";
   return `
     <button class="list-item client-item" data-client="${encodeURIComponent(name)}">
       <div>
         <h3>${name}</h3>
-        <span class="muted">Посещений: ${history.length}. Последний визит: ${formatDate(last.date)}</span>
-        <div class="muted">Последний платёж: ${money(last.amount)} · ${last.service}</div>
+        <span class="muted">Посещений: ${stats.visits}. Последний визит: ${lastLabel}</span>
+        <div class="muted">Записей в истории: ${stats.bookings.length}</div>
       </div>
       <strong>${money(total)}</strong>
     </button>
@@ -969,11 +1258,12 @@ function renderClientCard(name, total) {
 }
 
 function renderClientDetail(name) {
-  const history = state.payments.filter((item) => item.client === name).sort((a, b) => b.date.localeCompare(a.date));
-  const total = history.reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  const last = history[0];
+  const stats = clientStats(name);
+  const history = stats.payments.sort((a, b) => b.date.localeCompare(a.date));
+  const bookingHistory = stats.bookings.sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`));
+  const total = stats.total;
 
-  if (!history.length) {
+  if (!history.length && !bookingHistory.length) {
     selectedClientName = null;
     return renderClients();
   }
@@ -987,13 +1277,19 @@ function renderClientDetail(name) {
       <div class="client-profile">
         <div>
           <h2>${name}</h2>
-          <p class="muted">Последний визит: ${formatDate(last.date)}. Последний платёж: ${money(last.amount)}.</p>
+          <p class="muted">Последний визит: ${stats.lastDate ? formatDate(stats.lastDate) : "пока нет"}. Общая сумма оплат: ${money(total)}.</p>
         </div>
         <div class="client-profile-stats">
-          <article><span>Всего</span><strong>${money(total)}</strong></article>
-          <article><span>Посещений</span><strong>${history.length}</strong></article>
+          <article><span>Оплаты</span><strong>${money(total)}</strong></article>
+          <article><span>Посещений</span><strong>${stats.visits}</strong></article>
+          <article><span>Записей</span><strong>${bookingHistory.length}</strong></article>
         </div>
       </div>
+      <h3>История записей клиента</h3>
+      <div class="booking-list client-booking-history">
+        ${bookingHistory.map(renderBookingCard).join("") || '<p class="muted">Записей пока нет</p>'}
+      </div>
+      <h3>История оплат</h3>
       <div class="table-wrap">
         <table>
           <thead>
@@ -1357,11 +1653,81 @@ function renderBars(entries) {
   return `<div class="bars">${entries.map(([label, total]) => `<div class="bar-row"><span>${label}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.max(6, (total / max) * 100)}%"></div></div><strong>${money(total)}</strong></div>`).join("") || "Данных пока нет"}</div>`;
 }
 
+function bookingFromForm(data) {
+  return {
+    id: data.id || crypto.randomUUID(),
+    date: data.date,
+    time: data.time,
+    duration: data.duration.trim() || "1 час",
+    client: data.client.trim(),
+    phone: data.phone.trim(),
+    telegram: data.telegram.trim(),
+    service: data.service,
+    amount: Number(data.amount || 0),
+    employee: data.employee || "",
+    comment: data.comment.trim(),
+    status: bookingStatuses.includes(data.status) ? data.status : "подтверждено",
+    paymentId: state.bookings.find((booking) => booking.id === data.id)?.paymentId || ""
+  };
+}
+
+function paymentFromBooking(booking) {
+  const category = classifyService(booking.service);
+  const soundEngineer = ["recording", "studioProduction"].includes(category) ? booking.employee : "";
+  const performer = category === "online" ? booking.employee : "";
+  return {
+    id: crypto.randomUUID(),
+    date: booking.date,
+    client: booking.client,
+    service: booking.service,
+    amount: Number(booking.amount || 0),
+    method: "По записи",
+    comment: booking.comment ? `Запись: ${booking.comment}` : "Запись завершена",
+    soundEngineer,
+    performer,
+    employee: soundEngineer || performer || booking.employee || "",
+    bookingId: booking.id
+  };
+}
+
+function completeBooking(bookingId) {
+  const booking = state.bookings.find((item) => item.id === bookingId);
+  if (!booking) return;
+
+  booking.status = "завершено";
+  if (!booking.paymentId && !state.payments.some((payment) => payment.bookingId === booking.id)) {
+    const payment = paymentFromBooking(booking);
+    state.payments.push(payment);
+    booking.paymentId = payment.id;
+  }
+}
+
+function clientStats(name) {
+  const payments = state.payments.filter((item) => item.client === name);
+  const bookings = state.bookings.filter((item) => item.client === name);
+  const completedBookings = bookings.filter((item) => item.status === "завершено");
+  const standalonePayments = payments.filter((payment) => !payment.bookingId);
+  const visits = completedBookings.length + standalonePayments.length;
+  const total = payments.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const dates = [
+    ...completedBookings.map((item) => item.date),
+    ...standalonePayments.map((item) => item.date)
+  ].filter(Boolean).sort((a, b) => b.localeCompare(a));
+  return {
+    payments,
+    bookings,
+    total,
+    visits,
+    lastDate: dates[0] || bookings.sort((a, b) => b.date.localeCompare(a.date))[0]?.date || ""
+  };
+}
+
 function bindCommonEvents() {
   document.querySelectorAll("[data-view]").forEach((button) => {
     button.addEventListener("click", () => {
       view = button.dataset.view;
       editingPaymentId = null;
+      editingBookingId = null;
       if (view !== "clients") selectedClientName = null;
       render();
     });
@@ -1380,6 +1746,21 @@ function bindViewEvents() {
   document.querySelector("#searchPayments")?.addEventListener("input", (event) => {
     clientFilter = event.target.value;
     selectedClientName = null;
+    render();
+  });
+
+  document.querySelector("#bookingDateFilter")?.addEventListener("change", (event) => {
+    bookingDateFilter = event.target.value;
+    render();
+  });
+
+  document.querySelector("#bookingStatusFilter")?.addEventListener("change", (event) => {
+    bookingStatusFilter = event.target.value;
+    render();
+  });
+
+  document.querySelector("#bookingServiceFilter")?.addEventListener("change", (event) => {
+    bookingServiceFilter = event.target.value;
     render();
   });
 
@@ -1507,6 +1888,23 @@ function bindViewEvents() {
     render();
   });
 
+  document.querySelector("#bookingForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(event.target));
+    const booking = bookingFromForm(data);
+    if (data.id) {
+      state.bookings = state.bookings.map((item) => (item.id === data.id ? booking : item));
+    } else {
+      state.bookings.push(booking);
+    }
+    if (booking.status === "завершено") {
+      completeBooking(booking.id);
+    }
+    editingBookingId = null;
+    saveState();
+    render();
+  });
+
   document.querySelectorAll("[data-client]").forEach((button) => {
     button.addEventListener("click", () => {
       selectedClientName = decodeURIComponent(button.dataset.client);
@@ -1524,10 +1922,46 @@ function bindViewEvents() {
     render();
   });
 
+  document.querySelector("[data-action='cancelBookingEdit']")?.addEventListener("click", () => {
+    editingBookingId = null;
+    render();
+  });
+
   document.querySelectorAll("[data-edit]").forEach((button) => {
     button.addEventListener("click", () => {
       editingPaymentId = button.dataset.edit;
       view = "payments";
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-edit-booking]").forEach((button) => {
+    button.addEventListener("click", () => {
+      editingBookingId = button.dataset.editBooking;
+      view = "bookings";
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-booking-status]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const bookingId = button.dataset.bookingStatus;
+      const status = button.dataset.status;
+      if (status === "завершено") {
+        completeBooking(bookingId);
+      } else {
+        state.bookings = state.bookings.map((booking) => (booking.id === bookingId ? { ...booking, status } : booking));
+      }
+      saveState();
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-delete-booking]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!confirm("Удалить запись?")) return;
+      state.bookings = state.bookings.filter((item) => item.id !== button.dataset.deleteBooking);
+      saveState();
       render();
     });
   });
