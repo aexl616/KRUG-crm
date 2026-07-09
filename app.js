@@ -991,11 +991,23 @@ function renderRankedList(entries) {
   `;
 }
 
+function renderEmptyState(title, text, actionLabel = "", actionAttrs = "") {
+  return `
+    <div class="empty-state">
+      <span class="empty-state-icon">○</span>
+      <h3>${title}</h3>
+      <p>${text}</p>
+      ${actionLabel ? `<button class="btn secondary" ${actionAttrs}>${actionLabel}</button>` : ""}
+    </div>
+  `;
+}
+
 function renderDashboard() {
   const today = new Date().toISOString().slice(0, 10);
   const month = today.slice(0, 7);
   const monthTotal = state.payments.filter((item) => item.date.startsWith(month)).reduce((sum, item) => sum + Number(item.amount), 0);
   const todayTotal = state.payments.filter((item) => item.date === today).reduce((sum, item) => sum + Number(item.amount), 0);
+  const expensesTotal = (state.expenses || []).filter((item) => item.date === today).reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const todayBookings = state.bookings.filter((booking) => booking.date === today).sort((a, b) => a.time.localeCompare(b.time));
   const pendingBookings = state.bookings.filter((booking) => booking.status === "заявка");
   const nextBookings = todayBookings.filter((booking) => booking.status !== "отменено").slice(0, 5);
@@ -1029,6 +1041,14 @@ function renderDashboard() {
           <span class="select-chip">${formatDate(today)}</span>
         </div>
         ${renderTodayRows(todayBookings)}
+      </section>
+      <section class="card section">
+        <h2>Финансы сегодня</h2>
+        <div class="finance-mini">
+          <div><span>Доход</span><strong>${money(todayTotal)}</strong></div>
+          <div><span>Расход</span><strong>${money(expensesTotal)}</strong></div>
+          <div><span>Итог</span><strong>${money(todayTotal - expensesTotal)}</strong></div>
+        </div>
       </section>
       <section class="card section wide-card">
         <h2>Быстрые действия</h2>
@@ -1360,7 +1380,7 @@ function renderBookings() {
           </select>
         </div>
         <div class="booking-list">
-          ${bookings.map(renderBookingCard).join("") || '<p class="muted">Записей пока нет</p>'}
+          ${bookings.map(renderBookingCard).join("") || renderEmptyState("Пока нет записей", "Создай первую запись из календаря или кнопкой ниже.", "Создать первую запись", 'type="button" data-action="openBookingModal"')}
         </div>
       </section>
       ${renderBookingForm()}
@@ -1503,18 +1523,20 @@ function renderPayments() {
         <div class="toolbar">
           <input id="searchPayments" placeholder="Поиск по клиенту, услуге, исполнителю или звукорежу" value="${clientFilter}" />
         </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Дата</th><th>Клиент</th><th>Услуга</th><th>Сумма</th><th>Оплата</th><th>Исполнитель / звукореж</th><th></th>
-              </tr>
-            </thead>
-            <tbody>
-              ${payments.map(renderPaymentRow).join("") || '<tr><td colspan="7">Платежей пока нет</td></tr>'}
-            </tbody>
-          </table>
-        </div>
+        ${
+          payments.length
+            ? `<div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Дата</th><th>Клиент</th><th>Услуга</th><th>Сумма</th><th>Оплата</th><th>Исполнитель / звукореж</th><th></th>
+                    </tr>
+                  </thead>
+                  <tbody>${payments.map(renderPaymentRow).join("")}</tbody>
+                </table>
+              </div>`
+            : renderEmptyState("Пока нет платежей", "Платёж появится автоматически после завершения записи или может быть внесён вручную.", "Создать запись", 'type="button" data-action="openBookingModal"')
+        }
       </section>
       <section class="card section">
         <h2>${formTitle}</h2>
@@ -1651,7 +1673,7 @@ function renderClients() {
       <div class="client-card-grid">
         ${clients
           .map(([name, total]) => renderClientCard(name, total))
-          .join("") || "Клиентов пока нет"}
+          .join("") || renderEmptyState("Пока нет клиентов", "Клиенты появятся автоматически из записей и платежей.", "Создать запись", 'type="button" data-action="openBookingModal"')}
       </div>
     </section>
   `;
@@ -1841,7 +1863,7 @@ function renderFinance() {
       <section class="card section wide-card">
         <h2>Последние расходы</h2>
         <div class="list">
-          ${(state.expenses || []).slice(-8).reverse().map((expense) => `<div class="list-item"><span>${formatDate(expense.date)} · ${expense.title}<br><span class="muted">${expense.comment || ""}</span></span><strong>${money(expense.amount)}</strong></div>`).join("") || "Расходов пока нет"}
+          ${(state.expenses || []).slice(-8).reverse().map((expense) => `<div class="list-item"><span>${formatDate(expense.date)} · ${expense.title}<br><span class="muted">${expense.comment || ""}</span></span><strong>${money(expense.amount)}</strong></div>`).join("") || renderEmptyState("Пока нет расходов", "Добавь первый расход, чтобы видеть чистую прибыль точнее.")}
         </div>
       </section>
     </div>
@@ -1874,7 +1896,7 @@ function renderPayouts() {
 function renderPayoutRows(payouts) {
   return `
     <div class="list">
-      ${payouts.map((payout) => `<div class="list-item"><span>${formatDate(payout.paidAt.slice(0, 10))} · ${payout.recipient}<br><span class="muted">${payout.service} · ${payout.method}</span></span><strong>${money(payout.amount)}</strong></div>`).join("") || "Выплат пока нет"}
+      ${payouts.map((payout) => `<div class="list-item"><span>${formatDate(payout.paidAt.slice(0, 10))} · ${payout.recipient}<br><span class="muted">${payout.service} · ${payout.method}</span></span><strong>${money(payout.amount)}</strong></div>`).join("") || renderEmptyState("Выплат пока нет", "Когда появятся выплаты, они будут собраны здесь.")}
     </div>
   `;
 }
@@ -2206,7 +2228,7 @@ function renderServiceGroupBlock(group) {
             <button class="icon-btn" title="Сохранить" data-save-service-item="${service.id}" type="button">✓</button>
             <button class="icon-btn" title="Удалить" data-delete-service-item="${service.id}" type="button">×</button>
           </form>
-        `).join("") || '<p class="muted">Услуг пока нет</p>'}
+        `).join("") || renderEmptyState("Услуг пока нет", "Добавь первую услугу в эту категорию через форму выше.")}
       </div>
     </article>
   `;
@@ -2234,7 +2256,7 @@ function renderEmployeeSettings() {
       <section>
         <h2>Команда</h2>
         <div class="employee-list">
-          ${state.users.map(renderEmployeeCard).join("")}
+          ${state.users.map(renderEmployeeCard).join("") || renderEmptyState("Сотрудников пока нет", "Создай первого сотрудника, чтобы назначать его на записи.")}
         </div>
       </section>
     </div>
