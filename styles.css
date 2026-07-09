@@ -744,6 +744,247 @@ th {
   font-size: 12px;
 }
 
+.calendar-page {
+  display: grid;
+  gap: 16px;
+}
+
+.calendar-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.calendar-toolbar h2 {
+  margin-bottom: 4px;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: 74px repeat(7, minmax(118px, 1fr));
+  overflow: auto;
+}
+
+.calendar-corner,
+.calendar-day-head,
+.calendar-hour,
+.calendar-slot {
+  min-height: 58px;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.calendar-corner,
+.calendar-day-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  min-height: 52px;
+  background: rgba(17, 17, 17, 0.96);
+}
+
+.calendar-day-head {
+  display: flex;
+  align-items: center;
+  padding: 12px;
+  color: var(--muted);
+}
+
+.calendar-day-head.today {
+  color: var(--accent);
+  background: rgba(255, 102, 51, 0.11);
+}
+
+.calendar-hour {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12px;
+  color: var(--muted);
+  background: rgba(17, 17, 17, 0.96);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.calendar-slot {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  width: 100%;
+  min-width: 118px;
+  padding: 6px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.018);
+  text-align: left;
+}
+
+.calendar-slot:hover {
+  background: rgba(255, 102, 51, 0.08);
+}
+
+.calendar-slot.today {
+  background: rgba(255, 102, 51, 0.035);
+}
+
+.calendar-booking {
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 4px solid var(--employee-color);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.055);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.22);
+}
+
+.calendar-booking strong,
+.calendar-booking span,
+.calendar-booking em {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.calendar-booking strong {
+  font-size: 12px;
+}
+
+.calendar-booking span,
+.calendar-booking em {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.calendar-booking.status-заявка,
+.status-pill.status-заявка {
+  border-color: rgba(255, 102, 51, 0.4);
+}
+
+.calendar-booking.status-подтверждено {
+  background: rgba(124, 140, 255, 0.12);
+}
+
+.calendar-booking.status-в-процессе {
+  background: rgba(255, 193, 86, 0.12);
+}
+
+.calendar-booking.status-завершено {
+  background: rgba(114, 227, 154, 0.1);
+}
+
+.calendar-booking.status-отменено {
+  opacity: 0.62;
+  background: rgba(255, 107, 107, 0.09);
+}
+
+.booking-modal {
+  width: min(880px, calc(100vw - 28px));
+}
+
+.modal-actions {
+  justify-content: flex-start;
+}
+
+.settings-shell {
+  display: grid;
+  gap: 18px;
+}
+
+.settings-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-tabs button {
+  min-height: 36px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.035);
+  font-weight: 800;
+}
+
+.settings-tabs button.active {
+  color: var(--accent);
+  background: rgba(255, 102, 51, 0.13);
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.85fr) minmax(0, 1.45fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.settings-grid.single {
+  grid-template-columns: 1fr;
+}
+
+.compact-form {
+  margin-bottom: 12px;
+}
+
+.settings-list,
+.service-catalog-list,
+.employee-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.settings-row {
+  display: grid;
+  grid-template-columns: 1fr 82px 34px 34px;
+  align-items: center;
+}
+
+.catalog-group-card,
+.employee-card {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.service-edit-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(120px, 0.8fr) 90px 100px 72px 34px 34px;
+  align-items: center;
+}
+
+.employee-card {
+  border-left: 4px solid var(--employee-color);
+}
+
+.employee-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.employee-card-head span {
+  color: var(--muted);
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.check-row input {
+  width: auto;
+  min-height: auto;
+}
+
 .status-pill {
   display: inline-flex;
   align-items: center;
@@ -1278,7 +1519,8 @@ button.list-item:hover {
 
   .budget-wallets,
   .budget-main-grid,
-  .budget-rule-grid {
+  .budget-rule-grid,
+  .settings-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1376,6 +1618,20 @@ button.list-item:hover {
   }
 
   .booking-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .calendar-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .calendar-grid {
+    grid-template-columns: 62px repeat(7, minmax(128px, 1fr));
+  }
+
+  .service-edit-row,
+  .settings-row {
     grid-template-columns: 1fr;
   }
 

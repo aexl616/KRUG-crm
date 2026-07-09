@@ -1,13 +1,52 @@
 const STORAGE_KEY = "studio-income-app-v1";
 const PAYOUT_RESET_VERSION = 2;
+const CALENDAR_START_HOUR = 9;
+const CALENDAR_END_HOUR = 23;
+
+const defaultServiceGroups = [
+  { id: "recording", name: "Запись", order: 1 },
+  { id: "mixing", name: "Сведение", order: 2 },
+  { id: "education", name: "Обучение", order: 3 },
+  { id: "production", name: "Продакшн", order: 4 },
+  { id: "consulting", name: "Консультации", order: 5 },
+  { id: "design", name: "Дизайн", order: 6 },
+  { id: "rent", name: "Аренда", order: 7 },
+  { id: "extra", name: "Доп. услуги", order: 8 }
+];
+
+const defaultServiceItems = [
+  { id: "svc-recording-1", name: "Запись 1 час", categoryId: "recording", price: 1200, duration: "1 час", order: 1, mode: "fixed" },
+  { id: "svc-recording-2", name: "Запись 2 часа", categoryId: "recording", price: 2400, duration: "2 часа", order: 2, mode: "fixed" },
+  { id: "svc-recording-3", name: "Запись 3 часа", categoryId: "recording", price: 3300, duration: "3 часа", order: 3, mode: "fixed" },
+  { id: "svc-recording-5", name: "Запись 5 часов", categoryId: "recording", price: 5200, duration: "5 часов", order: 4, mode: "fixed" },
+  { id: "svc-mixing", name: "Сведение", categoryId: "mixing", price: 2500, duration: "1 день", order: 1, mode: "fixed" },
+  { id: "svc-vocal", name: "Коррекция вокала", categoryId: "mixing", price: 2000, duration: "1 день", order: 2, mode: "fixed" },
+  { id: "svc-multitrack", name: "Мультитрек", categoryId: "mixing", price: 5000, duration: "1 день", order: 3, mode: "minimum" },
+  { id: "svc-ableton", name: "Ableton", categoryId: "education", price: 3000, duration: "2 часа", order: 1, mode: "fixed" },
+  { id: "svc-fl", name: "FL Studio", categoryId: "education", price: 3000, duration: "2 часа", order: 2, mode: "fixed" },
+  { id: "svc-edu-mixing", name: "Сведение", categoryId: "education", price: 3500, duration: "2 часа", order: 3, mode: "fixed" },
+  { id: "svc-beat", name: "Написание бита", categoryId: "production", price: 5000, duration: "2 часа", order: 1, mode: "minimum" },
+  { id: "svc-ghost", name: "Ghostwriting", categoryId: "production", price: 3000, duration: "1 день", order: 2, mode: "minimum" },
+  { id: "svc-artist-audit", name: "Анализ артиста", categoryId: "consulting", price: 3000, duration: "1 час", order: 1, mode: "fixed" },
+  { id: "svc-track-audit", name: "Анализ трека", categoryId: "consulting", price: 1500, duration: "1 час", order: 2, mode: "fixed" },
+  { id: "svc-cover", name: "Обложка", categoryId: "design", price: 3000, duration: "1 день", order: 1, mode: "fixed" },
+  { id: "svc-poster", name: "Афиша", categoryId: "design", price: 2500, duration: "1 день", order: 2, mode: "fixed" },
+  { id: "svc-rent-hour", name: "Почасовая", categoryId: "rent", price: 1000, duration: "1 час", order: 1, mode: "fixed" },
+  { id: "svc-extra", name: "Любые дополнительные", categoryId: "extra", price: 0, duration: "1 час", order: 1, mode: "manual" }
+];
+
+const employeeRoles = ["Владелец", "Администратор", "Звукорежиссёр", "Исполнитель", "Дизайнер", "Продюсер", "Другое"];
 
 const defaultState = {
   sessionUserId: null,
   users: [
-    { id: "u1", name: "Я", login: "admin", password: "admin123", role: "admin" },
-    { id: "u2", name: "Сотрудник", login: "staff", password: "staff123", role: "staff" }
+    { id: "u1", name: "AE XL", login: "admin", password: "admin123", role: "admin", position: "Владелец", percent: 0, fixedRate: 0, color: "#ff6633", phone: "", telegram: "", active: true },
+    { id: "u2", name: "Сотрудник", login: "staff", password: "staff123", role: "staff", position: "Звукорежиссёр", percent: 25, fixedRate: 0, color: "#7c8cff", phone: "", telegram: "", active: true }
   ],
   services: ["Запись", "Сведение", "Мастеринг", "Аренда студии"],
+  serviceGroups: defaultServiceGroups,
+  serviceItems: defaultServiceItems,
+  clients: [],
   payments: [
     {
       id: crypto.randomUUID(),
@@ -17,7 +56,7 @@ const defaultState = {
       amount: 12000,
       method: "Наличные",
       comment: "Демо-запись",
-      employee: "Я"
+      employee: "AE XL"
     },
     {
       id: crypto.randomUUID(),
@@ -141,15 +180,19 @@ const budgetRules = {
 
 let state = loadState();
 state = normalizeState(state);
-let view = "dashboard";
+let view = "calendar";
 let editingPaymentId = null;
 let editingBookingId = null;
+let bookingModalOpen = false;
+let bookingSlotDraft = null;
+let calendarWeekStart = weekStart(new Date().toISOString().slice(0, 10));
 let clientFilter = "";
 let bookingDateFilter = "";
 let bookingStatusFilter = "";
 let bookingServiceFilter = "";
 let selectedClientName = null;
 let payoutModalOpen = false;
+let settingsTab = "services";
 
 const app = document.querySelector("#app");
 
@@ -163,23 +206,82 @@ function loadState() {
   }
 }
 
+function servicePriceRuleFromStatic(serviceName) {
+  const catalogItem = serviceCatalog.find((item) => item.name === serviceName);
+  if (!catalogItem) return { mode: "manual", price: 0, min: 0 };
+  return { mode: catalogItem.mode, price: catalogItem.price, min: catalogItem.price };
+}
+
+function durationFromServiceName(serviceName) {
+  const match = String(serviceName || "").match(/(\d+)\s*час/);
+  if (!match) return "1 час";
+  const hours = Number(match[1]);
+  if (hours === 1) return "1 час";
+  if ([2, 3, 4].includes(hours)) return `${hours} часа`;
+  return `${hours} часов`;
+}
+
 function normalizeState(nextState) {
   const legacyServices = new Set(["Запись", "Сведение", "Мастеринг", "Аренда студии", "Аренда", "Услуги онлайн", "Сведение на студии", "Бит на студии", "Написание бита на студии"]);
   legacyCatalogServices.forEach((service) => legacyServices.add(service));
   const customServices = (nextState.services || []).filter((service) => !legacyServices.has(service) && !extraServices.includes(service));
-  const services = new Set([...extraServices, ...customServices]);
+  const serviceGroups = [...(nextState.serviceGroups || defaultServiceGroups)].map((group, index) => ({
+    id: group.id || crypto.randomUUID(),
+    name: group.name || group.label || "Категория",
+    order: Number(group.order || index + 1)
+  }));
+  const groupIds = new Set(serviceGroups.map((group) => group.id));
+  const serviceItems = [...(nextState.serviceItems || defaultServiceItems)].map((service, index) => ({
+    id: service.id || crypto.randomUUID(),
+    name: service.name || String(service || "Услуга"),
+    categoryId: groupIds.has(service.categoryId) ? service.categoryId : service.category || "extra",
+    price: Number(service.price || service.amount || 0),
+    duration: service.duration || "1 час",
+    order: Number(service.order || index + 1),
+    mode: service.mode || "fixed"
+  }));
+  [...extraServices, ...customServices].forEach((name) => {
+    if (!serviceItems.some((service) => service.name === name)) {
+      const categoryId = classifyService(name);
+      serviceItems.push({
+        id: crypto.randomUUID(),
+        name,
+        categoryId: groupIds.has(categoryId) ? categoryId : "extra",
+        price: servicePriceRuleFromStatic(name).price || 0,
+        duration: durationFromServiceName(name),
+        order: serviceItems.length + 1,
+        mode: servicePriceRuleFromStatic(name).mode || "manual"
+      });
+    }
+  });
+  const services = serviceItems.map((service) => service.name);
   const shouldResetPayouts = nextState.payoutResetVersion !== PAYOUT_RESET_VERSION;
+  const users = (nextState.users || defaultState.users).map((user, index) => ({
+    id: user.id || crypto.randomUUID(),
+    name: user.name === "Я" ? "AE XL" : user.name || `Сотрудник ${index + 1}`,
+    login: user.login || `staff${index + 1}`,
+    password: user.password || "1234",
+    role: user.role || "staff",
+    position: user.position || (user.role === "admin" ? "Администратор" : "Звукорежиссёр"),
+    percent: Number(user.percent || 0),
+    fixedRate: Number(user.fixedRate || 0),
+    color: user.color || (index === 0 ? "#ff6633" : "#7c8cff"),
+    phone: user.phone || "",
+    telegram: user.telegram || "",
+    active: user.active !== false
+  }));
   const payments = (nextState.payments || []).map((payment) => {
     const service = serviceAliases[payment.service] || payment.service;
     const category = classifyService(service);
-    const soundEngineer = payment.soundEngineer || (["recording", "studioProduction"].includes(category) ? payment.employee : "") || "";
-    const performer = payment.performer || (category === "online" ? payment.employee : "") || "";
+    const employeeName = payment.employee === "Я" ? "AE XL" : payment.employee || "";
+    const soundEngineer = payment.soundEngineer || (["recording", "studioProduction"].includes(category) ? employeeName : "") || "";
+    const performer = payment.performer || (category === "online" ? employeeName : "") || "";
     return {
       ...payment,
       service,
       soundEngineer,
       performer,
-      employee: payment.employee || soundEngineer || performer || ""
+      employee: employeeName || soundEngineer || performer || ""
     };
   });
   const bookings = (nextState.bookings || []).map((booking) => ({
@@ -190,16 +292,33 @@ function normalizeState(nextState) {
     client: booking.client || "",
     phone: booking.phone || "",
     telegram: booking.telegram || "",
-    service: serviceAliases[booking.service] || booking.service || firstServiceForCategory("recording"),
+    service: serviceAliases[booking.service] || booking.service || services[0] || "",
     amount: Number(booking.amount || booking.cost || 0),
-    employee: booking.employee || nextState.users?.[0]?.name || "",
+    employee: booking.employee === "Я" ? "AE XL" : booking.employee || users[0]?.name || "",
     comment: booking.comment || "",
     status: bookingStatuses.includes(booking.status) ? booking.status : "заявка",
     paymentId: booking.paymentId || ""
   }));
+  const clientMap = new Map((nextState.clients || []).map((client) => [client.name, client]));
+  [...payments, ...bookings].forEach((item) => {
+    const name = String(item.client || "").trim();
+    if (!name) return;
+    const previous = clientMap.get(name) || {};
+    clientMap.set(name, {
+      id: previous.id || crypto.randomUUID(),
+      name,
+      phone: item.phone || previous.phone || "",
+      telegram: item.telegram || previous.telegram || "",
+      comment: previous.comment || ""
+    });
+  });
   return {
     ...nextState,
+    users,
+    serviceGroups,
+    serviceItems,
     services: [...services],
+    clients: [...clientMap.values()],
     payments,
     bookings,
     payouts: shouldResetPayouts ? [] : nextState.payouts || [],
@@ -227,6 +346,39 @@ function money(value) {
 
 function formatDate(value) {
   return new Intl.DateTimeFormat("ru-RU").format(new Date(`${value}T00:00:00`));
+}
+
+function addDays(dateString, days) {
+  const date = new Date(`${dateString}T00:00:00`);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function weekStart(dateString) {
+  const date = new Date(`${dateString}T00:00:00`);
+  const day = date.getDay() || 7;
+  date.setDate(date.getDate() - day + 1);
+  return date.toISOString().slice(0, 10);
+}
+
+function weekDays(startDate = calendarWeekStart) {
+  return Array.from({ length: 7 }, (_, index) => addDays(startDate, index));
+}
+
+function weekdayLabel(dateString) {
+  const date = new Date(`${dateString}T00:00:00`);
+  const weekday = new Intl.DateTimeFormat("ru-RU", { weekday: "short" }).format(date);
+  return `${weekday}, ${shortDate(dateString)}`;
+}
+
+function statusTitle(status) {
+  return {
+    "заявка": "Заявка",
+    "подтверждено": "Подтверждено",
+    "в процессе": "В процессе",
+    "завершено": "Завершено",
+    "отменено": "Отменено"
+  }[status] || status || "Заявка";
 }
 
 function periodKey(date, mode) {
@@ -269,11 +421,6 @@ function clientSuggestions(query) {
 }
 
 function render() {
-  if (view === "clientBooking") {
-    renderClientBooking();
-    return;
-  }
-
   if (!currentUser()) {
     renderLogin();
     return;
@@ -284,6 +431,7 @@ function render() {
       ${renderSidebar()}
       <section class="content">
         ${renderTopbar()}
+        ${view === "calendar" ? renderCalendar() : ""}
         ${view === "dashboard" ? renderDashboard() : ""}
         ${view === "bookings" ? renderBookings() : ""}
         ${view === "payments" ? renderPayments() : ""}
@@ -293,6 +441,7 @@ function render() {
         ${view === "settings" ? renderSettings() : ""}
       </section>
       ${renderMobileTabs()}
+      ${bookingModalOpen ? renderBookingModal() : ""}
       ${payoutModalOpen ? renderPayoutModal() : ""}
     </div>
   `;
@@ -324,7 +473,6 @@ function renderLogin() {
             <input name="password" type="password" autocomplete="current-password" required value="admin123" />
           </div>
           <button class="btn" type="submit">Войти</button>
-          <button class="btn secondary" type="button" data-view="clientBooking">Клиентская запись</button>
           <div class="hint">Админ: admin / admin123. Сотрудник: staff / staff123.</div>
         </div>
       </form>
@@ -341,11 +489,6 @@ function renderLogin() {
     }
     state.sessionUserId = user.id;
     saveState();
-    render();
-  });
-
-  document.querySelector("[data-view='clientBooking']")?.addEventListener("click", () => {
-    view = "clientBooking";
     render();
   });
 }
@@ -467,6 +610,7 @@ function renderSidebar() {
 
 function navButtons() {
   const items = [
+    ["calendar", "Календарь"],
     ["dashboard", "Главная"],
     ["bookings", "Записи"],
     ["payments", "Платежи"],
@@ -493,8 +637,7 @@ function renderTopbar() {
         <p class="muted">${pageSubtitle()}</p>
       </div>
       <div class="actions">
-        <button class="btn secondary" data-view="clientBooking">Клиентская запись</button>
-        <button class="btn" data-view="bookings">+ Запись</button>
+        <button class="btn" data-action="openBookingModal">Добавить запись</button>
         <button class="btn" data-view="payments">+ Доход</button>
         ${isAdmin() ? '<button class="btn secondary" data-view="settings">Настройки</button>' : ""}
       </div>
@@ -504,6 +647,7 @@ function renderTopbar() {
 
 function pageTitle() {
   return {
+    calendar: "Календарь",
     dashboard: "Дашборд",
     bookings: "Записи",
     payments: "Платежи",
@@ -516,6 +660,7 @@ function pageTitle() {
 
 function pageSubtitle() {
   return {
+    calendar: "Недельное расписание студии и статусы записей.",
     dashboard: "Ключевые цифры по доходу студии.",
     bookings: "Заявки, расписание и статусы студийных записей.",
     payments: "Добавление, поиск и редактирование оплат.",
@@ -547,14 +692,11 @@ function categoryLabel(category) {
 }
 
 function servicesForCategory(category) {
-  if (category === "custom") {
-    return state.services.filter((service) => !serviceCatalog.some((item) => item.name === service));
-  }
-  return serviceCatalog.filter((service) => service.category === category).map((service) => service.name);
+  return catalogServices().filter((service) => service.categoryId === category).map((service) => service.name);
 }
 
 function firstServiceForCategory(category) {
-  return servicesForCategory(category)[0] || "";
+  return servicesForCategory(category)[0] || catalogServices()[0]?.name || "";
 }
 
 function serviceHours(payment, rule) {
@@ -647,6 +789,17 @@ function availableOutsideBudget() {
 }
 
 function servicePriceRule(serviceName) {
+  const stateCatalogItem = serviceByName(serviceName);
+  if (stateCatalogItem) {
+    const min = stateCatalogItem.mode === "manual" ? 0 : Number(stateCatalogItem.price || 0);
+    return {
+      mode: stateCatalogItem.mode || "fixed",
+      price: Number(stateCatalogItem.price || 0),
+      min,
+      hint: stateCatalogItem.mode === "manual" ? "Цена задаётся вручную." : `Цена по каталогу: ${money(stateCatalogItem.price)} · ${stateCatalogItem.duration}`
+    };
+  }
+
   const catalogItem = serviceCatalog.find((item) => item.name === serviceName);
   if (!catalogItem) {
     return {
@@ -943,6 +1096,172 @@ function renderDashboard() {
   `;
 }
 
+function activeEmployees() {
+  return state.users.filter((user) => user.active !== false);
+}
+
+function catalogGroups() {
+  return [...(state.serviceGroups || [])].sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+}
+
+function catalogServices() {
+  return [...(state.serviceItems || [])].sort((a, b) => {
+    const groupA = catalogGroups().find((group) => group.id === a.categoryId)?.order || 99;
+    const groupB = catalogGroups().find((group) => group.id === b.categoryId)?.order || 99;
+    return groupA - groupB || Number(a.order || 0) - Number(b.order || 0);
+  });
+}
+
+function serviceByName(name) {
+  return catalogServices().find((service) => service.name === name);
+}
+
+function employeeByName(name) {
+  return state.users.find((user) => user.name === name);
+}
+
+function renderCalendar() {
+  const days = weekDays();
+  const today = new Date().toISOString().slice(0, 10);
+  const hours = Array.from({ length: CALENDAR_END_HOUR - CALENDAR_START_HOUR + 1 }, (_, index) => CALENDAR_START_HOUR + index);
+  const weekEnd = addDays(calendarWeekStart, 6);
+
+  return `
+    <section class="calendar-page">
+      <div class="card section calendar-toolbar">
+        <div>
+          <h2>${formatDate(calendarWeekStart)} — ${formatDate(weekEnd)}</h2>
+          <p class="muted">Нажми на свободный слот, чтобы добавить запись. Нажми на запись, чтобы открыть редактирование.</p>
+        </div>
+        <div class="actions">
+          <button class="btn secondary" data-action="prevWeek">← Неделя</button>
+          <button class="btn secondary" data-action="todayWeek">Сегодня</button>
+          <button class="btn secondary" data-action="nextWeek">Неделя →</button>
+        </div>
+      </div>
+      <section class="card calendar-grid">
+        <div class="calendar-corner"></div>
+        ${days.map((day) => `<div class="calendar-day-head ${day === today ? "today" : ""}"><strong>${weekdayLabel(day)}</strong></div>`).join("")}
+        ${hours
+          .map(
+            (hour) => `
+              <div class="calendar-hour">${String(hour).padStart(2, "0")}:00</div>
+              ${days.map((day) => renderCalendarSlot(day, hour, today)).join("")}
+            `
+          )
+          .join("")}
+      </section>
+    </section>
+  `;
+}
+
+function renderCalendarSlot(day, hour, today) {
+  const hourText = `${String(hour).padStart(2, "0")}:`;
+  const bookings = state.bookings.filter((booking) => booking.date === day && String(booking.time || "").startsWith(hourText));
+  return `
+    <button class="calendar-slot ${day === today ? "today" : ""}" data-calendar-slot="${day}|${String(hour).padStart(2, "0")}:00">
+      ${bookings.map(renderCalendarBooking).join("")}
+    </button>
+  `;
+}
+
+function renderCalendarBooking(booking) {
+  const employee = employeeByName(booking.employee);
+  const color = employee?.color || "#ff6633";
+  return `
+    <article class="calendar-booking status-${booking.status.replaceAll(" ", "-")}" data-calendar-booking="${booking.id}" style="--employee-color:${color}">
+      <strong>${booking.time} · ${booking.client || "Без имени"}</strong>
+      <span>${booking.service}</span>
+      <em>${statusTitle(booking.status)}</em>
+    </article>
+  `;
+}
+
+function renderBookingModal() {
+  const booking = state.bookings.find((item) => item.id === editingBookingId) || bookingSlotDraft || {};
+  const service = serviceByName(booking.service) || catalogServices()[0] || {};
+  const defaultEmployee = currentUser()?.name || activeEmployees()[0]?.name || "";
+  const status = booking.status || "подтверждено";
+
+  return `
+    <div class="modal-backdrop" data-action="closeBookingModal">
+      <section class="card modal booking-modal" role="dialog" aria-modal="true" aria-label="Запись">
+        <div class="modal-head">
+          <div>
+            <h2>${editingBookingId ? "Редактировать запись" : "Добавить запись"}</h2>
+            <p class="muted">Внутреннее расписание KRUG CRM.</p>
+          </div>
+          <button class="icon-btn" type="button" data-action="closeBookingModal">×</button>
+        </div>
+        <form id="bookingModalForm" class="form-grid">
+          <input type="hidden" name="id" value="${booking.id || ""}" />
+          <div class="field">
+            <label>Клиент</label>
+            <input name="client" required value="${booking.client || ""}" />
+          </div>
+          <div class="field">
+            <label>Телефон</label>
+            <input name="phone" value="${booking.phone || ""}" />
+          </div>
+          <div class="field">
+            <label>Telegram</label>
+            <input name="telegram" value="${booking.telegram || ""}" />
+          </div>
+          <div class="field">
+            <label>Услуга</label>
+            <select name="service" id="bookingServiceSelect" required>
+              ${catalogGroups()
+                .map((group) => {
+                  const options = catalogServices()
+                    .filter((item) => item.categoryId === group.id)
+                    .map((item) => `<option value="${item.name}" ${((booking.service || service.name) === item.name) ? "selected" : ""}>${item.name}</option>`)
+                    .join("");
+                  return options ? `<optgroup label="${group.name}">${options}</optgroup>` : "";
+                })
+                .join("")}
+            </select>
+          </div>
+          <div class="field">
+            <label>Дата</label>
+            <input name="date" type="date" required value="${booking.date || new Date().toISOString().slice(0, 10)}" />
+          </div>
+          <div class="field">
+            <label>Время</label>
+            <input name="time" type="time" required value="${booking.time || "12:00"}" />
+          </div>
+          <div class="field">
+            <label>Длительность</label>
+            <input name="duration" id="bookingDurationInput" value="${booking.duration || service.duration || "1 час"}" />
+          </div>
+          <div class="field">
+            <label>Стоимость</label>
+            <input name="amount" id="bookingAmountInput" type="number" min="0" step="1" required value="${booking.amount || service.price || 0}" />
+          </div>
+          <div class="field">
+            <label>Сотрудник</label>
+            <select name="employee">${activeEmployees().map((user) => `<option value="${user.name}" ${((booking.employee || defaultEmployee) === user.name) ? "selected" : ""}>${user.name}</option>`).join("")}</select>
+          </div>
+          <div class="field">
+            <label>Статус</label>
+            <select name="status">${bookingStatuses.map((item) => `<option value="${item}" ${status === item ? "selected" : ""}>${statusTitle(item)}</option>`).join("")}</select>
+          </div>
+          <div class="field full">
+            <label>Комментарий</label>
+            <textarea name="comment">${booking.comment || ""}</textarea>
+          </div>
+          <div class="actions full modal-actions">
+            <button class="btn" type="submit">Сохранить</button>
+            ${editingBookingId ? '<button class="btn" type="button" data-action="completeBookingFromModal">Завершить</button>' : ""}
+            ${editingBookingId ? '<button class="btn secondary" type="button" data-action="cancelBookingFromModal">Отменить</button>' : ""}
+            ${editingBookingId ? '<button class="btn danger" type="button" data-action="deleteBookingFromModal">Удалить</button>' : ""}
+            <button class="btn secondary" type="button" data-action="closeBookingModal">Закрыть</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  `;
+}
+
 function filteredBookings() {
   return [...state.bookings]
     .sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`))
@@ -984,7 +1303,7 @@ function renderBookingCard(booking) {
   const canComplete = booking.status !== "завершено" && booking.status !== "отменено";
   const canCancel = booking.status !== "завершено" && booking.status !== "отменено";
   return `
-    <article class="booking-card">
+    <article class="booking-card" data-open-booking="${booking.id}">
       <div class="booking-card-head">
         <div>
           <h3>${booking.client || "Без имени"}</h3>
@@ -1016,11 +1335,7 @@ function renderBookingCard(booking) {
 
 function renderBookingForm() {
   const booking = state.bookings.find((item) => item.id === editingBookingId) || {};
-  const selectedCategory = booking.service ? classifyService(booking.service) : "recording";
-  const normalizedCategory = selectedCategory === "unknown" ? "custom" : selectedCategory;
-  const categoryServices = servicesForCategory(normalizedCategory);
-  if (booking.service && !categoryServices.includes(booking.service)) categoryServices.push(booking.service);
-  const selectedService = categoryServices.includes(booking.service) ? booking.service : firstServiceForCategory(normalizedCategory);
+  const selectedService = booking.service || catalogServices()[0]?.name || "";
   const priceRule = servicePriceRule(selectedService);
   const amountValue = booking.amount || priceRule.price || "";
   const defaultUser = currentUser()?.name || state.users[0]?.name || "";
@@ -1045,13 +1360,19 @@ function renderBookingForm() {
           <label>Telegram</label>
           <input name="telegram" value="${booking.telegram || ""}" />
         </div>
-        <div class="field">
-          <label>Категория</label>
-          <select name="category" id="categorySelect">${serviceCategories.map((category) => `<option value="${category.key}" ${normalizedCategory === category.key ? "selected" : ""}>${category.label}</option>`).join("")}</select>
-        </div>
         <div class="field full">
           <label>Услуга</label>
-          <select name="service" id="serviceSelect" required>${categoryServices.map((service) => `<option ${selectedService === service ? "selected" : ""}>${service}</option>`).join("")}</select>
+          <select name="service" id="serviceSelect" required>
+            ${catalogGroups()
+              .map((group) => {
+                const options = catalogServices()
+                  .filter((service) => service.categoryId === group.id)
+                  .map((service) => `<option value="${service.name}" ${selectedService === service.name ? "selected" : ""}>${service.name}</option>`)
+                  .join("");
+                return options ? `<optgroup label="${group.name}">${options}</optgroup>` : "";
+              })
+              .join("")}
+          </select>
         </div>
         <div class="field">
           <label>Дата</label>
@@ -1093,10 +1414,7 @@ function renderPayments() {
   const payments = filteredPayments();
   const formTitle = editingPaymentId ? "Редактировать оплату" : "Новая оплата";
   const payment = state.payments.find((item) => item.id === editingPaymentId) || {};
-  const selectedCategory = payment.service ? paymentCategory(payment) : "recording";
-  const categoryServices = servicesForCategory(selectedCategory);
-  if (payment.service && !categoryServices.includes(payment.service)) categoryServices.push(payment.service);
-  const selectedService = categoryServices.includes(payment.service) ? payment.service : firstServiceForCategory(selectedCategory);
+  const selectedService = payment.service || catalogServices()[0]?.name || "";
   const priceRule = servicePriceRule(selectedService);
   const amountValue = payment.amount || priceRule.price || "";
   const defaultUser = currentUser()?.name || state.users[0]?.name || "";
@@ -1137,13 +1455,19 @@ function renderPayments() {
               <div class="client-suggestions" id="clientSuggestions"></div>
             </div>
           </div>
-          <div class="field">
-            <label>Категория</label>
-            <select name="category" id="categorySelect">${serviceCategories.map((category) => `<option value="${category.key}" ${selectedCategory === category.key ? "selected" : ""}>${category.label}</option>`).join("")}</select>
-          </div>
-          <div class="field">
+          <div class="field full">
             <label>Услуга</label>
-            <select name="service" id="serviceSelect" required>${categoryServices.map((service) => `<option ${selectedService === service ? "selected" : ""}>${service}</option>`).join("")}</select>
+            <select name="service" id="serviceSelect" required>
+              ${catalogGroups()
+                .map((group) => {
+                  const options = catalogServices()
+                    .filter((service) => service.categoryId === group.id)
+                    .map((service) => `<option value="${service.name}" ${selectedService === service.name ? "selected" : ""}>${service.name}</option>`)
+                    .join("");
+                  return options ? `<optgroup label="${group.name}">${options}</optgroup>` : "";
+                })
+                .join("")}
+            </select>
           </div>
           <div class="field">
             <label>Сумма</label>
@@ -1219,6 +1543,7 @@ function filteredPayments() {
 
 function renderClients() {
   const clientNames = [...new Set([
+    ...state.clients.map((item) => item.name),
     ...state.payments.map((item) => item.client),
     ...state.bookings.map((item) => item.client)
   ].map((name) => String(name || "").trim()).filter(Boolean))];
@@ -1616,28 +1941,148 @@ function renderReports() {
 function renderSettings() {
   if (!isAdmin()) return "";
   return `
-    <div class="grid two-col">
-      <section class="card section">
-        <h2>Услуги</h2>
-        <form id="serviceForm" class="toolbar">
-          <input name="service" placeholder="Новая услуга" required />
-          <button class="btn" type="submit">Добавить</button>
+    <section class="card section settings-shell">
+      <div class="settings-tabs">
+        ${[
+          ["services", "Каталог услуг"],
+          ["employees", "Сотрудники"],
+          ["profile", "Профиль"]
+        ].map(([key, label]) => `<button class="${settingsTab === key ? "active" : ""}" data-settings-tab="${key}">${label}</button>`).join("")}
+      </div>
+      ${settingsTab === "services" ? renderServiceSettings() : ""}
+      ${settingsTab === "employees" ? renderEmployeeSettings() : ""}
+      ${settingsTab === "profile" ? renderProfileSettings() : ""}
+    </section>
+  `;
+}
+
+function renderServiceSettings() {
+  return `
+    <div class="settings-grid">
+      <section>
+        <div class="section-head"><h2>Категории</h2></div>
+        <form id="serviceGroupForm" class="form-grid compact-form">
+          <input type="hidden" name="id" />
+          <div class="field"><label>Название</label><input name="name" required placeholder="Например: Запись" /></div>
+          <div class="field"><label>Порядок</label><input name="order" type="number" min="1" step="1" value="${catalogGroups().length + 1}" /></div>
+          <button class="btn full" type="submit">Создать категорию</button>
         </form>
-        <div class="list">
-          ${state.services.map((service) => `<div class="list-item"><strong>${service}</strong><button class="icon-btn" data-remove-service="${service}">×</button></div>`).join("")}
+        <div class="list settings-list">
+          ${catalogGroups().map((group) => `
+            <form class="list-item settings-row" data-service-group-row="${group.id}">
+              <input name="name" value="${group.name}" />
+              <input name="order" type="number" min="1" step="1" value="${group.order}" />
+              <button class="icon-btn" title="Сохранить" data-save-service-group="${group.id}" type="button">✓</button>
+              <button class="icon-btn" title="Удалить" data-delete-service-group="${group.id}" type="button">×</button>
+            </form>
+          `).join("")}
         </div>
       </section>
-      <section class="card section">
-        <h2>Сотрудники</h2>
+      <section>
+        <div class="section-head"><h2>Услуги</h2></div>
+        <form id="serviceItemForm" class="form-grid">
+          <div class="field"><label>Название</label><input name="name" required placeholder="Запись 1 час" /></div>
+          <div class="field"><label>Категория</label><select name="categoryId">${catalogGroups().map((group) => `<option value="${group.id}">${group.name}</option>`).join("")}</select></div>
+          <div class="field"><label>Стоимость</label><input name="price" type="number" min="0" step="1" value="0" /></div>
+          <div class="field"><label>Длительность</label><input name="duration" value="1 час" /></div>
+          <div class="field"><label>Порядок</label><input name="order" type="number" min="1" step="1" value="${catalogServices().length + 1}" /></div>
+          <button class="btn" type="submit">Создать услугу</button>
+        </form>
+        <div class="service-catalog-list">
+          ${catalogGroups().map((group) => renderServiceGroupBlock(group)).join("")}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderServiceGroupBlock(group) {
+  const services = catalogServices().filter((service) => service.categoryId === group.id);
+  return `
+    <article class="catalog-group-card">
+      <h3>${group.name}</h3>
+      <div class="list">
+        ${services.map((service) => `
+          <form class="list-item service-edit-row" data-service-item-row="${service.id}">
+            <input name="name" value="${service.name}" />
+            <select name="categoryId">${catalogGroups().map((item) => `<option value="${item.id}" ${service.categoryId === item.id ? "selected" : ""}>${item.name}</option>`).join("")}</select>
+            <input name="price" type="number" min="0" step="1" value="${service.price}" />
+            <input name="duration" value="${service.duration}" />
+            <input name="order" type="number" min="1" step="1" value="${service.order}" />
+            <button class="icon-btn" title="Сохранить" data-save-service-item="${service.id}" type="button">✓</button>
+            <button class="icon-btn" title="Удалить" data-delete-service-item="${service.id}" type="button">×</button>
+          </form>
+        `).join("") || '<p class="muted">Услуг пока нет</p>'}
+      </div>
+    </article>
+  `;
+}
+
+function renderEmployeeSettings() {
+  return `
+    <div class="settings-grid">
+      <section>
+        <h2>Новый сотрудник</h2>
         <form id="userForm" class="form-grid">
           <div class="field"><label>Имя</label><input name="name" required /></div>
+          <div class="field"><label>Должность</label><input name="position" value="Звукорежиссёр" /></div>
+          <div class="field"><label>Роль</label><select name="role">${employeeRoles.map((role) => `<option>${role}</option>`).join("")}</select></div>
+          <div class="field"><label>Процент</label><input name="percent" type="number" min="0" max="100" step="1" value="0" /></div>
+          <div class="field"><label>Фикс. ставка</label><input name="fixedRate" type="number" min="0" step="1" value="0" /></div>
+          <div class="field"><label>Цвет календаря</label><input name="color" type="color" value="#ff6633" /></div>
+          <div class="field"><label>Телефон</label><input name="phone" /></div>
+          <div class="field"><label>Telegram</label><input name="telegram" /></div>
           <div class="field"><label>Логин</label><input name="login" required /></div>
           <div class="field"><label>Пароль</label><input name="password" required /></div>
-          <div class="field"><label>Роль</label><select name="role"><option value="staff">Сотрудник</option><option value="admin">Админ</option></select></div>
-          <button class="btn full" type="submit">Добавить сотрудника</button>
+          <button class="btn full" type="submit">Создать сотрудника</button>
         </form>
-        <div class="list" style="margin-top:14px">
-          ${state.users.map((user) => `<div class="list-item"><div><strong>${user.name}</strong><br><span class="muted">${user.login} · ${user.role === "admin" ? "админ" : "сотрудник"}</span></div>${user.id !== currentUser().id ? `<button class="icon-btn" data-remove-user="${user.id}">×</button>` : ""}</div>`).join("")}
+      </section>
+      <section>
+        <h2>Команда</h2>
+        <div class="employee-list">
+          ${state.users.map(renderEmployeeCard).join("")}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderEmployeeCard(user) {
+  return `
+    <form class="employee-card" data-user-row="${user.id}" style="--employee-color:${user.color || "#ff6633"}">
+      <div class="employee-card-head">
+        <strong>${user.name}</strong>
+        <span>${user.active === false ? "неактивен" : "активен"}</span>
+      </div>
+      <div class="form-grid">
+        <div class="field"><label>Имя</label><input name="name" value="${user.name}" /></div>
+        <div class="field"><label>Должность</label><input name="position" value="${user.position || ""}" /></div>
+        <div class="field"><label>Роль</label><select name="positionRole">${employeeRoles.map((role) => `<option ${((user.position || "") === role) ? "selected" : ""}>${role}</option>`).join("")}</select></div>
+        <div class="field"><label>Процент</label><input name="percent" type="number" min="0" max="100" step="1" value="${user.percent || 0}" /></div>
+        <div class="field"><label>Фикс. ставка</label><input name="fixedRate" type="number" min="0" step="1" value="${user.fixedRate || 0}" /></div>
+        <div class="field"><label>Цвет</label><input name="color" type="color" value="${user.color || "#ff6633"}" /></div>
+        <div class="field"><label>Телефон</label><input name="phone" value="${user.phone || ""}" /></div>
+        <div class="field"><label>Telegram</label><input name="telegram" value="${user.telegram || ""}" /></div>
+        <div class="field"><label>Доступ</label><select name="role"><option value="staff" ${user.role !== "admin" ? "selected" : ""}>Сотрудник</option><option value="admin" ${user.role === "admin" ? "selected" : ""}>Админ</option></select></div>
+        <label class="check-row"><input name="active" type="checkbox" ${user.active !== false ? "checked" : ""} /> активен</label>
+      </div>
+      <div class="actions">
+        <button class="btn secondary" type="button" data-save-user="${user.id}">Сохранить</button>
+        ${user.id !== currentUser().id ? `<button class="btn danger" type="button" data-remove-user="${user.id}">Удалить</button>` : ""}
+      </div>
+    </form>
+  `;
+}
+
+function renderProfileSettings() {
+  return `
+    <div class="settings-grid single">
+      <section>
+        <h2>Профиль администратора</h2>
+        <p class="muted">Отображаемое имя администратора во всём интерфейсе: <strong>AE XL</strong>.</p>
+        <div class="list">
+          <div class="list-item"><span>Текущий пользователь</span><strong>${currentUser().name}</strong></div>
+          <div class="list-item"><span>Роль</span><strong>${isAdmin() ? "администратор" : "сотрудник"}</strong></div>
         </div>
       </section>
     </div>
@@ -1671,6 +2116,46 @@ function bookingFromForm(data) {
   };
 }
 
+function upsertClientFromBooking(booking) {
+  const name = String(booking.client || "").trim();
+  if (!name) return;
+  const existing = state.clients.find((client) => client.name === name);
+  const payload = {
+    id: existing?.id || crypto.randomUUID(),
+    name,
+    phone: booking.phone || existing?.phone || "",
+    telegram: booking.telegram || existing?.telegram || "",
+    comment: existing?.comment || ""
+  };
+  if (existing) {
+    state.clients = state.clients.map((client) => (client.id === existing.id ? payload : client));
+  } else {
+    state.clients.push(payload);
+  }
+}
+
+function upsertClientFromPayment(payment) {
+  const name = String(payment.client || "").trim();
+  if (!name) return;
+  const existing = state.clients.find((client) => client.name === name);
+  const payload = {
+    id: existing?.id || crypto.randomUUID(),
+    name,
+    phone: existing?.phone || "",
+    telegram: existing?.telegram || "",
+    comment: existing?.comment || ""
+  };
+  if (existing) {
+    state.clients = state.clients.map((client) => (client.id === existing.id ? payload : client));
+  } else {
+    state.clients.push(payload);
+  }
+}
+
+function syncServicesFromCatalog() {
+  state.services = catalogServices().map((service) => service.name);
+}
+
 function paymentFromBooking(booking) {
   const category = classifyService(booking.service);
   const soundEngineer = ["recording", "studioProduction"].includes(category) ? booking.employee : "";
@@ -1695,7 +2180,13 @@ function completeBooking(bookingId) {
   if (!booking) return;
 
   booking.status = "завершено";
-  if (!booking.paymentId && !state.payments.some((payment) => payment.bookingId === booking.id)) {
+  upsertClientFromBooking(booking);
+  const existingPayment = state.payments.find((payment) => payment.id === booking.paymentId || payment.bookingId === booking.id);
+  if (existingPayment) {
+    const updatedPayment = { ...paymentFromBooking(booking), id: existingPayment.id };
+    state.payments = state.payments.map((payment) => (payment.id === existingPayment.id ? updatedPayment : payment));
+    booking.paymentId = existingPayment.id;
+  } else {
     const payment = paymentFromBooking(booking);
     state.payments.push(payment);
     booking.paymentId = payment.id;
@@ -1728,7 +2219,18 @@ function bindCommonEvents() {
       view = button.dataset.view;
       editingPaymentId = null;
       editingBookingId = null;
+      bookingModalOpen = false;
+      bookingSlotDraft = null;
       if (view !== "clients") selectedClientName = null;
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-action='openBookingModal']").forEach((button) => {
+    button.addEventListener("click", () => {
+      editingBookingId = null;
+      bookingSlotDraft = null;
+      bookingModalOpen = true;
       render();
     });
   });
@@ -1743,6 +2245,105 @@ function bindCommonEvents() {
 }
 
 function bindViewEvents() {
+  document.querySelector("[data-action='prevWeek']")?.addEventListener("click", () => {
+    calendarWeekStart = addDays(calendarWeekStart, -7);
+    render();
+  });
+
+  document.querySelector("[data-action='nextWeek']")?.addEventListener("click", () => {
+    calendarWeekStart = addDays(calendarWeekStart, 7);
+    render();
+  });
+
+  document.querySelector("[data-action='todayWeek']")?.addEventListener("click", () => {
+    calendarWeekStart = weekStart(new Date().toISOString().slice(0, 10));
+    render();
+  });
+
+  document.querySelectorAll("[data-calendar-slot]").forEach((slot) => {
+    slot.addEventListener("click", () => {
+      const [date, time] = slot.dataset.calendarSlot.split("|");
+      editingBookingId = null;
+      bookingSlotDraft = { date, time, status: "подтверждено" };
+      bookingModalOpen = true;
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-calendar-booking]").forEach((card) => {
+    card.addEventListener("click", (event) => {
+      event.stopPropagation();
+      editingBookingId = card.dataset.calendarBooking;
+      bookingSlotDraft = null;
+      bookingModalOpen = true;
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-action='closeBookingModal']").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      if (event.target !== button && button.classList.contains("modal-backdrop")) return;
+      bookingModalOpen = false;
+      editingBookingId = null;
+      bookingSlotDraft = null;
+      render();
+    });
+  });
+
+  document.querySelector("#bookingServiceSelect")?.addEventListener("change", (event) => {
+    const service = serviceByName(event.target.value);
+    if (!service) return;
+    const amount = document.querySelector("#bookingAmountInput");
+    const duration = document.querySelector("#bookingDurationInput");
+    if (amount) amount.value = service.price || 0;
+    if (duration) duration.value = service.duration || "1 час";
+  });
+
+  document.querySelector("#bookingModalForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(event.target));
+    const booking = bookingFromForm(data);
+    if (data.id) {
+      state.bookings = state.bookings.map((item) => (item.id === data.id ? booking : item));
+    } else {
+      state.bookings.push(booking);
+    }
+    upsertClientFromBooking(booking);
+    if (booking.status === "завершено") completeBooking(booking.id);
+    bookingModalOpen = false;
+    editingBookingId = null;
+    bookingSlotDraft = null;
+    saveState();
+    render();
+  });
+
+  document.querySelector("[data-action='completeBookingFromModal']")?.addEventListener("click", () => {
+    if (!editingBookingId) return;
+    completeBooking(editingBookingId);
+    bookingModalOpen = false;
+    editingBookingId = null;
+    saveState();
+    render();
+  });
+
+  document.querySelector("[data-action='cancelBookingFromModal']")?.addEventListener("click", () => {
+    if (!editingBookingId) return;
+    state.bookings = state.bookings.map((booking) => (booking.id === editingBookingId ? { ...booking, status: "отменено" } : booking));
+    bookingModalOpen = false;
+    editingBookingId = null;
+    saveState();
+    render();
+  });
+
+  document.querySelector("[data-action='deleteBookingFromModal']")?.addEventListener("click", () => {
+    if (!editingBookingId || !confirm("Удалить запись?")) return;
+    state.bookings = state.bookings.filter((booking) => booking.id !== editingBookingId);
+    bookingModalOpen = false;
+    editingBookingId = null;
+    saveState();
+    render();
+  });
+
   document.querySelector("#searchPayments")?.addEventListener("input", (event) => {
     clientFilter = event.target.value;
     selectedClientName = null;
@@ -1762,6 +2363,93 @@ function bindViewEvents() {
   document.querySelector("#bookingServiceFilter")?.addEventListener("change", (event) => {
     bookingServiceFilter = event.target.value;
     render();
+  });
+
+  document.querySelectorAll("[data-settings-tab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      settingsTab = button.dataset.settingsTab;
+      render();
+    });
+  });
+
+  document.querySelector("#serviceGroupForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(event.target));
+    state.serviceGroups.push({
+      id: crypto.randomUUID(),
+      name: data.name.trim(),
+      order: Number(data.order || state.serviceGroups.length + 1)
+    });
+    saveState();
+    render();
+  });
+
+  document.querySelectorAll("[data-save-service-group]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const row = document.querySelector(`[data-service-group-row="${button.dataset.saveServiceGroup}"]`);
+      const data = Object.fromEntries(new FormData(row));
+      state.serviceGroups = state.serviceGroups.map((group) =>
+        group.id === button.dataset.saveServiceGroup ? { ...group, name: data.name.trim(), order: Number(data.order || group.order) } : group
+      );
+      saveState();
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-delete-service-group]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = button.dataset.deleteServiceGroup;
+      if (state.serviceItems.some((service) => service.categoryId === id)) {
+        alert("Сначала перенеси или удали услуги этой категории.");
+        return;
+      }
+      if (!confirm("Удалить категорию?")) return;
+      state.serviceGroups = state.serviceGroups.filter((group) => group.id !== id);
+      saveState();
+      render();
+    });
+  });
+
+  document.querySelector("#serviceItemForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(event.target));
+    state.serviceItems.push({
+      id: crypto.randomUUID(),
+      name: data.name.trim(),
+      categoryId: data.categoryId,
+      price: Number(data.price || 0),
+      duration: data.duration.trim() || "1 час",
+      order: Number(data.order || state.serviceItems.length + 1),
+      mode: "fixed"
+    });
+    syncServicesFromCatalog();
+    saveState();
+    render();
+  });
+
+  document.querySelectorAll("[data-save-service-item]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const row = document.querySelector(`[data-service-item-row="${button.dataset.saveServiceItem}"]`);
+      const data = Object.fromEntries(new FormData(row));
+      state.serviceItems = state.serviceItems.map((service) =>
+        service.id === button.dataset.saveServiceItem
+          ? { ...service, name: data.name.trim(), categoryId: data.categoryId, price: Number(data.price || 0), duration: data.duration.trim() || "1 час", order: Number(data.order || service.order) }
+          : service
+      );
+      syncServicesFromCatalog();
+      saveState();
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-delete-service-item]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!confirm("Удалить услугу?")) return;
+      state.serviceItems = state.serviceItems.filter((service) => service.id !== button.dataset.deleteServiceItem);
+      syncServicesFromCatalog();
+      saveState();
+      render();
+    });
   });
 
   document.querySelector("#categorySelect")?.addEventListener("change", (event) => {
@@ -1866,6 +2554,7 @@ function bindViewEvents() {
     const paymentCategoryKey = classifyService(data.service);
     const soundEngineer = ["recording", "studioProduction"].includes(paymentCategoryKey) ? data.soundEngineer : "";
     const performer = paymentCategoryKey === "online" ? data.performer : "";
+    const previousPayment = state.payments.find((item) => item.id === data.id);
     const payment = {
       id: data.id || crypto.randomUUID(),
       date: data.date,
@@ -1876,13 +2565,15 @@ function bindViewEvents() {
       comment: data.comment.trim(),
       soundEngineer,
       performer,
-      employee: soundEngineer || performer || ""
+      employee: soundEngineer || performer || "",
+      bookingId: previousPayment?.bookingId || ""
     };
     if (data.id) {
       state.payments = state.payments.map((item) => (item.id === data.id ? payment : item));
     } else {
       state.payments.push(payment);
     }
+    upsertClientFromPayment(payment);
     editingPaymentId = null;
     saveState();
     render();
@@ -1897,6 +2588,7 @@ function bindViewEvents() {
     } else {
       state.bookings.push(booking);
     }
+    upsertClientFromBooking(booking);
     if (booking.status === "завершено") {
       completeBooking(booking.id);
     }
@@ -1938,7 +2630,16 @@ function bindViewEvents() {
   document.querySelectorAll("[data-edit-booking]").forEach((button) => {
     button.addEventListener("click", () => {
       editingBookingId = button.dataset.editBooking;
-      view = "bookings";
+      bookingModalOpen = true;
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-open-booking]").forEach((card) => {
+    card.addEventListener("click", (event) => {
+      if (event.target.closest("button")) return;
+      editingBookingId = card.dataset.openBooking;
+      bookingModalOpen = true;
       render();
     });
   });
@@ -2000,9 +2701,47 @@ function bindViewEvents() {
       alert("Такой логин уже есть");
       return;
     }
-    state.users.push({ id: crypto.randomUUID(), ...data });
+    state.users.push({
+      id: crypto.randomUUID(),
+      name: data.name.trim(),
+      login: data.login.trim(),
+      password: data.password,
+      role: data.role === "Администратор" || data.role === "Владелец" ? "admin" : "staff",
+      position: data.position || data.role || "Другое",
+      percent: Number(data.percent || 0),
+      fixedRate: Number(data.fixedRate || 0),
+      color: data.color || "#ff6633",
+      phone: data.phone.trim(),
+      telegram: data.telegram.trim(),
+      active: true
+    });
     saveState();
     render();
+  });
+
+  document.querySelectorAll("[data-save-user]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const row = document.querySelector(`[data-user-row="${button.dataset.saveUser}"]`);
+      const data = Object.fromEntries(new FormData(row));
+      state.users = state.users.map((user) =>
+        user.id === button.dataset.saveUser
+          ? {
+              ...user,
+              name: data.name.trim(),
+              position: data.positionRole || data.position || user.position,
+              percent: Number(data.percent || 0),
+              fixedRate: Number(data.fixedRate || 0),
+              color: data.color || user.color,
+              phone: data.phone || "",
+              telegram: data.telegram || "",
+              role: data.role,
+              active: data.active === "on"
+            }
+          : user
+      );
+      saveState();
+      render();
+    });
   });
 
   document.querySelectorAll("[data-remove-user]").forEach((button) => {
