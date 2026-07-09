@@ -7,11 +7,11 @@ const defaultServiceGroups = [
   { id: "recording", name: "Запись", order: 1 },
   { id: "mixing", name: "Сведение", order: 2 },
   { id: "education", name: "Обучение", order: 3 },
-  { id: "production", name: "Продакшн", order: 4 },
-  { id: "consulting", name: "Консультации", order: 5 },
+  { id: "consulting", name: "Консультации", order: 4 },
+  { id: "production", name: "Продакшн", order: 5 },
   { id: "design", name: "Дизайн", order: 6 },
   { id: "rent", name: "Аренда", order: 7 },
-  { id: "extra", name: "Доп. услуги", order: 8 }
+  { id: "extra", name: "Дополнительные услуги", order: 8 }
 ];
 
 const defaultServiceItems = [
@@ -71,6 +71,7 @@ const defaultState = {
   ],
   bookings: [],
   payouts: [],
+  expenses: [],
   payoutResetVersion: PAYOUT_RESET_VERSION
 };
 
@@ -180,11 +181,12 @@ const budgetRules = {
 
 let state = loadState();
 state = normalizeState(state);
-let view = "calendar";
+let view = "dashboard";
 let editingPaymentId = null;
 let editingBookingId = null;
 let bookingModalOpen = false;
 let bookingSlotDraft = null;
+let selectedBookingId = null;
 let calendarWeekStart = weekStart(new Date().toISOString().slice(0, 10));
 let clientFilter = "";
 let bookingDateFilter = "";
@@ -238,7 +240,8 @@ function normalizeState(nextState) {
     price: Number(service.price || service.amount || 0),
     duration: service.duration || "1 час",
     order: Number(service.order || index + 1),
-    mode: service.mode || "fixed"
+    mode: service.mode || "fixed",
+    active: service.active !== false
   }));
   [...extraServices, ...customServices].forEach((name) => {
     if (!serviceItems.some((service) => service.name === name)) {
@@ -250,7 +253,8 @@ function normalizeState(nextState) {
         price: servicePriceRuleFromStatic(name).price || 0,
         duration: durationFromServiceName(name),
         order: serviceItems.length + 1,
-        mode: servicePriceRuleFromStatic(name).mode || "manual"
+        mode: servicePriceRuleFromStatic(name).mode || "manual",
+        active: true
       });
     }
   });
@@ -262,7 +266,7 @@ function normalizeState(nextState) {
     login: user.login || `staff${index + 1}`,
     password: user.password || "1234",
     role: user.role || "staff",
-    position: user.position || (user.role === "admin" ? "Администратор" : "Звукорежиссёр"),
+    position: (user.name === "Я" || user.name === "AE XL") ? "Владелец" : user.position || (user.role === "admin" ? "Администратор" : "Звукорежиссёр"),
     percent: Number(user.percent || 0),
     fixedRate: Number(user.fixedRate || 0),
     color: user.color || (index === 0 ? "#ff6633" : "#7c8cff"),
@@ -297,7 +301,15 @@ function normalizeState(nextState) {
     employee: booking.employee === "Я" ? "AE XL" : booking.employee || users[0]?.name || "",
     comment: booking.comment || "",
     status: bookingStatuses.includes(booking.status) ? booking.status : "заявка",
-    paymentId: booking.paymentId || ""
+    paymentId: booking.paymentId || "",
+    statusHistory: booking.statusHistory || [{ status: booking.status || "заявка", at: new Date().toISOString(), user: "Система", note: "создана запись" }]
+  }));
+  const expenses = (nextState.expenses || []).map((expense) => ({
+    id: expense.id || crypto.randomUUID(),
+    date: expense.date || new Date().toISOString().slice(0, 10),
+    title: expense.title || "Расход",
+    amount: Number(expense.amount || 0),
+    comment: expense.comment || ""
   }));
   const clientMap = new Map((nextState.clients || []).map((client) => [client.name, client]));
   [...payments, ...bookings].forEach((item) => {
@@ -322,6 +334,7 @@ function normalizeState(nextState) {
     payments,
     bookings,
     payouts: shouldResetPayouts ? [] : nextState.payouts || [],
+    expenses,
     payoutResetVersion: PAYOUT_RESET_VERSION
   };
 }
@@ -434,7 +447,9 @@ function render() {
         ${view === "calendar" ? renderCalendar() : ""}
         ${view === "dashboard" ? renderDashboard() : ""}
         ${view === "bookings" ? renderBookings() : ""}
+        ${view === "finance" ? renderFinance() : ""}
         ${view === "payments" ? renderPayments() : ""}
+        ${view === "payouts" ? renderPayouts() : ""}
         ${view === "clients" ? renderClients() : ""}
         ${view === "budget" ? renderBudget() : ""}
         ${view === "reports" ? renderReports() : ""}
@@ -493,101 +508,6 @@ function renderLogin() {
   });
 }
 
-function renderClientBooking() {
-  const selectedService = firstServiceForCategory("recording");
-  const priceRule = servicePriceRule(selectedService);
-  app.innerHTML = `
-    <section class="login-screen client-booking-screen">
-      <form class="card login-card client-booking-card" id="clientBookingForm">
-        <div class="brand">
-          <img class="brand-mark" src="krug-logo.svg" alt="КРУГ" />
-          <div>
-            <strong>КРУГ</strong>
-            <span>клиентская запись</span>
-          </div>
-        </div>
-        <h1>Записаться в студию</h1>
-        <div class="form-grid">
-          <div class="field full">
-            <label>Услуга</label>
-            <select name="service" id="clientBookingService" required>
-              ${state.services.map((service) => `<option ${service === selectedService ? "selected" : ""}>${service}</option>`).join("")}
-            </select>
-          </div>
-          <div class="field">
-            <label>Дата</label>
-            <input name="date" type="date" required value="${new Date().toISOString().slice(0, 10)}" />
-          </div>
-          <div class="field">
-            <label>Время</label>
-            <input name="time" type="time" required value="12:00" />
-          </div>
-          <div class="field">
-            <label>Имя</label>
-            <input name="client" required />
-          </div>
-          <div class="field">
-            <label>Телефон</label>
-            <input name="phone" />
-          </div>
-          <div class="field">
-            <label>Telegram</label>
-            <input name="telegram" />
-          </div>
-          <div class="field">
-            <label>Длительность</label>
-            <input name="duration" value="1 час" />
-          </div>
-          <div class="field full">
-            <label>Комментарий</label>
-            <textarea name="comment"></textarea>
-          </div>
-          <button class="btn" type="submit">Отправить заявку</button>
-          <button class="btn secondary" type="button" data-action="backFromClientBooking">${currentUser() ? "Вернуться в CRM" : "Войти в CRM"}</button>
-        </div>
-        <p class="muted client-booking-note">После отправки заявка появится у студии в разделе “Записи”.</p>
-      </form>
-    </section>
-  `;
-
-  document.querySelector("#clientBookingService")?.addEventListener("change", (event) => {
-    const rule = servicePriceRule(event.target.value);
-    document.querySelector("#clientBookingForm").dataset.amount = String(rule.price || 0);
-  });
-  document.querySelector("#clientBookingForm").dataset.amount = String(priceRule.price || 0);
-  document.querySelector("#clientBookingForm")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const data = Object.fromEntries(new FormData(event.target));
-    if (!data.phone.trim() && !data.telegram.trim()) {
-      alert("Укажи телефон или telegram, чтобы студия могла связаться.");
-      return;
-    }
-    state.bookings.push({
-      id: crypto.randomUUID(),
-      date: data.date,
-      time: data.time,
-      duration: data.duration.trim() || "1 час",
-      client: data.client.trim(),
-      phone: data.phone.trim(),
-      telegram: data.telegram.trim(),
-      service: data.service,
-      amount: Number(event.target.dataset.amount || 0),
-      employee: "",
-      comment: data.comment.trim(),
-      status: "заявка",
-      paymentId: ""
-    });
-    saveState();
-    alert("Заявка отправлена. Студия увидит её в разделе “Записи”.");
-    event.target.reset();
-    renderClientBooking();
-  });
-  document.querySelector("[data-action='backFromClientBooking']")?.addEventListener("click", () => {
-    view = currentUser() ? "bookings" : "dashboard";
-    render();
-  });
-}
-
 function renderSidebar() {
   return `
     <aside class="sidebar">
@@ -610,11 +530,13 @@ function renderSidebar() {
 
 function navButtons() {
   const items = [
-    ["calendar", "Календарь"],
     ["dashboard", "Главная"],
+    ["calendar", "Календарь"],
     ["bookings", "Записи"],
-    ["payments", "Платежи"],
     ["clients", "Клиенты"],
+    ["finance", "Финансы"],
+    ["payments", "Платежи"],
+    ["payouts", "Выплаты"],
     ["budget", "Бюджет"],
     ["reports", "Отчёты"],
     ["settings", "Настройки"]
@@ -647,10 +569,12 @@ function renderTopbar() {
 
 function pageTitle() {
   return {
+    dashboard: "Главная",
     calendar: "Календарь",
-    dashboard: "Дашборд",
     bookings: "Записи",
     payments: "Платежи",
+    finance: "Финансы",
+    payouts: "Выплаты",
     clients: "Клиенты",
     budget: "Бюджет",
     reports: "Отчёты",
@@ -660,10 +584,12 @@ function pageTitle() {
 
 function pageSubtitle() {
   return {
+    dashboard: "Оперативный центр студии на сегодня.",
     calendar: "Недельное расписание студии и статусы записей.",
-    dashboard: "Ключевые цифры по доходу студии.",
     bookings: "Заявки, расписание и статусы студийных записей.",
     payments: "Добавление, поиск и редактирование оплат.",
+    finance: "Обзор доходов, расходов, прибыли, выплат и бюджета.",
+    payouts: "Плановые и выполненные выплаты.",
     clients: "База клиентов, история оплат и посещений.",
     budget: "Пять копилок студии и распределение дохода по правилам.",
     reports: "Разбивка по дням, неделям, месяцам, клиентам и сотрудникам.",
@@ -1025,73 +951,98 @@ function renderRankedList(entries) {
 }
 
 function renderDashboard() {
-  const total = state.payments.reduce((sum, item) => sum + Number(item.amount), 0);
   const today = new Date().toISOString().slice(0, 10);
   const month = today.slice(0, 7);
-  const clients = new Set(state.payments.map((item) => item.client.trim()).filter(Boolean));
   const monthTotal = state.payments.filter((item) => item.date.startsWith(month)).reduce((sum, item) => sum + Number(item.amount), 0);
   const todayTotal = state.payments.filter((item) => item.date === today).reduce((sum, item) => sum + Number(item.amount), 0);
-  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-  const yesterdayTotal = state.payments.filter((item) => item.date === yesterday).reduce((sum, item) => sum + Number(item.amount), 0);
-  const previousMonth = previousMonthKey(today);
-  const previousMonthTotal = state.payments.filter((item) => item.date.startsWith(previousMonth)).reduce((sum, item) => sum + Number(item.amount), 0);
-  const topClients = sortedEntries(groupSum(state.payments, (item) => item.client)).slice(0, 5);
-  const employeeIncome = sortedEntries(groupSum(state.payments, (item) => paymentTeamLabel(item) || "не указан"));
-  const dayEntries = lastDays(7).map((date) => [
-    date,
-    state.payments.filter((item) => item.date === date).reduce((sum, item) => sum + Number(item.amount), 0)
-  ]);
-  const sourceEntries = sortedEntries(groupSum(state.payments, (item) => categoryLabel(paymentCategory(item))));
-  const recentPayments = [...state.payments].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5);
-  const newClientsThisMonth = new Set(state.payments.filter((item) => item.date.startsWith(month)).map((item) => item.client)).size;
+  const todayBookings = state.bookings.filter((booking) => booking.date === today).sort((a, b) => a.time.localeCompare(b.time));
+  const pendingBookings = state.bookings.filter((booking) => booking.status === "заявка");
+  const nextBookings = todayBookings.filter((booking) => booking.status !== "отменено").slice(0, 5);
 
   return `
     <div class="grid stats dashboard-stats">
-      ${renderMetricCard("Сегодня", todayTotal, "Доход", percentChange(todayTotal, yesterdayTotal), "от вчера")}
-      ${renderMetricCard("Этот месяц", monthTotal, "Доход", percentChange(monthTotal, previousMonthTotal), "от прошлого")}
-      ${renderMetricCard("Всего", total, "Общий доход", 0, "за всё время")}
-      ${renderMetricCard("Клиенты", clients.size, "Активных", newClientsThisMonth, "за месяц", false)}
+      ${renderMetricCard("Выручка сегодня", todayTotal, "Доход", 0, "за день")}
+      ${renderMetricCard("Выручка за месяц", monthTotal, "Доход", 0, "за месяц")}
+      ${renderMetricCard("Записи сегодня", todayBookings.length, "В календаре", 0, "сегодня", false)}
+      ${renderMetricCard("Заявки", pendingBookings.length, "Ждут подтверждения", 0, "в работе", false)}
     </div>
-    <div class="dashboard-layout" style="margin-top:16px">
-      <section class="card section chart-card wide-card">
+    <div class="dashboard-layout studio-home" style="margin-top:16px">
+      <section class="card section wide-card">
         <div class="section-head">
-          <h2>Доход за 7 дней</h2>
-          <span class="select-chip">По дням</span>
+          <h2>Ближайшие записи сегодня</h2>
+          <button class="link-button" data-view="calendar">Открыть календарь</button>
         </div>
-        ${renderColumnChart(dayEntries)}
+        ${renderTodayTimeline(nextBookings)}
       </section>
-      <section class="card section chart-card">
-        <h2>Доход по категориям</h2>
-        ${renderDonutChart(sourceEntries)}
+      <section class="card section">
+        <h2>Заявки ожидают</h2>
+        ${renderBookingMiniList(pendingBookings.slice(0, 5))}
       </section>
       <section class="card section">
         <div class="section-head">
-          <h2>Последние платежи</h2>
-          <button class="link-button" data-view="payments">Все платежи</button>
+          <h2>Мини-таймлайн “Сегодня”</h2>
+          <span class="select-chip">${formatDate(today)}</span>
         </div>
-        ${renderRecentPayments(recentPayments)}
-      </section>
-      <section class="card section">
-        <div class="section-head">
-          <h2>Топ клиентов</h2>
-          <button class="link-button" data-view="clients">Все клиенты</button>
-        </div>
-        ${renderRankedList(topClients)}
-      </section>
-      <section class="card section">
-        <h2>Доход по исполнителям / звукорежам</h2>
-        ${renderBars(employeeIncome)}
+        ${renderTodayRows(todayBookings)}
       </section>
       <section class="card section wide-card">
         <h2>Быстрые действия</h2>
         <div class="quick-actions">
-          <button class="quick-action" data-view="bookings"><span>○</span>Записи</button>
-          <button class="quick-action" data-view="payments"><span>+</span>Новый платёж</button>
-          <button class="quick-action" data-view="clients"><span>◎</span>Клиенты</button>
-          <button class="quick-action" data-view="budget"><span>₽</span>Бюджет</button>
-          <button class="quick-action" data-view="reports"><span>↗</span>Отчёт</button>
+          <button class="quick-action" data-action="openBookingModal"><span>+</span>Добавить запись</button>
+          <button class="quick-action" data-view="payments"><span>₽</span>Добавить доход</button>
+          <button class="quick-action" data-view="finance"><span>−</span>Добавить расход</button>
+          <button class="quick-action" data-view="calendar"><span>○</span>Открыть календарь</button>
         </div>
       </section>
+    </div>
+  `;
+}
+
+function renderTodayTimeline(bookings) {
+  return `
+    <div class="timeline-list">
+      ${bookings
+        .map((booking) => `
+          <button class="timeline-row" data-open-booking="${booking.id}">
+            <strong>${booking.time}</strong>
+            <span>${booking.client || "Без имени"}</span>
+            <span>${booking.service}</span>
+            <em class="status-text status-${booking.status.replaceAll(" ", "-")}">${statusTitle(booking.status)}</em>
+          </button>
+        `)
+        .join("") || '<p class="muted">На сегодня записей пока нет</p>'}
+    </div>
+  `;
+}
+
+function renderTodayRows(bookings) {
+  return `
+    <div class="compact-list">
+      ${bookings
+        .map((booking) => `
+          <button class="compact-row timeline-button" data-open-booking="${booking.id}">
+            <span>${booking.time}</span>
+            <strong>${booking.client || "Без имени"} — ${booking.service}</strong>
+            <em>${statusTitle(booking.status)}</em>
+          </button>
+        `)
+        .join("") || '<p class="muted">Сегодня свободно</p>'}
+    </div>
+  `;
+}
+
+function renderBookingMiniList(bookings) {
+  return `
+    <div class="compact-list">
+      ${bookings
+        .map((booking) => `
+          <button class="compact-row timeline-button" data-open-booking="${booking.id}">
+            <span>${formatDate(booking.date)}</span>
+            <strong>${booking.client || "Без имени"}</strong>
+            <em>${booking.time}</em>
+          </button>
+        `)
+        .join("") || '<p class="muted">Нет заявок на подтверждение</p>'}
     </div>
   `;
 }
@@ -1134,23 +1085,28 @@ function renderCalendar() {
           <p class="muted">Нажми на свободный слот, чтобы добавить запись. Нажми на запись, чтобы открыть редактирование.</p>
         </div>
         <div class="actions">
-          <button class="btn secondary" data-action="prevWeek">← Неделя</button>
+          <button class="btn secondary" data-action="prevWeek">Назад</button>
           <button class="btn secondary" data-action="todayWeek">Сегодня</button>
-          <button class="btn secondary" data-action="nextWeek">Неделя →</button>
+          <button class="btn secondary" data-action="nextWeek">Вперёд</button>
+          <span class="select-chip">Неделя</span>
+          <button class="btn" data-action="openBookingModal">Добавить запись</button>
         </div>
       </div>
-      <section class="card calendar-grid">
-        <div class="calendar-corner"></div>
-        ${days.map((day) => `<div class="calendar-day-head ${day === today ? "today" : ""}"><strong>${weekdayLabel(day)}</strong></div>`).join("")}
-        ${hours
-          .map(
-            (hour) => `
-              <div class="calendar-hour">${String(hour).padStart(2, "0")}:00</div>
-              ${days.map((day) => renderCalendarSlot(day, hour, today)).join("")}
-            `
-          )
-          .join("")}
-      </section>
+      <div class="calendar-workspace">
+        <section class="card calendar-grid">
+          <div class="calendar-corner"></div>
+          ${days.map((day) => `<div class="calendar-day-head ${day === today ? "today" : ""}"><strong>${weekdayLabel(day)}</strong></div>`).join("")}
+          ${hours
+            .map(
+              (hour) => `
+                <div class="calendar-hour">${String(hour).padStart(2, "0")}:00</div>
+                ${days.map((day) => renderCalendarSlot(day, hour, today)).join("")}
+              `
+            )
+            .join("")}
+        </section>
+        ${renderBookingDetailsPanel()}
+      </div>
     </section>
   `;
 }
@@ -1158,11 +1114,21 @@ function renderCalendar() {
 function renderCalendarSlot(day, hour, today) {
   const hourText = `${String(hour).padStart(2, "0")}:`;
   const bookings = state.bookings.filter((booking) => booking.date === day && String(booking.time || "").startsWith(hourText));
+  const currentLine = day === today && currentHourLine(hour);
   return `
     <button class="calendar-slot ${day === today ? "today" : ""}" data-calendar-slot="${day}|${String(hour).padStart(2, "0")}:00">
+      ${currentLine ? `<span class="current-time-line" style="top:${currentLine}%"></span>` : ""}
       ${bookings.map(renderCalendarBooking).join("")}
     </button>
   `;
+}
+
+function currentHourLine(hour) {
+  const now = new Date();
+  const currentHour = now.getHours();
+  if (currentHour !== hour) return 0;
+  if (currentHour < CALENDAR_START_HOUR || currentHour > CALENDAR_END_HOUR) return 0;
+  return Math.max(4, Math.min(96, (now.getMinutes() / 60) * 100));
 }
 
 function renderCalendarBooking(booking) {
@@ -1177,9 +1143,58 @@ function renderCalendarBooking(booking) {
   `;
 }
 
+function renderBookingDetailsPanel() {
+  const booking = state.bookings.find((item) => item.id === selectedBookingId);
+  if (!booking) {
+    return `
+      <aside class="card section booking-details empty">
+        <h2>Детали записи</h2>
+        <p class="muted">Выбери запись в календаре.</p>
+      </aside>
+    `;
+  }
+
+  return `
+    <aside class="card section booking-details">
+      <div class="section-head">
+        <h2>${booking.client || "Без имени"}</h2>
+        <span class="status-pill status-${booking.status.replaceAll(" ", "-")}">${statusTitle(booking.status)}</span>
+      </div>
+      <div class="details-list">
+        ${renderDetailRow("Услуга", booking.service)}
+        ${renderDetailRow("Дата", formatDate(booking.date))}
+        ${renderDetailRow("Время", booking.time)}
+        ${renderDetailRow("Длительность", booking.duration)}
+        ${renderDetailRow("Телефон", booking.phone || "не указан")}
+        ${renderDetailRow("Telegram", booking.telegram || "не указан")}
+        ${renderDetailRow("Сумма", money(booking.amount))}
+        ${renderDetailRow("Сотрудник", booking.employee || "не указан")}
+        ${renderDetailRow("Комментарий", booking.comment || "нет")}
+      </div>
+      <div class="booking-side-actions">
+        <button class="btn secondary" data-side-edit-booking="${booking.id}">Редактировать</button>
+        <button class="btn" data-side-status-booking="${booking.id}" data-status="завершено">Завершить</button>
+        <button class="btn secondary" data-side-status-booking="${booking.id}" data-status="в процессе">В процесс</button>
+        <button class="btn danger" data-side-status-booking="${booking.id}" data-status="отменено">Отменить</button>
+        <button class="btn danger" data-side-delete-booking="${booking.id}">Удалить запись</button>
+      </div>
+      <div class="status-history">
+        <h3>История статусов</h3>
+        ${(booking.statusHistory || []).map((item) => `<div><span>${new Date(item.at).toLocaleString("ru-RU")}</span><strong>${statusTitle(item.status)}</strong><small>${item.user || "Система"} · ${item.note || ""}</small></div>`).join("") || '<p class="muted">Истории пока нет</p>'}
+      </div>
+    </aside>
+  `;
+}
+
+function renderDetailRow(label, value) {
+  return `<div><span>${label}</span><strong>${value}</strong></div>`;
+}
+
 function renderBookingModal() {
   const booking = state.bookings.find((item) => item.id === editingBookingId) || bookingSlotDraft || {};
   const service = serviceByName(booking.service) || catalogServices()[0] || {};
+  const selectedCategoryId = service.categoryId || catalogGroups()[0]?.id || "";
+  const visibleServices = catalogServices().filter((item) => item.categoryId === selectedCategoryId && (item.active !== false || item.name === booking.service));
   const defaultEmployee = currentUser()?.name || activeEmployees()[0]?.name || "";
   const status = booking.status || "подтверждено";
 
@@ -1208,17 +1223,15 @@ function renderBookingModal() {
             <input name="telegram" value="${booking.telegram || ""}" />
           </div>
           <div class="field">
+            <label>Категория услуги</label>
+            <select name="categoryId" id="bookingCategorySelect" required>
+              ${catalogGroups().map((group) => `<option value="${group.id}" ${selectedCategoryId === group.id ? "selected" : ""}>${group.name}</option>`).join("")}
+            </select>
+          </div>
+          <div class="field">
             <label>Услуга</label>
             <select name="service" id="bookingServiceSelect" required>
-              ${catalogGroups()
-                .map((group) => {
-                  const options = catalogServices()
-                    .filter((item) => item.categoryId === group.id)
-                    .map((item) => `<option value="${item.name}" ${((booking.service || service.name) === item.name) ? "selected" : ""}>${item.name}</option>`)
-                    .join("");
-                  return options ? `<optgroup label="${group.name}">${options}</optgroup>` : "";
-                })
-                .join("")}
+              ${visibleServices.map((item) => `<option value="${item.name}" ${((booking.service || service.name) === item.name) ? "selected" : ""}>${item.name}</option>`).join("")}
             </select>
           </div>
           <div class="field">
@@ -1336,6 +1349,7 @@ function renderBookingCard(booking) {
 function renderBookingForm() {
   const booking = state.bookings.find((item) => item.id === editingBookingId) || {};
   const selectedService = booking.service || catalogServices()[0]?.name || "";
+  const selectableBookingServices = catalogServices().filter((service) => service.active !== false || service.name === selectedService);
   const priceRule = servicePriceRule(selectedService);
   const amountValue = booking.amount || priceRule.price || "";
   const defaultUser = currentUser()?.name || state.users[0]?.name || "";
@@ -1365,7 +1379,7 @@ function renderBookingForm() {
           <select name="service" id="serviceSelect" required>
             ${catalogGroups()
               .map((group) => {
-                const options = catalogServices()
+                const options = selectableBookingServices
                   .filter((service) => service.categoryId === group.id)
                   .map((service) => `<option value="${service.name}" ${selectedService === service.name ? "selected" : ""}>${service.name}</option>`)
                   .join("");
@@ -1415,6 +1429,7 @@ function renderPayments() {
   const formTitle = editingPaymentId ? "Редактировать оплату" : "Новая оплата";
   const payment = state.payments.find((item) => item.id === editingPaymentId) || {};
   const selectedService = payment.service || catalogServices()[0]?.name || "";
+  const selectablePaymentServices = catalogServices().filter((service) => service.active !== false || service.name === selectedService);
   const priceRule = servicePriceRule(selectedService);
   const amountValue = payment.amount || priceRule.price || "";
   const defaultUser = currentUser()?.name || state.users[0]?.name || "";
@@ -1460,7 +1475,7 @@ function renderPayments() {
             <select name="service" id="serviceSelect" required>
               ${catalogGroups()
                 .map((group) => {
-                  const options = catalogServices()
+                  const options = selectablePaymentServices
                     .filter((service) => service.categoryId === group.id)
                     .map((service) => `<option value="${service.name}" ${selectedService === service.name ? "selected" : ""}>${service.name}</option>`)
                     .join("");
@@ -1569,13 +1584,14 @@ function renderClients() {
 
 function renderClientCard(name, total) {
   const stats = clientStats(name);
+  const client = state.clients.find((item) => item.name === name) || {};
   const lastLabel = stats.lastDate ? formatDate(stats.lastDate) : "пока нет";
   return `
     <button class="list-item client-item" data-client="${encodeURIComponent(name)}">
       <div>
         <h3>${name}</h3>
         <span class="muted">Посещений: ${stats.visits}. Последний визит: ${lastLabel}</span>
-        <div class="muted">Записей в истории: ${stats.bookings.length}</div>
+        <div class="muted">${client.phone || "телефон не указан"} · ${client.telegram || "telegram не указан"}</div>
       </div>
       <strong>${money(total)}</strong>
     </button>
@@ -1587,6 +1603,7 @@ function renderClientDetail(name) {
   const history = stats.payments.sort((a, b) => b.date.localeCompare(a.date));
   const bookingHistory = stats.bookings.sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`));
   const total = stats.total;
+  const client = state.clients.find((item) => item.name === name) || {};
 
   if (!history.length && !bookingHistory.length) {
     selectedClientName = null;
@@ -1603,6 +1620,7 @@ function renderClientDetail(name) {
         <div>
           <h2>${name}</h2>
           <p class="muted">Последний визит: ${stats.lastDate ? formatDate(stats.lastDate) : "пока нет"}. Общая сумма оплат: ${money(total)}.</p>
+          <p class="muted">${client.phone || "телефон не указан"} · ${client.telegram || "telegram не указан"}</p>
         </div>
         <div class="client-profile-stats">
           <article><span>Оплаты</span><strong>${money(total)}</strong></article>
@@ -1699,6 +1717,76 @@ function renderBudget() {
           </table>
         </div>
       </section>
+    </div>
+  `;
+}
+
+function renderFinance() {
+  const income = state.payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  const expenses = (state.expenses || []).reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
+  const paidPayouts = (state.payouts || []).filter((payout) => payout.status === "Выплачено").reduce((sum, payout) => sum + Number(payout.amount || 0), 0);
+  const budget = calculateBudget();
+  const profit = income - expenses - paidPayouts;
+
+  return `
+    <div class="grid stats dashboard-stats">
+      ${renderMetricCard("Доходы", income, "Все платежи", 0, "за всё время")}
+      ${renderMetricCard("Расходы", expenses, "Ручные расходы", 0, "учтено")}
+      ${renderMetricCard("Прибыль", profit, "Доходы минус расходы и выплаты", 0, "итог")}
+      ${renderMetricCard("Выплаты", paidPayouts, "Выплачено", 0, "команде")}
+    </div>
+    <div class="grid two-col" style="margin-top:16px">
+      <section class="card section">
+        <h2>Добавить расход</h2>
+        <form id="expenseForm" class="form-grid">
+          <div class="field"><label>Дата</label><input name="date" type="date" required value="${new Date().toISOString().slice(0, 10)}" /></div>
+          <div class="field"><label>Название</label><input name="title" required placeholder="Аренда, расходники, реклама" /></div>
+          <div class="field"><label>Сумма</label><input name="amount" type="number" min="1" step="1" required /></div>
+          <div class="field full"><label>Комментарий</label><textarea name="comment"></textarea></div>
+          <button class="btn" type="submit">Сохранить расход</button>
+        </form>
+      </section>
+      <section class="card section">
+        <h2>Бюджет / копилки</h2>
+        ${renderBudgetProgress(budgetWallets.map((wallet) => [wallet, budget.wallets[wallet]]))}
+      </section>
+      <section class="card section wide-card">
+        <h2>Последние расходы</h2>
+        <div class="list">
+          ${(state.expenses || []).slice(-8).reverse().map((expense) => `<div class="list-item"><span>${formatDate(expense.date)} · ${expense.title}<br><span class="muted">${expense.comment || ""}</span></span><strong>${money(expense.amount)}</strong></div>`).join("") || "Расходов пока нет"}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderPayouts() {
+  const paidPayouts = (state.payouts || []).filter((payout) => payout.status === "Выплачено");
+  const plannedPayouts = (state.payouts || []).filter((payout) => payout.status === "Запланировано");
+  return `
+    <section class="card section">
+      <div class="section-head">
+        <h2>Выплаты</h2>
+        <button class="btn payout-button" type="button" data-action="openPayout">Новая выплата</button>
+      </div>
+      <div class="grid two-col">
+        <section>
+          <h3>Запланированные</h3>
+          ${renderPayoutRows(plannedPayouts)}
+        </section>
+        <section>
+          <h3>Выплаченные</h3>
+          ${renderPayoutRows(paidPayouts)}
+        </section>
+      </div>
+    </section>
+  `;
+}
+
+function renderPayoutRows(payouts) {
+  return `
+    <div class="list">
+      ${payouts.map((payout) => `<div class="list-item"><span>${formatDate(payout.paidAt.slice(0, 10))} · ${payout.recipient}<br><span class="muted">${payout.service} · ${payout.method}</span></span><strong>${money(payout.amount)}</strong></div>`).join("") || "Выплат пока нет"}
     </div>
   `;
 }
@@ -1946,13 +2034,30 @@ function renderSettings() {
         ${[
           ["services", "Каталог услуг"],
           ["employees", "Сотрудники"],
+          ["payouts", "Выплаты"],
+          ["budget", "Бюджет / копилки"],
+          ["general", "Общие настройки"],
           ["profile", "Профиль"]
         ].map(([key, label]) => `<button class="${settingsTab === key ? "active" : ""}" data-settings-tab="${key}">${label}</button>`).join("")}
       </div>
       ${settingsTab === "services" ? renderServiceSettings() : ""}
       ${settingsTab === "employees" ? renderEmployeeSettings() : ""}
+      ${settingsTab === "payouts" ? renderSettingsPlaceholder("Выплаты", "Настройки правил выплат будут расширяться здесь. Текущие выплаты доступны в отдельном разделе “Выплаты”.") : ""}
+      ${settingsTab === "budget" ? renderSettingsPlaceholder("Бюджет / копилки", "Базовые правила копилок сохранены в текущей логике бюджета. Здесь заложена отдельная вкладка для дальнейшей настройки.") : ""}
+      ${settingsTab === "general" ? renderSettingsPlaceholder("Общие настройки", "Общие параметры CRM: профиль студии, уведомления и рабочее время можно будет развивать в этом разделе.") : ""}
       ${settingsTab === "profile" ? renderProfileSettings() : ""}
     </section>
+  `;
+}
+
+function renderSettingsPlaceholder(title, text) {
+  return `
+    <div class="settings-grid single">
+      <section>
+        <h2>${title}</h2>
+        <p class="muted">${text}</p>
+      </section>
+    </div>
   `;
 }
 
@@ -2009,6 +2114,7 @@ function renderServiceGroupBlock(group) {
             <input name="price" type="number" min="0" step="1" value="${service.price}" />
             <input name="duration" value="${service.duration}" />
             <input name="order" type="number" min="1" step="1" value="${service.order}" />
+            <label class="mini-check"><input name="active" type="checkbox" ${service.active !== false ? "checked" : ""} /> активна</label>
             <button class="icon-btn" title="Сохранить" data-save-service-item="${service.id}" type="button">✓</button>
             <button class="icon-btn" title="Удалить" data-delete-service-item="${service.id}" type="button">×</button>
           </form>
@@ -2099,6 +2205,7 @@ function renderBars(entries) {
 }
 
 function bookingFromForm(data) {
+  const existing = state.bookings.find((booking) => booking.id === data.id);
   return {
     id: data.id || crypto.randomUUID(),
     date: data.date,
@@ -2112,7 +2219,8 @@ function bookingFromForm(data) {
     employee: data.employee || "",
     comment: data.comment.trim(),
     status: bookingStatuses.includes(data.status) ? data.status : "подтверждено",
-    paymentId: state.bookings.find((booking) => booking.id === data.id)?.paymentId || ""
+    paymentId: existing?.paymentId || "",
+    statusHistory: existing?.statusHistory || []
   };
 }
 
@@ -2179,6 +2287,9 @@ function completeBooking(bookingId) {
   const booking = state.bookings.find((item) => item.id === bookingId);
   if (!booking) return;
 
+  if (booking.status !== "завершено") {
+    appendStatusHistory(booking, "завершено", "завершена");
+  }
   booking.status = "завершено";
   upsertClientFromBooking(booking);
   const existingPayment = state.payments.find((payment) => payment.id === booking.paymentId || payment.bookingId === booking.id);
@@ -2191,6 +2302,30 @@ function completeBooking(bookingId) {
     state.payments.push(payment);
     booking.paymentId = payment.id;
   }
+}
+
+function appendStatusHistory(booking, status, note = "") {
+  booking.statusHistory = booking.statusHistory || [];
+  booking.statusHistory.push({
+    status,
+    at: new Date().toISOString(),
+    user: currentUser()?.name || "Система",
+    note
+  });
+}
+
+function updateBookingStatus(bookingId, status) {
+  const booking = state.bookings.find((item) => item.id === bookingId);
+  if (!booking || !bookingStatuses.includes(status)) return;
+  if (status === "завершено") {
+    completeBooking(bookingId);
+    return;
+  }
+  if (booking.status !== status) {
+    appendStatusHistory(booking, status, status === "в процессе" ? "в процессе" : status === "отменено" ? "отменена" : "статус изменён");
+  }
+  booking.status = status;
+  upsertClientFromBooking(booking);
 }
 
 function clientStats(name) {
@@ -2273,9 +2408,36 @@ function bindViewEvents() {
   document.querySelectorAll("[data-calendar-booking]").forEach((card) => {
     card.addEventListener("click", (event) => {
       event.stopPropagation();
-      editingBookingId = card.dataset.calendarBooking;
+      selectedBookingId = card.dataset.calendarBooking;
+      editingBookingId = null;
       bookingSlotDraft = null;
+      bookingModalOpen = false;
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-side-edit-booking]").forEach((button) => {
+    button.addEventListener("click", () => {
+      editingBookingId = button.dataset.sideEditBooking;
       bookingModalOpen = true;
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-side-status-booking]").forEach((button) => {
+    button.addEventListener("click", () => {
+      updateBookingStatus(button.dataset.sideStatusBooking, button.dataset.status);
+      saveState();
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-side-delete-booking]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!confirm("Удалить запись?")) return;
+      state.bookings = state.bookings.filter((booking) => booking.id !== button.dataset.sideDeleteBooking);
+      selectedBookingId = null;
+      saveState();
       render();
     });
   });
@@ -2299,10 +2461,30 @@ function bindViewEvents() {
     if (duration) duration.value = service.duration || "1 час";
   });
 
+  document.querySelector("#bookingCategorySelect")?.addEventListener("change", (event) => {
+    const select = document.querySelector("#bookingServiceSelect");
+    if (!select) return;
+    const services = catalogServices().filter((service) => service.categoryId === event.target.value && service.active !== false);
+    select.innerHTML = services.map((service) => `<option value="${service.name}">${service.name}</option>`).join("");
+    const first = services[0];
+    if (!first) return;
+    select.value = first.name;
+    const amount = document.querySelector("#bookingAmountInput");
+    const duration = document.querySelector("#bookingDurationInput");
+    if (amount) amount.value = first.price || 0;
+    if (duration) duration.value = first.duration || "1 час";
+  });
+
   document.querySelector("#bookingModalForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.target));
     const booking = bookingFromForm(data);
+    const previousStatus = state.bookings.find((item) => item.id === booking.id)?.status;
+    if (!data.id) {
+      appendStatusHistory(booking, booking.status, "создана запись");
+    } else if (previousStatus && previousStatus !== booking.status && booking.status !== "завершено") {
+      appendStatusHistory(booking, booking.status, "статус изменён");
+    }
     if (data.id) {
       state.bookings = state.bookings.map((item) => (item.id === data.id ? booking : item));
     } else {
@@ -2310,6 +2492,7 @@ function bindViewEvents() {
     }
     upsertClientFromBooking(booking);
     if (booking.status === "завершено") completeBooking(booking.id);
+    selectedBookingId = booking.id;
     bookingModalOpen = false;
     editingBookingId = null;
     bookingSlotDraft = null;
@@ -2328,7 +2511,7 @@ function bindViewEvents() {
 
   document.querySelector("[data-action='cancelBookingFromModal']")?.addEventListener("click", () => {
     if (!editingBookingId) return;
-    state.bookings = state.bookings.map((booking) => (booking.id === editingBookingId ? { ...booking, status: "отменено" } : booking));
+    updateBookingStatus(editingBookingId, "отменено");
     bookingModalOpen = false;
     editingBookingId = null;
     saveState();
@@ -2413,14 +2596,15 @@ function bindViewEvents() {
   document.querySelector("#serviceItemForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.target));
-    state.serviceItems.push({
+      state.serviceItems.push({
       id: crypto.randomUUID(),
       name: data.name.trim(),
       categoryId: data.categoryId,
       price: Number(data.price || 0),
       duration: data.duration.trim() || "1 час",
       order: Number(data.order || state.serviceItems.length + 1),
-      mode: "fixed"
+      mode: "fixed",
+      active: true
     });
     syncServicesFromCatalog();
     saveState();
@@ -2433,7 +2617,7 @@ function bindViewEvents() {
       const data = Object.fromEntries(new FormData(row));
       state.serviceItems = state.serviceItems.map((service) =>
         service.id === button.dataset.saveServiceItem
-          ? { ...service, name: data.name.trim(), categoryId: data.categoryId, price: Number(data.price || 0), duration: data.duration.trim() || "1 час", order: Number(data.order || service.order) }
+          ? { ...service, name: data.name.trim(), categoryId: data.categoryId, price: Number(data.price || 0), duration: data.duration.trim() || "1 час", order: Number(data.order || service.order), active: data.active === "on" }
           : service
       );
       syncServicesFromCatalog();
@@ -2444,6 +2628,12 @@ function bindViewEvents() {
 
   document.querySelectorAll("[data-delete-service-item]").forEach((button) => {
     button.addEventListener("click", () => {
+      const service = state.serviceItems.find((item) => item.id === button.dataset.deleteServiceItem);
+      if (!service) return;
+      if (state.bookings.some((booking) => booking.service === service.name) || state.payments.some((payment) => payment.service === service.name)) {
+        alert("Эта услуга уже используется в записях или платежах. Её можно отключить, но не удалить.");
+        return;
+      }
       if (!confirm("Удалить услугу?")) return;
       state.serviceItems = state.serviceItems.filter((service) => service.id !== button.dataset.deleteServiceItem);
       syncServicesFromCatalog();
@@ -2534,6 +2724,21 @@ function bindViewEvents() {
       createdBy: currentUser()?.name || ""
     });
     payoutModalOpen = false;
+    saveState();
+    render();
+  });
+
+  document.querySelector("#expenseForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(event.target));
+    state.expenses = state.expenses || [];
+    state.expenses.push({
+      id: crypto.randomUUID(),
+      date: data.date,
+      title: data.title.trim(),
+      amount: Number(data.amount || 0),
+      comment: data.comment.trim()
+    });
     saveState();
     render();
   });
@@ -2648,11 +2853,7 @@ function bindViewEvents() {
     button.addEventListener("click", () => {
       const bookingId = button.dataset.bookingStatus;
       const status = button.dataset.status;
-      if (status === "завершено") {
-        completeBooking(bookingId);
-      } else {
-        state.bookings = state.bookings.map((booking) => (booking.id === bookingId ? { ...booking, status } : booking));
-      }
+      updateBookingStatus(bookingId, status);
       saveState();
       render();
     });
@@ -2746,6 +2947,12 @@ function bindViewEvents() {
 
   document.querySelectorAll("[data-remove-user]").forEach((button) => {
     button.addEventListener("click", () => {
+      const user = state.users.find((item) => item.id === button.dataset.removeUser);
+      if (!user) return;
+      if (state.bookings.some((booking) => booking.employee === user.name) || state.payments.some((payment) => [payment.employee, payment.soundEngineer, payment.performer].includes(user.name))) {
+        alert("Сотрудник уже используется в записях или платежах. Его можно отключить, но не удалить.");
+        return;
+      }
       state.users = state.users.filter((user) => user.id !== button.dataset.removeUser);
       saveState();
       render();
