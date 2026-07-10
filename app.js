@@ -192,6 +192,8 @@ let clientFilter = "";
 let bookingDateFilter = "";
 let bookingStatusFilter = "";
 let bookingServiceFilter = "";
+let bookingEmployeeFilter = "";
+let bookingSearchFilter = "";
 let selectedClientName = null;
 let clientSortMode = "last";
 let payoutModalOpen = false;
@@ -293,22 +295,40 @@ function normalizeState(nextState) {
       employee: employeeName || soundEngineer || performer || ""
     };
   });
-  const bookings = (nextState.bookings || []).map((booking) => ({
-    id: booking.id || crypto.randomUUID(),
-    date: booking.date || new Date().toISOString().slice(0, 10),
-    time: booking.time || "12:00",
-    duration: booking.duration || "1 час",
-    client: booking.client || "",
-    phone: booking.phone || "",
-    telegram: booking.telegram || "",
-    service: serviceAliases[booking.service] || booking.service || services[0] || "",
-    amount: Number(booking.amount || booking.cost || 0),
-    employee: booking.employee === "Я" ? "AE XL" : booking.employee || users[0]?.name || "",
-    comment: booking.comment || "",
-    status: bookingStatuses.includes(booking.status) ? booking.status : "заявка",
-    paymentId: booking.paymentId || "",
-    statusHistory: booking.statusHistory || [{ status: booking.status || "заявка", at: new Date().toISOString(), user: "Система", note: "создана запись" }]
-  }));
+  const bookings = (nextState.bookings || []).map((booking) => {
+    const serviceName = serviceAliases[booking.serviceName || booking.service] || booking.serviceName || booking.service || services[0] || "";
+    const serviceItem = serviceItems.find((service) => service.id === booking.serviceId) || serviceItems.find((service) => service.name === serviceName);
+    const employeeName = booking.employeeName || (booking.employee === "Я" ? "AE XL" : booking.employee) || "";
+    const employee = users.find((user) => user.id === booking.employeeId) || users.find((user) => user.name === employeeName) || users[0];
+    const status = bookingStatuses.includes(booking.status) ? booking.status : "заявка";
+    const createdAt = booking.createdAt || new Date().toISOString();
+    return {
+      ...booking,
+      id: booking.id || crypto.randomUUID(),
+      date: booking.date || new Date().toISOString().slice(0, 10),
+      time: booking.time || "12:00",
+      duration: booking.duration || serviceItem?.duration || "1 час",
+      clientName: booking.clientName || booking.client || "",
+      client: booking.clientName || booking.client || "",
+      phone: booking.phone || "",
+      telegram: booking.telegram || "",
+      serviceCategoryId: booking.serviceCategoryId || serviceItem?.categoryId || serviceGroups[0]?.id || "",
+      serviceId: booking.serviceId || serviceItem?.id || "",
+      serviceName,
+      service: serviceName,
+      amount: Number(booking.amount || booking.cost || serviceItem?.price || 0),
+      employeeId: booking.employeeId || employee?.id || "",
+      employeeName: employee?.name || employeeName || "",
+      employee: employee?.name || employeeName || "",
+      comment: booking.comment || "",
+      status,
+      paymentCreated: Boolean(booking.paymentCreated || booking.paymentId),
+      paymentId: booking.paymentId || "",
+      createdAt,
+      updatedAt: booking.updatedAt || createdAt,
+      statusHistory: booking.statusHistory || [{ status, at: createdAt, user: "Система", note: "создана запись" }]
+    };
+  });
   const expenses = (nextState.expenses || []).map((expense) => ({
     id: expense.id || crypto.randomUUID(),
     date: expense.date || new Date().toISOString().slice(0, 10),
@@ -316,18 +336,26 @@ function normalizeState(nextState) {
     amount: Number(expense.amount || 0),
     comment: expense.comment || ""
   }));
-  const clientMap = new Map((nextState.clients || []).map((client) => [client.name, client]));
+  const clientMap = new Map((nextState.clients || []).map((client) => [client.id || client.name, client]));
   [...payments, ...bookings].forEach((item) => {
-    const name = String(item.client || "").trim();
+    const name = String(item.clientName || item.client || "").trim();
     if (!name) return;
-    const previous = clientMap.get(name) || {};
-    clientMap.set(name, {
+    const previousEntry = [...clientMap.entries()].find(([, client]) =>
+      (item.phone && client.phone === item.phone) ||
+      (item.telegram && client.telegram === item.telegram) ||
+      (!item.phone && !item.telegram && client.name === name)
+    );
+    const previousKey = previousEntry?.[0];
+    const previous = previousEntry?.[1] || {};
+    const nextClient = {
       id: previous.id || crypto.randomUUID(),
       name,
       phone: item.phone || previous.phone || "",
       telegram: item.telegram || previous.telegram || "",
       comment: previous.comment || ""
-    });
+    };
+    if (previousKey) clientMap.delete(previousKey);
+    clientMap.set(nextClient.id, nextClient);
   });
   return {
     ...nextState,
@@ -386,7 +414,8 @@ function activeCatalogServices() {
 }
 
 function paymentForBooking(bookingId) {
-  return state.payments.find((payment) => payment.bookingId === bookingId);
+  const booking = state.bookings.find((item) => item.id === bookingId);
+  return state.payments.find((payment) => payment.bookingId === bookingId || (booking?.paymentId && payment.id === booking.paymentId));
 }
 
 function bookingForPayment(payment) {
@@ -676,7 +705,7 @@ function categoryLabel(category) {
 }
 
 function servicesForCategory(category) {
-  return catalogServices().filter((service) => service.categoryId === category).map((service) => service.name);
+  return catalogServices().filter((service) => service.categoryId === category && service.active !== false).map((service) => service.name);
 }
 
 function firstServiceForCategory(category) {
@@ -815,6 +844,8 @@ function applyServicePrice(serviceName) {
   const priceRule = servicePriceRule(serviceName);
   const amountInput = document.querySelector("#amountInput");
   const priceHint = document.querySelector("#priceHint");
+  const durationInput = document.querySelector("#bookingInlineDurationInput");
+  const service = serviceByName(serviceName);
   if (!amountInput) return;
 
   amountInput.min = String(priceRule.min);
@@ -823,16 +854,17 @@ function applyServicePrice(serviceName) {
     amountInput.value = priceRule.price || "";
   }
   if (priceHint) priceHint.textContent = priceRule.hint;
+  if (durationInput && service) durationInput.value = service.duration || "1 час";
 }
 
 function applyServiceCategory(category) {
   const serviceSelect = document.querySelector("#serviceSelect");
   if (!serviceSelect) return;
 
-  const services = servicesForCategory(category);
-  serviceSelect.innerHTML = services.map((service) => `<option>${service}</option>`).join("");
-  serviceSelect.value = services[0] || "";
-  applyServicePrice(serviceSelect.value);
+  const services = catalogServices().filter((service) => service.categoryId === category && service.active !== false);
+  serviceSelect.innerHTML = services.map((service) => `<option value="${service.id}">${service.name}</option>`).join("");
+  serviceSelect.value = services[0]?.id || "";
+  applyServicePrice(services[0]?.name || "");
 }
 
 function renderClientSuggestions(query = "") {
@@ -1408,6 +1440,12 @@ function activeEmployees() {
   return state.users.filter((user) => user.active !== false);
 }
 
+function bookingEmployeeOptions(selectedName = "") {
+  const active = activeEmployees();
+  const selected = state.users.find((user) => user.name === selectedName);
+  return selected && selected.active === false ? [...active, selected] : active;
+}
+
 function catalogGroups() {
   return [...(state.serviceGroups || [])].sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
 }
@@ -1422,6 +1460,10 @@ function catalogServices() {
 
 function serviceByName(name) {
   return catalogServices().find((service) => service.name === name);
+}
+
+function serviceById(id) {
+  return catalogServices().find((service) => service.id === id);
 }
 
 function employeeByName(name) {
@@ -1550,10 +1592,11 @@ function renderDetailRow(label, value) {
 
 function renderBookingModal() {
   const booking = state.bookings.find((item) => item.id === editingBookingId) || bookingSlotDraft || {};
-  const service = serviceByName(booking.service) || catalogServices()[0] || {};
+  const service = serviceById(booking.serviceId) || serviceByName(booking.serviceName || booking.service) || catalogServices()[0] || {};
   const selectedCategoryId = service.categoryId || catalogGroups()[0]?.id || "";
   const visibleServices = catalogServices().filter((item) => item.categoryId === selectedCategoryId && (item.active !== false || item.name === booking.service));
   const defaultEmployee = currentUser()?.name || activeEmployees()[0]?.name || "";
+  const employeeOptions = bookingEmployeeOptions(booking.employee || defaultEmployee);
   const status = booking.status || "подтверждено";
 
   return `
@@ -1588,8 +1631,8 @@ function renderBookingModal() {
           </div>
           <div class="field">
             <label>Услуга</label>
-            <select name="service" id="bookingServiceSelect" required>
-              ${visibleServices.map((item) => `<option value="${item.name}" ${((booking.service || service.name) === item.name) ? "selected" : ""}>${item.name}</option>`).join("")}
+            <select name="serviceId" id="bookingServiceSelect" required>
+              ${visibleServices.map((item) => `<option value="${item.id}" ${((booking.serviceId || service.id) === item.id) ? "selected" : ""}>${item.name}</option>`).join("")}
             </select>
           </div>
           <div class="field">
@@ -1610,7 +1653,7 @@ function renderBookingModal() {
           </div>
           <div class="field">
             <label>Сотрудник</label>
-            <select name="employee">${activeEmployees().map((user) => `<option value="${user.name}" ${((booking.employee || defaultEmployee) === user.name) ? "selected" : ""}>${user.name}</option>`).join("")}</select>
+            <select name="employeeId">${employeeOptions.map((user) => `<option value="${user.id}" ${((booking.employeeId || "") === user.id || (booking.employee || defaultEmployee) === user.name) ? "selected" : ""}>${user.name}${user.active === false ? " · неактивен" : ""}</option>`).join("")}</select>
           </div>
           <div class="field">
             <label>Статус</label>
@@ -1634,29 +1677,38 @@ function renderBookingModal() {
 }
 
 function filteredBookings() {
+  const search = bookingSearchFilter.trim().toLowerCase();
   return [...state.bookings]
     .sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`))
     .filter((booking) => !bookingDateFilter || booking.date === bookingDateFilter)
     .filter((booking) => !bookingStatusFilter || booking.status === bookingStatusFilter)
-    .filter((booking) => !bookingServiceFilter || booking.service === bookingServiceFilter);
+    .filter((booking) => !bookingServiceFilter || booking.serviceId === bookingServiceFilter || booking.service === bookingServiceFilter)
+    .filter((booking) => !bookingEmployeeFilter || booking.employeeId === bookingEmployeeFilter || booking.employee === bookingEmployeeFilter)
+    .filter((booking) => !search || [booking.clientName, booking.client, booking.phone, booking.telegram].some((value) => String(value || "").toLowerCase().includes(search)));
 }
 
 function renderBookings() {
   const bookings = filteredBookings();
-  const services = [...new Set([...catalogServices().map((service) => service.name), ...state.bookings.map((booking) => booking.service).filter(Boolean)])];
+  const services = [...new Map([...catalogServices().map((service) => [service.id, service]), ...state.bookings.filter((booking) => booking.service).map((booking) => [booking.serviceId || booking.service, { id: booking.serviceId || booking.service, name: booking.service }])]).values()];
+  const employees = [...new Map([...state.users.map((user) => [user.id || user.name, user]), ...state.bookings.filter((booking) => booking.employee).map((booking) => [booking.employeeId || booking.employee, { id: booking.employeeId || booking.employee, name: booking.employee }])]).values()];
 
   return `
     <div class="grid two-col bookings-page">
       <section class="card section">
         <div class="toolbar booking-filters">
+          <input id="bookingSearchFilter" placeholder="Клиент, телефон, Telegram" value="${bookingSearchFilter}" />
           <input id="bookingDateFilter" type="date" value="${bookingDateFilter}" />
           <select id="bookingStatusFilter">
             <option value="">Все статусы</option>
             ${bookingStatuses.map((status) => `<option value="${status}" ${bookingStatusFilter === status ? "selected" : ""}>${status}</option>`).join("")}
           </select>
+          <select id="bookingEmployeeFilter">
+            <option value="">Все сотрудники</option>
+            ${employees.map((employee) => `<option value="${employee.id || employee.name}" ${bookingEmployeeFilter === (employee.id || employee.name) || bookingEmployeeFilter === employee.name ? "selected" : ""}>${employee.name}</option>`).join("")}
+          </select>
           <select id="bookingServiceFilter">
             <option value="">Все услуги</option>
-            ${services.map((service) => `<option value="${service}" ${bookingServiceFilter === service ? "selected" : ""}>${service}</option>`).join("")}
+            ${services.map((service) => `<option value="${service.id || service.name}" ${bookingServiceFilter === (service.id || service.name) || bookingServiceFilter === service.name ? "selected" : ""}>${service.name}</option>`).join("")}
           </select>
         </div>
         <div class="booking-list">
@@ -1708,11 +1760,14 @@ function renderBookingCard(booking) {
 
 function renderBookingForm() {
   const booking = state.bookings.find((item) => item.id === editingBookingId) || {};
-  const selectedService = booking.service || catalogServices()[0]?.name || "";
-  const selectableBookingServices = catalogServices().filter((service) => service.active !== false || service.name === selectedService);
+  const selectedService = booking.serviceName || booking.service || catalogServices()[0]?.name || "";
+  const selectedServiceItem = serviceById(booking.serviceId) || serviceByName(selectedService) || catalogServices()[0] || {};
+  const selectedCategoryId = booking.serviceCategoryId || selectedServiceItem.categoryId || catalogGroups()[0]?.id || "";
+  const selectableBookingServices = catalogServices().filter((service) => service.categoryId === selectedCategoryId && (service.active !== false || service.name === selectedService));
   const priceRule = servicePriceRule(selectedService);
   const amountValue = booking.amount || priceRule.price || "";
   const defaultUser = currentUser()?.name || state.users[0]?.name || "";
+  const employeeOptions = bookingEmployeeOptions(booking.employee || defaultUser);
 
   return `
     <section class="card section">
@@ -1734,18 +1789,16 @@ function renderBookingForm() {
           <label>Telegram</label>
           <input name="telegram" value="${booking.telegram || ""}" />
         </div>
-        <div class="field full">
+        <div class="field">
+          <label>Категория услуги</label>
+          <select name="categoryId" id="categorySelect" required>
+            ${catalogGroups().map((group) => `<option value="${group.id}" ${selectedCategoryId === group.id ? "selected" : ""}>${group.name}</option>`).join("")}
+          </select>
+        </div>
+        <div class="field">
           <label>Услуга</label>
-          <select name="service" id="serviceSelect" required>
-            ${catalogGroups()
-              .map((group) => {
-                const options = selectableBookingServices
-                  .filter((service) => service.categoryId === group.id)
-                  .map((service) => `<option value="${service.name}" ${selectedService === service.name ? "selected" : ""}>${service.name}</option>`)
-                  .join("");
-                return options ? `<optgroup label="${group.name}">${options}</optgroup>` : "";
-              })
-              .join("")}
+          <select name="serviceId" id="serviceSelect" required>
+            ${selectableBookingServices.map((service) => `<option value="${service.id}" ${(selectedServiceItem.id || booking.serviceId) === service.id ? "selected" : ""}>${service.name}</option>`).join("")}
           </select>
         </div>
         <div class="field">
@@ -1758,7 +1811,7 @@ function renderBookingForm() {
         </div>
         <div class="field">
           <label>Длительность</label>
-          <input name="duration" value="${booking.duration || "1 час"}" />
+          <input name="duration" id="bookingInlineDurationInput" value="${booking.duration || selectedServiceItem.duration || "1 час"}" />
         </div>
         <div class="field">
           <label>Стоимость</label>
@@ -1767,11 +1820,11 @@ function renderBookingForm() {
         </div>
         <div class="field">
           <label>Сотрудник</label>
-          <select name="employee">${state.users.map((user) => `<option ${((booking.employee || defaultUser) === user.name) ? "selected" : ""}>${user.name}</option>`).join("")}</select>
+          <select name="employeeId">${employeeOptions.map((user) => `<option value="${user.id}" ${((booking.employeeId || "") === user.id || (booking.employee || defaultUser) === user.name) ? "selected" : ""}>${user.name}${user.active === false ? " · неактивен" : ""}</option>`).join("")}</select>
         </div>
         <div class="field">
           <label>Статус</label>
-          <select name="status">${bookingStatuses.map((status) => `<option ${((booking.status || "подтверждено") === status) ? "selected" : ""}>${status}</option>`).join("")}</select>
+          <select name="status">${bookingStatuses.map((status) => `<option value="${status}" ${((booking.status || "подтверждено") === status) ? "selected" : ""}>${statusTitle(status)}</option>`).join("")}</select>
         </div>
         <div class="field full">
           <label>Комментарий</label>
@@ -2599,33 +2652,54 @@ function renderBars(entries) {
 
 function bookingFromForm(data) {
   const existing = state.bookings.find((booking) => booking.id === data.id);
+  const service = serviceByName(data.service) || serviceById(data.serviceId) || {};
+  const employee = state.users.find((user) => user.id === data.employeeId) || state.users.find((user) => user.name === data.employee) || {};
+  const now = new Date().toISOString();
+  const createdAt = existing?.createdAt || now;
+  const serviceName = service.name || data.service || existing?.service || "";
+  const employeeName = employee.name || data.employee || existing?.employee || "";
   return {
     id: data.id || crypto.randomUUID(),
     date: data.date,
     time: data.time,
-    duration: data.duration.trim() || "1 час",
+    duration: data.duration.trim() || service.duration || "1 час",
+    clientName: data.client.trim(),
     client: data.client.trim(),
     phone: data.phone.trim(),
     telegram: data.telegram.trim(),
-    service: data.service,
+    serviceCategoryId: data.categoryId || service.categoryId || existing?.serviceCategoryId || "",
+    serviceId: service.id || existing?.serviceId || "",
+    serviceName,
+    service: serviceName,
     amount: Number(data.amount || 0),
-    employee: data.employee || "",
+    employeeId: employee.id || existing?.employeeId || "",
+    employeeName,
+    employee: employeeName,
     comment: data.comment.trim(),
     status: bookingStatuses.includes(data.status) ? data.status : "подтверждено",
+    paymentCreated: Boolean(existing?.paymentCreated || existing?.paymentId),
     paymentId: existing?.paymentId || "",
+    createdAt,
+    updatedAt: now,
     statusHistory: existing?.statusHistory || []
   };
 }
 
 function upsertClientFromBooking(booking) {
-  const name = String(booking.client || "").trim();
+  const name = String(booking.clientName || booking.client || "").trim();
   if (!name) return;
-  const existing = state.clients.find((client) => client.name === name);
+  const phone = String(booking.phone || "").trim();
+  const telegram = String(booking.telegram || "").trim();
+  const existing = state.clients.find((client) =>
+    (phone && client.phone === phone) ||
+    (telegram && client.telegram === telegram) ||
+    (!phone && !telegram && client.name === name)
+  );
   const payload = {
     id: existing?.id || crypto.randomUUID(),
     name,
-    phone: booking.phone || existing?.phone || "",
-    telegram: booking.telegram || existing?.telegram || "",
+    phone: phone || existing?.phone || "",
+    telegram: telegram || existing?.telegram || "",
     comment: existing?.comment || ""
   };
   if (existing) {
@@ -2658,20 +2732,22 @@ function syncServicesFromCatalog() {
 }
 
 function paymentFromBooking(booking) {
-  const category = classifyService(booking.service);
-  const soundEngineer = ["recording", "studioProduction"].includes(category) ? booking.employee : "";
-  const performer = category === "online" ? booking.employee : "";
+  const serviceName = booking.serviceName || booking.service;
+  const employeeName = booking.employeeName || booking.employee;
+  const category = classifyService(serviceName);
+  const soundEngineer = ["recording", "studioProduction"].includes(category) ? employeeName : "";
+  const performer = category === "online" ? employeeName : "";
   return {
     id: crypto.randomUUID(),
     date: booking.date,
-    client: booking.client,
-    service: booking.service,
+    client: booking.clientName || booking.client,
+    service: serviceName,
     amount: Number(booking.amount || 0),
     method: "По записи",
     comment: booking.comment ? `Запись: ${booking.comment}` : "Запись завершена",
     soundEngineer,
     performer,
-    employee: soundEngineer || performer || booking.employee || "",
+    employee: soundEngineer || performer || employeeName || "",
     bookingId: booking.id
   };
 }
@@ -2695,6 +2771,8 @@ function completeBooking(bookingId) {
     state.payments.push(payment);
     booking.paymentId = payment.id;
   }
+  booking.paymentCreated = true;
+  booking.updatedAt = new Date().toISOString();
 }
 
 function appendStatusHistory(booking, status, note = "") {
@@ -2718,6 +2796,7 @@ function updateBookingStatus(bookingId, status) {
     appendStatusHistory(booking, status, status === "в процессе" ? "в процессе" : status === "отменено" ? "отменена" : "статус изменён");
   }
   booking.status = status;
+  booking.updatedAt = new Date().toISOString();
   upsertClientFromBooking(booking);
 }
 
@@ -2906,7 +2985,7 @@ function bindViewEvents() {
   });
 
   document.querySelector("#bookingServiceSelect")?.addEventListener("change", (event) => {
-    const service = serviceByName(event.target.value);
+    const service = serviceById(event.target.value) || serviceByName(event.target.value);
     if (!service) return;
     const amount = document.querySelector("#bookingAmountInput");
     const duration = document.querySelector("#bookingDurationInput");
@@ -2918,10 +2997,10 @@ function bindViewEvents() {
     const select = document.querySelector("#bookingServiceSelect");
     if (!select) return;
     const services = catalogServices().filter((service) => service.categoryId === event.target.value && service.active !== false);
-    select.innerHTML = services.map((service) => `<option value="${service.name}">${service.name}</option>`).join("");
+    select.innerHTML = services.map((service) => `<option value="${service.id}">${service.name}</option>`).join("");
     const first = services[0];
     if (!first) return;
-    select.value = first.name;
+    select.value = first.id;
     const amount = document.querySelector("#bookingAmountInput");
     const duration = document.querySelector("#bookingDurationInput");
     if (amount) amount.value = first.price || 0;
@@ -2996,8 +3075,18 @@ function bindViewEvents() {
     render();
   });
 
+  document.querySelector("#bookingSearchFilter")?.addEventListener("input", (event) => {
+    bookingSearchFilter = event.target.value;
+    render();
+  });
+
   document.querySelector("#bookingStatusFilter")?.addEventListener("change", (event) => {
     bookingStatusFilter = event.target.value;
+    render();
+  });
+
+  document.querySelector("#bookingEmployeeFilter")?.addEventListener("change", (event) => {
+    bookingEmployeeFilter = event.target.value;
     render();
   });
 
@@ -3088,7 +3177,7 @@ function bindViewEvents() {
     button.addEventListener("click", () => {
       const service = state.serviceItems.find((item) => item.id === button.dataset.deleteServiceItem);
       if (!service) return;
-      if (state.bookings.some((booking) => booking.service === service.name) || state.payments.some((payment) => payment.service === service.name)) {
+      if (state.bookings.some((booking) => booking.serviceId === service.id || booking.service === service.name) || state.payments.some((payment) => payment.service === service.name)) {
         alert("Эта услуга уже используется в записях или платежах. Её можно отключить, но не удалить.");
         return;
       }
@@ -3105,7 +3194,8 @@ function bindViewEvents() {
   });
 
   document.querySelector("#serviceSelect")?.addEventListener("change", (event) => {
-    applyServicePrice(event.target.value);
+    const service = serviceById(event.target.value) || serviceByName(event.target.value);
+    applyServicePrice(service?.name || event.target.value);
   });
 
   document.querySelector("#clientInput")?.addEventListener("input", (event) => {
@@ -3237,7 +3327,7 @@ function bindViewEvents() {
       state.payments.push(payment);
     }
     if (payment.bookingId) {
-      state.bookings = state.bookings.map((booking) => (booking.id === payment.bookingId ? { ...booking, paymentId: payment.id } : booking));
+      state.bookings = state.bookings.map((booking) => (booking.id === payment.bookingId ? { ...booking, paymentId: payment.id, paymentCreated: true, updatedAt: new Date().toISOString() } : booking));
     }
     upsertClientFromPayment(payment);
     editingPaymentId = null;
@@ -3402,7 +3492,7 @@ function bindViewEvents() {
     button.addEventListener("click", () => {
       const user = state.users.find((item) => item.id === button.dataset.removeUser);
       if (!user) return;
-      if (state.bookings.some((booking) => booking.employee === user.name) || state.payments.some((payment) => [payment.employee, payment.soundEngineer, payment.performer].includes(user.name))) {
+      if (state.bookings.some((booking) => booking.employeeId === user.id || booking.employee === user.name) || state.payments.some((payment) => [payment.employee, payment.soundEngineer, payment.performer].includes(user.name))) {
         alert("Сотрудник уже используется в записях или платежах. Его можно отключить, но не удалить.");
         return;
       }
