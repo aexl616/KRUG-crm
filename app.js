@@ -662,7 +662,7 @@ function renderSidebar() {
 
 function navButtons() {
   const items = [
-    ["dashboard", "Главная"],
+    ["dashboard", "Сегодня"],
     ["calendar", "Календарь"],
     ["bookings", "Записи"],
     ["clients", "Клиенты"],
@@ -713,7 +713,7 @@ function renderTopbar() {
 
 function pageTitle() {
   return {
-    dashboard: "Главная",
+    dashboard: "Сегодня",
     calendar: "Календарь",
     bookings: "Записи",
     payments: "Платежи",
@@ -1155,7 +1155,10 @@ function todaysBookings() {
 }
 
 function nextTodayBooking(bookings = todaysBookings()) {
-  return bookings.find((booking) => booking.status !== "отменено" && minutesUntil(booking.date, booking.time) >= -15) || bookings.find((booking) => booking.status !== "отменено");
+  const inProgress = bookings.find((booking) => booking.status === "в процессе");
+  if (inProgress) return inProgress;
+  const upcomingStatuses = ["заявка", "подтверждено"];
+  return bookings.find((booking) => upcomingStatuses.includes(booking.status) && minutesUntil(booking.date, booking.time) >= -15) || null;
 }
 
 function freeWindowRanges(bookings) {
@@ -1324,66 +1327,125 @@ function openSearchItem(type, id) {
   }
 }
 
-function renderDashboard() {
+function studioTodayData() {
   const today = todayKey();
-  const month = today.slice(0, 7);
-  const monthTotal = state.payments.filter((item) => item.date.startsWith(month)).reduce((sum, item) => sum + Number(item.amount), 0);
-  const todayTotal = state.payments.filter((item) => item.date === today).reduce((sum, item) => sum + Number(item.amount), 0);
-  const expensesTotal = (state.expenses || []).filter((item) => item.date === today).reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  const todayBookings = todaysBookings();
-  const pendingBookings = state.bookings.filter((booking) => booking.status === "заявка");
-  const nextBooking = nextTodayBooking(todayBookings);
+  const bookings = todaysBookings();
+  const activeStatuses = ["заявка", "подтверждено", "в процессе"];
+  const counts = Object.fromEntries(bookingStatuses.map((status) => [status, bookings.filter((booking) => booking.status === status).length]));
+  const actualIncome = state.payments.filter((payment) => payment.date === today).reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  const expectedIncome = bookings.filter((booking) => activeStatuses.includes(booking.status)).reduce((sum, booking) => sum + Number(booking.amount || 0), 0);
+  const completed = bookings.filter((booking) => booking.status === "завершено");
+  const completedAmount = completed.reduce((sum, booking) => sum + Number(booking.amount || 0), 0);
+  return {
+    today,
+    bookings,
+    counts,
+    actualIncome,
+    expectedIncome,
+    completedCount: completed.length,
+    averageCheck: completed.length ? completedAmount / completed.length : 0,
+    cancelledAmount: bookings.filter((booking) => booking.status === "отменено").reduce((sum, booking) => sum + Number(booking.amount || 0), 0),
+    nextBooking: nextTodayBooking(bookings)
+  };
+}
+
+function studioAttentionItems() {
+  const today = todayKey();
+  const until = addDays(today, 7);
+  const activeStatuses = ["заявка", "подтверждено", "в процессе"];
+  const items = [];
+  state.bookings.forEach((booking) => {
+    const active = activeStatuses.includes(booking.status);
+    const addIssue = (type, text, priority) => items.push({ booking, type, text, priority, dateTime: `${booking.date} ${booking.time || "00:00"}` });
+    if (booking.status === "заявка" && booking.date >= today && booking.date <= until) addIssue("Заявка", "Ожидает подтверждения", 1);
+    if (active && bookingConflicts(booking).length) addIssue("Конфликт", "Пересечение по сотруднику и времени", 0);
+    if (active && !booking.phone && !booking.telegram) addIssue("Нет контактов", "Не указан телефон или Telegram", 2);
+    if (active && !bookingEmployeeId(booking)) addIssue("Нет сотрудника", "Нужно назначить исполнителя", 2);
+    if (booking.status === "завершено" && !paymentForBooking(booking.id)) addIssue("Нет платежа", "Завершённая запись без связанной оплаты", 0);
+  });
+  return items.sort((a, b) => a.priority - b.priority || a.dateTime.localeCompare(b.dateTime)).slice(0, 12);
+}
+
+function renderTodaySummary(data) {
+  const metrics = [
+    ["Всего", data.bookings.length], ["Подтверждено", data.counts["подтверждено"]],
+    ["В процессе", data.counts["в процессе"]], ["Завершено", data.counts["завершено"]],
+    ["Отменено", data.counts["отменено"]], ["Заявок", data.counts["заявка"]],
+    ["Доход", money(data.actualIncome)], ["Ожидается", money(data.expectedIncome)]
+  ];
+  return `<div class="today-metrics">${metrics.map(([label, value]) => `<article><span>${label}</span><strong>${value}</strong></article>`).join("")}</div>`;
+}
+
+function renderAttentionList(items) {
+  return `<div class="attention-list">${items.map(({ booking, type, text }) => `
+    <article class="attention-item">
+      <span class="attention-type">${type}</span>
+      <div><strong>${booking.client || "Без имени"}</strong><small>${formatDate(booking.date)} · ${booking.time} · ${text}</small></div>
+      <button class="btn secondary" type="button" data-open-booking="${booking.id}">Открыть</button>
+    </article>
+  `).join("") || renderEmptyState("Всё спокойно", "Нет записей, требующих внимания.")}</div>`;
+}
+
+function renderTodayMoney(data) {
+  const metrics = [
+    ["Фактический доход", money(data.actualIncome)], ["Ожидаемый доход", money(data.expectedIncome)],
+    ["Завершено записей", data.completedCount], ["Средний чек", money(data.averageCheck)],
+    ["Сумма отмен", money(data.cancelledAmount)]
+  ];
+  return `<div class="today-money-grid">${metrics.map(([label, value]) => `<article><span>${label}</span><strong>${value}</strong></article>`).join("")}</div>`;
+}
+
+function renderDashboard() {
+  const data = studioTodayData();
+  const attention = studioAttentionItems();
 
   return `
     <section class="studio-today-hero card section">
       <div>
-        <span>Сегодня</span>
-        <h2>${formatDate(today)}</h2>
-        <p>${weekdayLong(today)} · ${currentClock()}</p>
+        <span>Главная / Сегодня</span>
+        <h2>${formatDate(data.today)}</h2>
+        <p>${weekdayLong(data.today)} · ${currentClock()}</p>
       </div>
       <div class="studio-today-pulse">
-        <strong>${todayBookings.length}</strong>
-        <span>${plural(todayBookings.length, "запись", "записи", "записей")} сегодня</span>
+        <strong>${data.bookings.length}</strong>
+        <span>${plural(data.bookings.length, "запись", "записи", "записей")} сегодня</span>
       </div>
     </section>
+    <section class="card section today-summary-section">
+      <div class="section-head"><h2>Сегодняшняя сводка</h2><span class="muted">Оперативные показатели дня</span></div>
+      ${renderTodaySummary(data)}
+    </section>
     <div class="dashboard-layout studio-home">
-      <section class="card section next-booking-card wide-card">
+      <section class="card section next-booking-card studio-home-next">
         <div class="section-head">
-          <h2>Следующая запись</h2>
-          ${nextBooking ? `<span class="select-chip">${untilLabel(nextBooking)}</span>` : ""}
+          <h2>Ближайшая запись</h2>
+          ${data.nextBooking ? `<span class="select-chip">${untilLabel(data.nextBooking)}</span>` : ""}
         </div>
-        ${nextBooking ? renderNextBooking(nextBooking) : renderEmptyState("Сегодня записей нет", "Расписание свободно. Можно добавить первую запись.", "Добавить запись", 'type="button" data-action="openBookingModal"')}
+        ${data.nextBooking ? renderNextBooking(data.nextBooking) : renderEmptyState("На сегодня активных записей больше нет", "Можно проверить будущие даты в календаре.")}
       </section>
-      <section class="card section">
-        <h2>Сегодняшняя выручка</h2>
-        <div class="daily-number"><strong>${money(todayTotal)}</strong><span>расходы: ${money(expensesTotal)}</span></div>
-      </section>
-      <section class="card section">
-        <h2>Записей сегодня</h2>
-        <div class="daily-number"><strong>${todayBookings.length}</strong><span>в календаре студии</span></div>
-      </section>
-      <section class="card section">
-        <h2>Заявки ждут подтверждения</h2>
-        <div class="daily-number"><strong>${pendingBookings.length}</strong><span>нужно обработать</span></div>
-      </section>
-      <section class="card section">
+      <section class="card section studio-home-schedule">
         <div class="section-head">
-          <h2>Сегодняшнее расписание</h2>
+          <h2>Записи на сегодня</h2>
           <button class="link-button" data-view="calendar">Календарь</button>
         </div>
-        ${renderTodaySchedule(todayBookings)}
+        ${renderTodayBookingList(data.bookings)}
       </section>
-      <section class="card section">
-        <h2>Свободные окна</h2>
-        ${renderFreeWindows(todayBookings)}
+      <section class="card section studio-home-attention">
+        <div class="section-head"><h2>Требует внимания</h2><span class="select-chip">${attention.length}</span></div>
+        ${renderAttentionList(attention)}
       </section>
-      <section class="card section wide-card">
+      <section class="card section studio-home-money">
+        <h2>Деньги сегодня</h2>
+        ${renderTodayMoney(data)}
+      </section>
+      <section class="card section studio-home-quick">
         <h2>Быстрые действия</h2>
         <div class="quick-actions">
-          <button class="quick-action" data-action="openBookingModal"><span>+</span>Добавить запись</button>
-          <button class="quick-action" data-view="payments"><span>₽</span>Добавить доход</button>
-          <button class="quick-action" data-view="finance"><span>−</span>Добавить расход</button>
+          <button class="quick-action" data-action="openBookingModal"><span>+</span>Новая запись</button>
           <button class="quick-action" data-view="calendar"><span>○</span>Открыть календарь</button>
+          <button class="quick-action" data-view="clients"><span>К</span>Добавить клиента</button>
+          <button class="quick-action" data-view="payments"><span>₽</span>Добавить платёж</button>
+          <button class="quick-action" data-view="reports"><span>↗</span>Открыть отчёты</button>
         </div>
       </section>
     </div>
@@ -1391,20 +1453,61 @@ function renderDashboard() {
 }
 
 function renderNextBooking(booking) {
-  const employee = employeeByName(booking.employee);
+  const employee = state.users.find((user) => user.id === booking.employeeId) || employeeByName(booking.employee);
   const color = employee?.color || "#ff6633";
   return `
     <div class="next-booking" style="--employee-color:${color}">
-      <span class="service-icon">${serviceIcon(booking.service)}</span>
-      <div>
-        <h3>${booking.client || "Без имени"}</h3>
-        <p class="muted">${booking.service} · ${booking.employee || "сотрудник не указан"}</p>
+      <div class="next-booking-main">
+        <span class="service-icon">${serviceIcon(booking.service)}</span>
+        <div>
+          <h3>${booking.client || "Без имени"}</h3>
+          <p class="muted">${booking.service} · ${booking.employee || "сотрудник не указан"}</p>
+        </div>
       </div>
       <div class="next-booking-time">
         <strong>${booking.time}</strong>
         <span>${untilLabel(booking)}</span>
       </div>
-      <button class="btn secondary" type="button" data-open-booking="${booking.id}">Открыть запись</button>
+      <div class="next-booking-details">
+        <span>${booking.phone || "телефон не указан"}</span>
+        <span>${booking.telegram || "Telegram не указан"}</span>
+        <span>${money(booking.amount)}</span>
+        <em class="status-pill status-${booking.status.replaceAll(" ", "-")}">${statusTitle(booking.status)}</em>
+      </div>
+      ${booking.comment ? `<p class="next-booking-comment">${booking.comment}</p>` : ""}
+      <div class="next-booking-actions">
+        <button class="btn secondary" type="button" data-open-booking="${booking.id}">Открыть запись</button>
+        ${booking.status === "заявка" ? `<button class="btn" type="button" data-booking-status="${booking.id}" data-status="подтверждено">Подтвердить</button>` : ""}
+        ${booking.status === "подтверждено" ? `<button class="btn" type="button" data-booking-status="${booking.id}" data-status="в процессе">В процесс</button>` : ""}
+        ${booking.status === "в процессе" ? `<button class="btn" type="button" data-booking-status="${booking.id}" data-status="завершено">Завершить</button>` : ""}
+        <button class="btn danger" type="button" data-booking-status="${booking.id}" data-status="отменено">Отменить</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderTodayBookingList(bookings) {
+  return `
+    <div class="today-booking-list">
+      ${bookings.map((booking) => {
+        const employee = state.users.find((user) => user.id === booking.employeeId) || employeeByName(booking.employee);
+        const conflicts = bookingConflicts(booking);
+        return `
+          <button class="today-booking-card status-${booking.status.replaceAll(" ", "-")}" type="button" data-open-booking="${booking.id}" style="--employee-color:${employee?.color || "#ff6633"}">
+            <div class="today-booking-time"><strong>${booking.time}</strong><span>${booking.duration || "1 час"}</span></div>
+            <div class="today-booking-content">
+              <strong>${booking.client || "Без имени"}</strong>
+              <span>${booking.service} · ${booking.employee || "сотрудник не указан"}</span>
+              ${booking.comment ? `<small>${booking.comment}</small>` : ""}
+            </div>
+            <div class="today-booking-side">
+              <strong>${money(booking.amount)}</strong>
+              <span class="status-pill status-${booking.status.replaceAll(" ", "-")}">${statusTitle(booking.status)}</span>
+              ${conflicts.length ? '<em class="calendar-conflict-badge">Конфликт</em>' : ""}
+            </div>
+          </button>
+        `;
+      }).join("") || renderEmptyState("Сегодня записей нет", "Добавь запись или выбери свободное время в календаре.", "Новая запись", 'type="button" data-action="openBookingModal"')}
     </div>
   `;
 }
@@ -3676,7 +3779,18 @@ function bindViewEvents() {
   document.querySelectorAll("[data-open-booking]").forEach((card) => {
     card.addEventListener("click", (event) => {
       if (card.classList.contains("booking-card") && event.target.closest("button")) return;
+      const booking = state.bookings.find((item) => item.id === card.dataset.openBooking);
       selectedBookingId = card.dataset.openBooking;
+      if (booking) {
+        calendarDate = booking.date;
+        calendarWeekStart = weekStart(calendarDate);
+        if (!calendarBookingMatches(booking)) {
+          calendarEmployeeFilter = "";
+          calendarStatusFilter = "";
+          calendarServiceFilter = "";
+        }
+        saveCalendarSettings();
+      }
       editingBookingId = null;
       bookingModalOpen = false;
       view = "calendar";
