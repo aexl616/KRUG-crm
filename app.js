@@ -579,6 +579,7 @@ function renderLogin() {
             <span>внутренняя CRM студии</span>
           </div>
         </div>
+        <span class="preview-badge">Preview</span>
         <h1>Вход</h1>
         <p class="muted">Внутреннее приложение KRUG CRM для сотрудников студии.</p>
         <div class="grid">
@@ -621,6 +622,7 @@ function renderSidebar() {
           <span>CRM студии · Preview</span>
         </div>
       </div>
+      <span class="preview-badge sidebar-preview">Preview</span>
       <nav class="nav">${navButtons()}</nav>
       <div class="user-card">
         <strong>${currentUser().name}</strong>
