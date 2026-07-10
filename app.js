@@ -210,6 +210,7 @@ let bookingSearchFilter = "";
 let selectedClientName = null;
 let clientSortMode = "last";
 let payoutModalOpen = false;
+let payoutEmployeeIdDraft = "";
 let settingsTab = "services";
 let notificationPanelOpen = false;
 let globalSearchQuery = "";
@@ -279,7 +280,6 @@ function normalizeState(nextState) {
     }
   });
   const services = serviceItems.map((service) => service.name);
-  const shouldResetPayouts = nextState.payoutResetVersion !== PAYOUT_RESET_VERSION;
   const users = (nextState.users || defaultState.users).map((user, index) => ({
     id: user.id || crypto.randomUUID(),
     name: user.name === "Я" ? "AE XL" : user.name || `Сотрудник ${index + 1}`,
@@ -370,6 +370,16 @@ function normalizeState(nextState) {
     if (previousKey) clientMap.delete(previousKey);
     clientMap.set(nextClient.id, nextClient);
   });
+  const payouts = (nextState.payouts || []).map((payout) => {
+    const employee = users.find((user) => user.id === payout.employeeId) || users.find((user) => user.name === (payout.employeeName || payout.recipient));
+    return {
+      ...payout,
+      employeeId: payout.employeeId || employee?.id || "",
+      employeeName: payout.employeeName || employee?.name || payout.recipient || "",
+      recipient: payout.recipient || employee?.name || "",
+      createdAt: payout.createdAt || payout.paidAt || new Date().toISOString()
+    };
+  });
   return {
     ...nextState,
     users,
@@ -386,7 +396,7 @@ function normalizeState(nextState) {
       status: nextState.calendarSettings?.status || "",
       service: nextState.calendarSettings?.service || ""
     },
-    payouts: shouldResetPayouts ? [] : nextState.payouts || [],
+    payouts,
     expenses,
     payoutResetVersion: PAYOUT_RESET_VERSION
   };
@@ -868,6 +878,54 @@ function payoutTotalsFromBudget(budget = calculateBudget()) {
   };
 }
 
+function employeePayoutStats(employeeId) {
+  const employee = state.users.find((user) => user.id === employeeId);
+  if (!employee) return { employee: null, completedBookings: [], totalEarned: 0, totalPaid: 0, totalPlanned: 0, availableToPay: 0, overpaid: 0 };
+  const completedBookings = state.bookings.filter((booking) =>
+    booking.status === "завершено" && bookingEmployeeId(booking) === employee.id && Number(booking.amount || 0) > 0
+  );
+  const employeePayouts = (state.payouts || []).filter((payout) =>
+    payout.status !== "Отменено" && (payout.employeeId === employee.id || (!payout.employeeId && payout.recipient === employee.name))
+  );
+  const totalEarned = completedBookings.reduce((sum, booking) => sum + Number(booking.amount || 0), 0);
+  const totalPaid = employeePayouts
+    .filter((payout) => !payout.status || payout.status === "Выплачено")
+    .reduce((sum, payout) => sum + Number(payout.amount || 0), 0);
+  const totalPlanned = employeePayouts
+    .filter((payout) => payout.status === "Запланировано")
+    .reduce((sum, payout) => sum + Number(payout.amount || 0), 0);
+  const reserved = totalPaid + totalPlanned;
+  return {
+    employee,
+    completedBookings,
+    totalEarned,
+    totalPaid,
+    totalPlanned,
+    availableToPay: Math.max(0, totalEarned - reserved),
+    overpaid: Math.max(0, reserved - totalEarned)
+  };
+}
+
+function allEmployeePayoutStats() {
+  return state.users.map((employee) => employeePayoutStats(employee.id));
+}
+
+function totalEmployeePayoutAvailable() {
+  return allEmployeePayoutStats().reduce((sum, stats) => sum + stats.availableToPay, 0);
+}
+
+function validateEmployeePayout(employeeId, amountValue) {
+  const employee = state.users.find((user) => user.id === employeeId);
+  const stats = employeePayoutStats(employeeId);
+  const amount = Number(amountValue || 0);
+  if (!employee) return { ok: false, error: "Выбери сотрудника для выплаты.", employee, stats, amount };
+  if (!amount || amount <= 0) return { ok: false, error: "Укажи сумму выплаты больше нуля.", employee, stats, amount };
+  if (amount > stats.availableToPay) {
+    return { ok: false, error: `Нельзя выплатить больше, чем сотрудник заработал. Доступно: ${money(stats.availableToPay)}.`, employee, stats, amount };
+  }
+  return { ok: true, error: "", employee, stats, amount };
+}
+
 function availableOutsideBudget() {
   return payoutTotalsFromBudget().available;
 }
@@ -964,16 +1022,23 @@ function renderClientSuggestions(query = "") {
   });
 }
 
-function updatePayoutAmount() {
-  const service = document.querySelector("#payoutService")?.value;
-  const type = document.querySelector("#payoutType")?.value;
+function updatePayoutEmployeeSummary(fillAmount = true) {
+  const employeeId = document.querySelector("#payoutEmployee")?.value;
   const amount = document.querySelector("#payoutAmount");
   const hint = document.querySelector("#payoutAvailableHint");
-  if (!service || !type || !amount) return;
-  const available = availableOutsideBudget();
-  amount.max = String(available);
-  amount.value = Math.min(payoutAmountForService(service, type), available);
-  if (hint) hint.textContent = `Доступно к выплате: ${money(available)}`;
+  if (!employeeId || !amount) return;
+  const stats = employeePayoutStats(employeeId);
+  amount.max = String(stats.availableToPay);
+  if (fillAmount || Number(amount.value || 0) > stats.availableToPay) amount.value = stats.availableToPay || "";
+  if (hint) hint.textContent = stats.availableToPay > 0 ? `Доступно к выплате: ${money(stats.availableToPay)}` : "Сейчас выплачивать нечего.";
+  const earned = document.querySelector("#payoutEarnedValue");
+  const paid = document.querySelector("#payoutPaidValue");
+  const planned = document.querySelector("#payoutPlannedValue");
+  const available = document.querySelector("#payoutAvailableValue");
+  if (earned) earned.textContent = money(stats.totalEarned);
+  if (paid) paid.textContent = money(stats.totalPaid);
+  if (planned) planned.textContent = money(stats.totalPlanned);
+  if (available) available.textContent = money(stats.availableToPay);
 }
 
 function previousMonthKey(dateString) {
@@ -1192,7 +1257,7 @@ function studioNotifications() {
   if (soon) notifications.push({ icon: "⏱", title: `Через ${minutesUntil(soon.date, soon.time)} минут запись`, text: `${soon.client || "Без имени"} · ${soon.service}` });
   const pending = state.bookings.filter((booking) => booking.status === "заявка");
   if (pending.length) notifications.push({ icon: "!", title: `Осталось подтвердить ${pending.length} ${plural(pending.length, "запись", "записи", "записей")}`, text: "Открой раздел Записи или календарь." });
-  const payoutAvailable = availableOutsideBudget();
+  const payoutAvailable = totalEmployeePayoutAvailable();
   if (payoutAvailable > 0) notifications.push({ icon: "₽", title: "Нужно выплатить сотруднику", text: `Доступно к выплате: ${money(payoutAvailable)}` });
   const birthdayClient = state.clients.find((client) => client.birthday === today || client.birthDate === today);
   if (birthdayClient) notifications.push({ icon: "○", title: "Сегодня день рождения клиента", text: birthdayClient.name });
@@ -2578,11 +2643,21 @@ function renderFinance() {
 function renderPayouts() {
   const paidPayouts = (state.payouts || []).filter((payout) => payout.status === "Выплачено");
   const plannedPayouts = (state.payouts || []).filter((payout) => payout.status === "Запланировано");
+  const employeeStats = allEmployeePayoutStats();
   return `
-    <section class="card section">
+    <section class="payouts-page">
+      <section class="card section">
+        <div class="section-head">
+          <div><h2>Расчёты с сотрудниками</h2><p class="muted">Заработок считается по завершённым записям.</p></div>
+          <button class="btn payout-button" type="button" data-action="openPayout">Новая выплата</button>
+        </div>
+        <div class="employee-payout-grid">
+          ${employeeStats.map(renderEmployeePayoutCard).join("") || renderEmptyState("Нет сотрудников", "Добавь сотрудника в настройках.")}
+        </div>
+      </section>
+      <section class="card section">
       <div class="section-head">
-        <h2>Выплаты</h2>
-        <button class="btn payout-button" type="button" data-action="openPayout">Новая выплата</button>
+        <h2>История выплат</h2>
       </div>
       <div class="grid two-col">
         <section>
@@ -2594,14 +2669,35 @@ function renderPayouts() {
           ${renderPayoutRows(paidPayouts)}
         </section>
       </div>
+      </section>
     </section>
+  `;
+}
+
+function renderEmployeePayoutCard(stats) {
+  const { employee, completedBookings, totalEarned, totalPaid, totalPlanned, availableToPay, overpaid } = stats;
+  return `
+    <article class="employee-payout-card" style="--employee-color:${employee.color || "#ff6633"}">
+      <div class="employee-payout-head">
+        <span class="avatar">${initials(employee.name)}</span>
+        <div><h3>${employee.name}</h3><small>${completedBookings.length} ${plural(completedBookings.length, "завершённая запись", "завершённые записи", "завершённых записей")}</small></div>
+      </div>
+      <div class="employee-payout-values">
+        <span>Заработано<strong>${money(totalEarned)}</strong></span>
+        <span>Выплачено<strong>${money(totalPaid)}</strong></span>
+        ${totalPlanned ? `<span>Запланировано<strong>${money(totalPlanned)}</strong></span>` : ""}
+        <span class="available">Доступно<strong>${money(availableToPay)}</strong></span>
+      </div>
+      ${overpaid ? `<p class="payout-warning">Переплата относительно завершённых записей: ${money(overpaid)}</p>` : ""}
+      <button class="btn" type="button" data-open-employee-payout="${employee.id}" ${availableToPay <= 0 ? "disabled" : ""}>Выплатить</button>
+    </article>
   `;
 }
 
 function renderPayoutRows(payouts) {
   return `
     <div class="list">
-      ${payouts.map((payout) => `<div class="list-item"><span>${formatDate(payout.paidAt.slice(0, 10))} · ${payout.recipient}<br><span class="muted">${payout.service} · ${payout.method}</span></span><strong>${money(payout.amount)}</strong></div>`).join("") || renderEmptyState("Выплат пока нет", "Когда появятся выплаты, они будут собраны здесь.")}
+      ${payouts.map((payout) => `<div class="list-item payout-list-item"><span>${formatDate((payout.paidAt || payout.createdAt).slice(0, 10))} · ${payout.employeeName || payout.recipient}<br><span class="muted">${payout.method || "способ не указан"}${payout.comment ? ` · ${payout.comment}` : ""}${payout.createdBy ? ` · создал ${payout.createdBy}` : ""}</span>${Number.isFinite(Number(payout.remainingAfter)) ? `<br><small class="muted">Остаток после выплаты: ${money(payout.remainingAfter)}</small>` : ""}</span><strong>${money(payout.amount)}</strong></div>`).join("") || renderEmptyState("Выплат пока нет", "Когда появятся выплаты, они будут собраны здесь.")}
     </div>
   `;
 }
@@ -2690,45 +2786,38 @@ function payoutAmountForService(serviceName, payoutType) {
 }
 
 function renderPayoutModal() {
-  const defaultService = activeCatalogServices()[0]?.name || catalogServices()[0]?.name || "";
-  const available = availableOutsideBudget();
-  const defaultAmount = Math.min(payoutAmountForService(defaultService, "Звукореж"), available);
+  const statsList = allEmployeePayoutStats();
+  const selectedStats = statsList.find((stats) => stats.employee?.id === payoutEmployeeIdDraft) || statsList.find((stats) => stats.availableToPay > 0) || statsList[0] || employeePayoutStats("");
+  const selectedEmployeeId = selectedStats.employee?.id || "";
+  const available = selectedStats.availableToPay || 0;
   return `
     <div class="modal-backdrop" data-action="closePayout">
       <section class="card modal" role="dialog" aria-modal="true" aria-label="Новая выплата">
         <div class="modal-head">
           <div>
             <h2>Новая выплата</h2>
-            <p class="muted">Фиксируем выплату звукорежу или исполнителю для отчёта.</p>
+            <p class="muted">Сумма ограничена заработком по завершённым записям.</p>
           </div>
           <button class="icon-btn" type="button" data-action="closePayout">×</button>
         </div>
         <form id="payoutForm" class="form-grid">
-          <div class="field">
-            <label>Кому выплатили</label>
-            <input name="recipient" list="payoutRecipients" required placeholder="Имя звукаря или исполнителя" />
-            <datalist id="payoutRecipients">
-              ${state.users.map((user) => `<option value="${user.name}"></option>`).join("")}
-            </datalist>
-          </div>
-          <div class="field">
-            <label>Тип выплаты</label>
-            <select name="payoutType" id="payoutType">
-              <option>Звукореж</option>
-              <option>Исполнитель</option>
-            </select>
-          </div>
           <div class="field full">
-            <label>Услуга</label>
-            <select name="service" id="payoutService">
-              ${catalogServices().map((service) => `<option value="${service.name}" ${service.name === defaultService ? "selected" : ""}>${service.name}</option>`).join("")}
+            <label>Сотрудник</label>
+            <select name="employeeId" id="payoutEmployee" required>
+              ${statsList.map((stats) => `<option value="${stats.employee.id}" ${stats.employee.id === selectedEmployeeId ? "selected" : ""}>${stats.employee.name} · доступно ${money(stats.availableToPay)}</option>`).join("")}
             </select>
-            <span class="field-note">Сумма подставляется по ставке, но её можно изменить вручную.</span>
+          </div>
+          <div class="payout-form-summary full">
+            <span>Заработано<strong id="payoutEarnedValue">${money(selectedStats.totalEarned)}</strong></span>
+            <span>Уже выплачено<strong id="payoutPaidValue">${money(selectedStats.totalPaid)}</strong></span>
+            <span>Запланировано<strong id="payoutPlannedValue">${money(selectedStats.totalPlanned)}</strong></span>
+            <span class="available">Доступно<strong id="payoutAvailableValue">${money(available)}</strong></span>
           </div>
           <div class="field">
             <label>Сумма</label>
-            <input name="amount" id="payoutAmount" type="number" min="1" max="${available}" step="1" required value="${defaultAmount}" />
-            <span class="field-note" id="payoutAvailableHint">Доступно к выплате: ${money(available)}</span>
+            <input name="amount" id="payoutAmount" type="number" min="1" max="${available}" step="1" required value="${available || ""}" />
+            <span class="field-note" id="payoutAvailableHint">${available > 0 ? `Доступно к выплате: ${money(available)}` : "Сейчас выплачивать нечего."}</span>
+            <button class="link-button payout-all-button" type="button" data-action="payoutAll" ${available <= 0 ? "disabled" : ""}>Выплатить всё</button>
           </div>
           <div class="field">
             <label>Способ выплаты</label>
@@ -3656,20 +3745,30 @@ function bindViewEvents() {
   });
 
   document.querySelector("[data-action='openPayout']")?.addEventListener("click", () => {
+    payoutEmployeeIdDraft = "";
     payoutModalOpen = true;
     render();
+  });
+
+  document.querySelectorAll("[data-open-employee-payout]").forEach((button) => {
+    button.addEventListener("click", () => {
+      payoutEmployeeIdDraft = button.dataset.openEmployeePayout;
+      payoutModalOpen = true;
+      render();
+    });
   });
 
   document.querySelectorAll("[data-action='closePayout']").forEach((button) => {
     button.addEventListener("click", (event) => {
       if (event.target !== button && button.classList.contains("modal-backdrop")) return;
       payoutModalOpen = false;
+      payoutEmployeeIdDraft = "";
       render();
     });
   });
 
-  document.querySelector("#payoutService")?.addEventListener("change", updatePayoutAmount);
-  document.querySelector("#payoutType")?.addEventListener("change", updatePayoutAmount);
+  document.querySelector("#payoutEmployee")?.addEventListener("change", () => updatePayoutEmployeeSummary(true));
+  document.querySelector("[data-action='payoutAll']")?.addEventListener("click", () => updatePayoutEmployeeSummary(true));
 
   document.querySelectorAll("[data-confirm-payout]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -3685,7 +3784,7 @@ function bindViewEvents() {
 
   document.querySelectorAll("[data-cancel-payout]").forEach((button) => {
     button.addEventListener("click", () => {
-      state.payouts = state.payouts.filter((payout) => payout.id !== button.dataset.cancelPayout);
+      state.payouts = state.payouts.map((payout) => payout.id === button.dataset.cancelPayout ? { ...payout, status: "Отменено" } : payout);
       saveState();
       render();
     });
@@ -3694,29 +3793,31 @@ function bindViewEvents() {
   document.querySelector("#payoutForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.target));
-    const amount = Number(data.amount);
-    const available = availableOutsideBudget();
-    if (!amount || amount <= 0) {
-      alert("Укажи сумму выплаты больше нуля.");
+    const validation = validateEmployeePayout(data.employeeId, data.amount);
+    if (!validation.ok) {
+      alert(validation.error);
       return;
     }
-    if (amount > available) {
-      alert(`Сейчас доступно к выплате только ${money(available)}. Запланированные выплаты тоже резервируют деньги.`);
-      return;
-    }
+    const { employee, amount, stats } = validation;
+    const available = stats.availableToPay;
     state.payouts.push({
       id: crypto.randomUUID(),
-      recipient: data.recipient.trim(),
-      payoutType: data.payoutType,
-      service: data.service,
+      employeeId: employee.id,
+      employeeName: employee.name,
+      recipient: employee.name,
+      payoutType: "Сотрудник",
+      service: "Завершённые записи",
       amount,
       method: data.method,
       paidAt: data.paidAt,
       status: data.status,
       comment: data.comment.trim(),
-      createdBy: currentUser()?.name || ""
+      createdBy: currentUser()?.name || "",
+      createdAt: new Date().toISOString(),
+      remainingAfter: Math.max(0, available - amount)
     });
     payoutModalOpen = false;
+    payoutEmployeeIdDraft = "";
     saveState();
     render();
   });

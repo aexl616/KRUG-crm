@@ -2189,6 +2189,95 @@ th {
   background: rgba(255, 107, 107, 0.08);
 }
 
+.payouts-page {
+  display: grid;
+  gap: 16px;
+}
+
+.employee-payout-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.employee-payout-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--employee-color, var(--accent));
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.employee-payout-head {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.employee-payout-head h3 {
+  margin-bottom: 2px;
+}
+
+.employee-payout-head small {
+  color: var(--muted);
+}
+
+.employee-payout-values {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.employee-payout-values span,
+.payout-form-summary span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.employee-payout-values strong,
+.payout-form-summary strong {
+  color: var(--text);
+  overflow-wrap: anywhere;
+  font-size: 15px;
+}
+
+.employee-payout-values .available strong,
+.payout-form-summary .available strong {
+  color: var(--accent);
+}
+
+.payout-warning {
+  margin-bottom: 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.payout-form-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.payout-all-button {
+  width: fit-content;
+  margin-top: 2px;
+}
+
+.payout-list-item > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .status-заявка {
   color: var(--accent);
   border-color: rgba(255, 102, 51, 0.45);
@@ -2772,6 +2861,10 @@ button.list-item:hover {
     grid-template-columns: 1fr;
   }
 
+  .employee-payout-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .today-metrics,
   .today-money-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3009,6 +3102,11 @@ button.list-item:hover {
 
   .today-metrics,
   .today-money-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .employee-payout-grid,
+  .payout-form-summary {
     grid-template-columns: 1fr;
   }
 
