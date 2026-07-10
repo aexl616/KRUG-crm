@@ -1287,7 +1287,8 @@ th {
 .booking-card.selected,
 .calendar-booking.selected {
   border-color: rgba(255, 102, 51, 0.78);
-  background: rgba(255, 102, 51, 0.12);
+  background: rgba(255, 102, 51, 0.16);
+  box-shadow: 0 0 0 2px rgba(255, 102, 51, 0.18), 0 16px 34px rgba(0, 0, 0, 0.32);
   transform: translateY(-1px);
 }
 
@@ -1447,8 +1448,32 @@ th {
   text-align: left;
 }
 
+.calendar-slot::after {
+  content: "+";
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid rgba(255, 102, 51, 0.18);
+  border-radius: 50%;
+  color: rgba(255, 102, 51, 0.38);
+  font-size: 12px;
+  font-weight: 900;
+  opacity: 0;
+  transition: opacity var(--ease), background var(--ease), border-color var(--ease);
+}
+
 .calendar-slot:hover {
   background: rgba(255, 102, 51, 0.08);
+}
+
+.calendar-slot:hover::after {
+  opacity: 1;
+  border-color: rgba(255, 102, 51, 0.42);
+  background: rgba(255, 102, 51, 0.1);
 }
 
 .calendar-slot:focus-visible {
@@ -1469,6 +1494,10 @@ th {
   background: rgba(255, 255, 255, 0.055);
   box-shadow: 0 10px 22px rgba(0, 0, 0, 0.22);
   transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+}
+
+.calendar-booking::after {
+  display: none;
 }
 
 .calendar-booking strong {
@@ -1493,6 +1522,19 @@ th {
   color: var(--muted);
   font-size: 11px;
   font-style: normal;
+}
+
+.calendar-status-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 22px;
+  padding: 2px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.18);
+  font-weight: 900;
 }
 
 .current-time-line {

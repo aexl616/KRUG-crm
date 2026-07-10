@@ -343,7 +343,7 @@ function normalizeState(nextState) {
     const previousEntry = [...clientMap.entries()].find(([, client]) =>
       (item.phone && client.phone === item.phone) ||
       (item.telegram && client.telegram === item.telegram) ||
-      (!item.phone && !item.telegram && client.name === name)
+      client.name === name
     );
     const previousKey = previousEntry?.[0];
     const previous = previousEntry?.[1] || {};
@@ -482,19 +482,56 @@ function sortedEntries(group) {
 }
 
 function knownClients() {
-  return sortedEntries(groupSum(state.payments, (item) => item.client.trim()))
-    .filter(([name]) => name)
-    .map(([name, total]) => {
-      const history = state.payments.filter((payment) => payment.client.trim() === name).sort((a, b) => b.date.localeCompare(a.date));
-      return { name, total, last: history[0], visits: history.length };
-    });
+  const clients = new Map();
+  const upsertKnownClient = (item = {}) => {
+    const name = String(item.name || item.clientName || item.client || "").trim();
+    if (!name) return;
+    const phone = String(item.phone || "").trim();
+    const telegram = String(item.telegram || "").trim();
+    const key = phone ? `phone:${phone}` : telegram ? `telegram:${telegram}` : `name:${name.toLowerCase()}`;
+    const existing = clients.get(key) || { name, phone: "", telegram: "", total: 0, visits: 0, lastDate: "", last: null };
+    existing.name = name || existing.name;
+    existing.phone = phone || existing.phone;
+    existing.telegram = telegram || existing.telegram;
+    clients.set(key, existing);
+  };
+
+  state.clients.forEach(upsertKnownClient);
+  state.bookings.forEach((booking) => {
+    upsertKnownClient(booking);
+    const key = booking.phone ? `phone:${booking.phone}` : booking.telegram ? `telegram:${booking.telegram}` : `name:${String(booking.clientName || booking.client || "").trim().toLowerCase()}`;
+    const client = clients.get(key);
+    if (!client) return;
+    if (booking.status === "завершено") {
+      client.visits += 1;
+      client.total += Number(booking.amount || 0);
+    }
+    if (!client.lastDate || String(booking.date || "").localeCompare(client.lastDate) > 0) {
+      client.lastDate = booking.date || "";
+      client.last = booking;
+    }
+  });
+  state.payments.forEach((payment) => {
+    upsertKnownClient(payment);
+    const key = payment.phone ? `phone:${payment.phone}` : payment.telegram ? `telegram:${payment.telegram}` : `name:${String(payment.client || "").trim().toLowerCase()}`;
+    const client = clients.get(key);
+    if (!client) return;
+    client.total += Number(payment.amount || 0);
+    if (!payment.bookingId) client.visits += 1;
+    if (!client.lastDate || String(payment.date || "").localeCompare(client.lastDate) > 0) {
+      client.lastDate = payment.date || "";
+      client.last = payment;
+    }
+  });
+
+  return [...clients.values()].sort((a, b) => String(b.lastDate || "").localeCompare(String(a.lastDate || "")) || a.name.localeCompare(b.name));
 }
 
 function clientSuggestions(query) {
   const normalized = query.trim().toLowerCase();
   if (!normalized) return knownClients().slice(0, 5);
   return knownClients()
-    .filter((client) => client.name.toLowerCase().includes(normalized))
+    .filter((client) => [client.name, client.phone, client.telegram].some((value) => String(value || "").toLowerCase().includes(normalized)))
     .slice(0, 6);
 }
 
@@ -536,14 +573,14 @@ function renderLogin() {
     <section class="login-screen">
       <form class="card login-card" id="loginForm">
         <div class="brand">
-          <img class="brand-mark" src="krug-logo.svg" alt="КРУГ" />
+          <img class="brand-mark" src="krug-logo.png" alt="КРУГ" />
           <div>
-            <strong>КРУГ</strong>
-            <span>учёт доходов студии</span>
+            <strong>КРУГ CRM</strong>
+            <span>внутренняя CRM студии</span>
           </div>
         </div>
         <h1>Вход</h1>
-        <p class="muted">Локальная версия для первого запуска.</p>
+        <p class="muted">Внутреннее приложение KRUG CRM для сотрудников студии.</p>
         <div class="grid">
           <div class="field">
             <label>Логин</label>
@@ -578,10 +615,10 @@ function renderSidebar() {
   return `
     <aside class="sidebar">
       <div class="brand">
-        <img class="brand-mark" src="krug-logo.svg" alt="КРУГ" />
+        <img class="brand-mark" src="krug-logo.png" alt="КРУГ" />
         <div>
           <strong>КРУГ</strong>
-          <span>студия звукозаписи</span>
+          <span>CRM студии · Preview</span>
         </div>
       </div>
       <nav class="nav">${navButtons()}</nav>
@@ -885,7 +922,7 @@ function renderClientSuggestions(query = "") {
       <em></em>
     `;
     button.querySelector("strong").textContent = client.name;
-    button.querySelector("small").textContent = `Последний визит: ${formatDate(client.last.date)} · ${client.visits} посещ.`;
+    button.querySelector("small").textContent = `Последний визит: ${client.lastDate ? formatDate(client.lastDate) : "пока нет"} · ${client.visits} посещ.`;
     button.querySelector("em").textContent = money(client.total);
     button.addEventListener("mousedown", (event) => {
       event.preventDefault();
@@ -1536,8 +1573,8 @@ function renderCalendarBooking(booking) {
   return `
     <article class="calendar-booking ${selectedBookingId === booking.id ? "selected" : ""} status-${booking.status.replaceAll(" ", "-")}" data-calendar-booking="${booking.id}" style="--employee-color:${color}">
       <strong><i>${serviceIcon(booking.service)}</i>${booking.time} · ${booking.client || "Без имени"}</strong>
-      <span>${booking.service}</span>
-      <em>${statusTitle(booking.status)}</em>
+      <span>${booking.service} · ${booking.duration || "1 час"}</span>
+      <em class="calendar-status-badge">${statusTitle(booking.status)}</em>
     </article>
   `;
 }
@@ -2693,7 +2730,7 @@ function upsertClientFromBooking(booking) {
   const existing = state.clients.find((client) =>
     (phone && client.phone === phone) ||
     (telegram && client.telegram === telegram) ||
-    (!phone && !telegram && client.name === name)
+    client.name === name
   );
   const payload = {
     id: existing?.id || crypto.randomUUID(),
@@ -2798,6 +2835,35 @@ function updateBookingStatus(bookingId, status) {
   booking.status = status;
   booking.updatedAt = new Date().toISOString();
   upsertClientFromBooking(booking);
+}
+
+function deleteBookingSafely(bookingId) {
+  const booking = state.bookings.find((item) => item.id === bookingId);
+  if (!booking) return false;
+  const linkedPayment = paymentForBooking(bookingId);
+  const message = linkedPayment
+    ? "У этой записи есть связанный платёж. Удалить только запись? Платёж останется в финансах."
+    : "Удалить запись?";
+  if (!confirm(message)) return false;
+
+  if (linkedPayment) {
+    const marker = "Исходная запись удалена";
+    state.payments = state.payments.map((payment) =>
+      payment.id === linkedPayment.id
+        ? {
+            ...payment,
+            bookingId: "",
+            comment: String(payment.comment || "").includes(marker)
+              ? payment.comment
+              : `${payment.comment || "Запись завершена"} · ${marker}`
+          }
+        : payment
+    );
+  }
+
+  state.bookings = state.bookings.filter((item) => item.id !== bookingId);
+  if (selectedBookingId === bookingId) selectedBookingId = null;
+  return true;
 }
 
 function clientStats(name) {
@@ -2966,9 +3032,7 @@ function bindViewEvents() {
 
   document.querySelectorAll("[data-side-delete-booking]").forEach((button) => {
     button.addEventListener("click", () => {
-      if (!confirm("Удалить запись?")) return;
-      state.bookings = state.bookings.filter((booking) => booking.id !== button.dataset.sideDeleteBooking);
-      selectedBookingId = null;
+      if (!deleteBookingSafely(button.dataset.sideDeleteBooking)) return;
       saveState();
       render();
     });
@@ -3051,8 +3115,7 @@ function bindViewEvents() {
   });
 
   document.querySelector("[data-action='deleteBookingFromModal']")?.addEventListener("click", () => {
-    if (!editingBookingId || !confirm("Удалить запись?")) return;
-    state.bookings = state.bookings.filter((booking) => booking.id !== editingBookingId);
+    if (!editingBookingId || !deleteBookingSafely(editingBookingId)) return;
     bookingModalOpen = false;
     editingBookingId = null;
     saveState();
@@ -3422,8 +3485,7 @@ function bindViewEvents() {
 
   document.querySelectorAll("[data-delete-booking]").forEach((button) => {
     button.addEventListener("click", () => {
-      if (!confirm("Удалить запись?")) return;
-      state.bookings = state.bookings.filter((item) => item.id !== button.dataset.deleteBooking);
+      if (!deleteBookingSafely(button.dataset.deleteBooking)) return;
       saveState();
       render();
     });
