@@ -196,6 +196,10 @@ let selectedClientName = null;
 let clientSortMode = "last";
 let payoutModalOpen = false;
 let settingsTab = "services";
+let notificationPanelOpen = false;
+let globalSearchQuery = "";
+let commandPaletteOpen = false;
+let commandPaletteQuery = "";
 
 const app = document.querySelector("#app");
 
@@ -490,6 +494,7 @@ function render() {
       ${renderMobileTabs()}
       ${bookingModalOpen ? renderBookingModal() : ""}
       ${payoutModalOpen ? renderPayoutModal() : ""}
+      ${commandPaletteOpen ? renderCommandPalette() : ""}
     </div>
   `;
 
@@ -584,16 +589,28 @@ function renderMobileTabs() {
 }
 
 function renderTopbar() {
+  const notifications = studioNotifications();
   return `
     <header class="topbar">
       <div>
         <h1>${pageTitle()}</h1>
         <p class="muted">${pageSubtitle()}</p>
       </div>
-      <div class="actions">
-        <button class="btn" data-action="openBookingModal">Добавить запись</button>
-        <button class="btn" data-view="payments">+ Доход</button>
-        ${isAdmin() ? '<button class="btn secondary" data-view="settings">Настройки</button>' : ""}
+      <div class="topbar-tools">
+        <div class="global-search">
+          <span>⌕</span>
+          <input id="globalSearch" placeholder="Поиск" value="${globalSearchQuery}" autocomplete="off" />
+          <div class="global-search-results ${globalSearchQuery ? "open" : ""}" id="globalSearchResults">${globalSearchQuery ? renderGlobalSearchResults(globalSearchQuery) : ""}</div>
+        </div>
+        <button class="topbar-icon ${notificationPanelOpen ? "active" : ""}" type="button" title="Уведомления" data-action="toggleNotifications">
+          🔔
+          ${notifications.length ? `<em>${notifications.length}</em>` : ""}
+        </button>
+        <button class="topbar-profile" type="button" data-action="openCommandPalette" title="Ctrl + K">
+          <span>${initials(currentUser().name)}</span>
+          <strong>${currentUser().name}</strong>
+        </button>
+        ${notificationPanelOpen ? `<div class="notification-popover">${renderNotifications(notifications)}</div>` : ""}
       </div>
     </header>
   `;
@@ -925,7 +942,7 @@ function renderColumnChart(entries) {
 
 function renderDonutChart(entries) {
   const total = entries.reduce((sum, [, value]) => sum + value, 0);
-  if (!total) return '<p class="muted">Данных пока нет</p>';
+  if (!total) return renderEmptyState("Данных пока нет", "Когда появятся платежи, здесь будет диаграмма.");
   let offset = 0;
   const colors = ["#ff6633", "#d94c1c", "#9d725c", "#777", "#b8b8b8"];
   const stops = entries
@@ -968,7 +985,7 @@ function renderRecentPayments(payments) {
             </div>
           `
         )
-        .join("") || '<p class="muted">Платежей пока нет</p>'}
+        .join("") || renderEmptyState("Платежей пока нет", "Завершённые записи и ручные доходы появятся здесь.")}
     </div>
   `;
 }
@@ -986,7 +1003,7 @@ function renderRankedList(entries) {
             </div>
           `
         )
-        .join("") || '<p class="muted">Данных пока нет</p>'}
+        .join("") || renderEmptyState("Данных пока нет", "Здесь появится рейтинг после первых оплат.")}
     </div>
   `;
 }
@@ -1002,53 +1019,265 @@ function renderEmptyState(title, text, actionLabel = "", actionAttrs = "") {
   `;
 }
 
+function todayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function weekdayLong(dateString) {
+  return new Date(`${dateString}T00:00:00`).toLocaleDateString("ru-RU", { weekday: "long" });
+}
+
+function currentClock() {
+  return new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+}
+
+function parseDurationHours(duration = "") {
+  const match = String(duration).match(/(\d+)/);
+  return Math.max(1, Number(match?.[1] || 1));
+}
+
+function minutesUntil(dateString, timeString) {
+  const start = new Date(`${dateString}T${timeString || "00:00"}`);
+  return Math.round((start - new Date()) / 60000);
+}
+
+function untilLabel(booking) {
+  const minutes = minutesUntil(booking.date, booking.time);
+  if (minutes < -15) return "уже началась";
+  if (minutes <= 0) return "сейчас";
+  if (minutes < 60) return `через ${minutes} мин`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `через ${hours} ч ${rest} мин` : `через ${hours} ч`;
+}
+
+function todaysBookings() {
+  const today = todayKey();
+  return state.bookings.filter((booking) => booking.date === today).sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+}
+
+function nextTodayBooking(bookings = todaysBookings()) {
+  return bookings.find((booking) => booking.status !== "отменено" && minutesUntil(booking.date, booking.time) >= -15) || bookings.find((booking) => booking.status !== "отменено");
+}
+
+function freeWindowRanges(bookings) {
+  const busy = bookings
+    .filter((booking) => booking.status !== "отменено")
+    .map((booking) => {
+      const start = Number(String(booking.time || "0").slice(0, 2));
+      return { start, end: Math.min(CALENDAR_END_HOUR + 1, start + parseDurationHours(booking.duration)) };
+    })
+    .sort((a, b) => a.start - b.start);
+  const ranges = [];
+  let cursor = CALENDAR_START_HOUR;
+  busy.forEach((slot) => {
+    if (slot.start > cursor) ranges.push([cursor, slot.start]);
+    cursor = Math.max(cursor, slot.end);
+  });
+  if (cursor <= CALENDAR_END_HOUR) ranges.push([cursor, CALENDAR_END_HOUR + 1]);
+  return ranges.filter(([start, end]) => end - start >= 1).slice(0, 6);
+}
+
+function studioNotifications() {
+  const today = todayKey();
+  const bookingsToday = todaysBookings();
+  const notifications = [];
+  const soon = bookingsToday.find((booking) => {
+    const minutes = minutesUntil(booking.date, booking.time);
+    return booking.status !== "отменено" && minutes > 0 && minutes <= 30;
+  });
+  if (soon) notifications.push({ icon: "⏱", title: `Через ${minutesUntil(soon.date, soon.time)} минут запись`, text: `${soon.client || "Без имени"} · ${soon.service}` });
+  const pending = state.bookings.filter((booking) => booking.status === "заявка");
+  if (pending.length) notifications.push({ icon: "!", title: `Осталось подтвердить ${pending.length} ${plural(pending.length, "запись", "записи", "записей")}`, text: "Открой раздел Записи или календарь." });
+  const payoutAvailable = availableOutsideBudget();
+  if (payoutAvailable > 0) notifications.push({ icon: "₽", title: "Нужно выплатить сотруднику", text: `Доступно к выплате: ${money(payoutAvailable)}` });
+  const birthdayClient = state.clients.find((client) => client.birthday === today || client.birthDate === today);
+  if (birthdayClient) notifications.push({ icon: "○", title: "Сегодня день рождения клиента", text: birthdayClient.name });
+  return notifications;
+}
+
+function plural(value, one, few, many) {
+  const mod10 = value % 10;
+  const mod100 = value % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if ([2, 3, 4].includes(mod10) && ![12, 13, 14].includes(mod100)) return few;
+  return many;
+}
+
+function searchItems(query) {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const items = [];
+  state.clients.forEach((client) => {
+    items.push({ type: "client", id: client.name, icon: "К", title: client.name, text: [client.phone, client.telegram].filter(Boolean).join(" · ") || "клиент" });
+  });
+  state.bookings.forEach((booking) => {
+    items.push({ type: "booking", id: booking.id, icon: serviceIcon(booking.service), title: `${booking.client || "Без имени"} · ${booking.time || ""}`, text: [formatDate(booking.date), booking.service, booking.employee, booking.phone, booking.telegram, statusTitle(booking.status)].filter(Boolean).join(" · ") });
+  });
+  catalogServices().forEach((service) => {
+    const group = catalogGroups().find((item) => item.id === service.categoryId);
+    items.push({ type: "service", id: service.id, icon: serviceIcon(service.name), title: service.name, text: `${group?.name || "Услуга"} · ${money(service.price)} · ${service.duration}` });
+  });
+  state.users.forEach((user) => {
+    items.push({ type: "employee", id: user.id, icon: initials(user.name), title: user.name, text: `${user.position || "Сотрудник"} · ${user.telegram || user.phone || "контакты не указаны"}` });
+  });
+  return items
+    .filter((item) => [item.title, item.text].some((value) => String(value || "").toLowerCase().includes(q)))
+    .slice(0, 8);
+}
+
+function commandItems(query = "") {
+  const commands = [
+    { type: "action", id: "new-booking", icon: "+", title: "Создать запись", text: "Ctrl + N" },
+    { type: "view", id: "calendar", icon: "К", title: "Открыть календарь", text: "Недельное расписание" },
+    { type: "view", id: "payments", icon: "₽", title: "Добавить доход", text: "Раздел платежей" },
+    { type: "view", id: "finance", icon: "−", title: "Добавить расход", text: "Финансы" }
+  ];
+  const q = query.trim().toLowerCase();
+  const filtered = q ? commands.filter((item) => [item.title, item.text].some((value) => value.toLowerCase().includes(q))) : commands;
+  return [...filtered, ...searchItems(query)].slice(0, 10);
+}
+
+function renderGlobalSearchResults(query) {
+  const results = searchItems(query);
+  return `
+    ${results.map(renderSearchResult).join("") || '<div class="search-empty">Ничего не найдено</div>'}
+  `;
+}
+
+function renderSearchResult(item) {
+  return `
+    <button class="search-result" type="button" data-search-type="${item.type}" data-search-id="${encodeURIComponent(item.id)}">
+      <span>${item.icon}</span>
+      <strong>${item.title}</strong>
+      <small>${item.text}</small>
+    </button>
+  `;
+}
+
+function renderNotifications(notifications) {
+  return `
+    <div class="popover-head">
+      <strong>Уведомления</strong>
+      <span>${notifications.length || "нет"}</span>
+    </div>
+    <div class="notification-list">
+      ${notifications.map((item) => `<div class="notification-item"><span>${item.icon}</span><div><strong>${item.title}</strong><small>${item.text}</small></div></div>`).join("") || renderEmptyState("Всё спокойно", "На сегодня нет срочных уведомлений.")}
+    </div>
+  `;
+}
+
+function renderCommandPalette() {
+  return `
+    <div class="modal-backdrop command-backdrop" data-action="closeCommandPalette">
+      <section class="card modal command-palette" role="dialog" aria-modal="true" aria-label="Командная палитра">
+        <div class="command-input">
+          <span>⌕</span>
+          <input id="commandSearch" value="${commandPaletteQuery}" placeholder="Команда, клиент, услуга, сотрудник..." autocomplete="off" autofocus />
+        </div>
+        <div class="command-list">
+          ${commandItems(commandPaletteQuery).map(renderSearchResult).join("") || renderEmptyState("Ничего не найдено", "Попробуй имя клиента, услугу или команду.")}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function openSearchItem(type, id) {
+  const decodedId = decodeURIComponent(id || "");
+  notificationPanelOpen = false;
+  globalSearchQuery = "";
+  commandPaletteOpen = false;
+  commandPaletteQuery = "";
+  if (type === "action" && decodedId === "new-booking") {
+    editingBookingId = null;
+    bookingSlotDraft = null;
+    bookingModalOpen = true;
+    render();
+    return;
+  }
+  if (type === "view") {
+    view = decodedId;
+    render();
+    return;
+  }
+  if (type === "booking") {
+    selectedBookingId = decodedId;
+    view = "calendar";
+    render();
+    return;
+  }
+  if (type === "client") {
+    selectedClientName = decodedId;
+    view = "clients";
+    render();
+    return;
+  }
+  if (type === "employee") {
+    settingsTab = "employees";
+    view = "settings";
+    render();
+    return;
+  }
+  if (type === "service") {
+    settingsTab = "services";
+    view = "settings";
+    render();
+  }
+}
+
 function renderDashboard() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayKey();
   const month = today.slice(0, 7);
   const monthTotal = state.payments.filter((item) => item.date.startsWith(month)).reduce((sum, item) => sum + Number(item.amount), 0);
   const todayTotal = state.payments.filter((item) => item.date === today).reduce((sum, item) => sum + Number(item.amount), 0);
   const expensesTotal = (state.expenses || []).filter((item) => item.date === today).reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  const todayBookings = state.bookings.filter((booking) => booking.date === today).sort((a, b) => a.time.localeCompare(b.time));
+  const todayBookings = todaysBookings();
   const pendingBookings = state.bookings.filter((booking) => booking.status === "заявка");
-  const nextBookings = todayBookings.filter((booking) => booking.status !== "отменено").slice(0, 5);
+  const nextBooking = nextTodayBooking(todayBookings);
 
   return `
-    <div class="grid stats dashboard-stats">
-      ${renderMetricCard("Выручка сегодня", todayTotal, "Доход", 0, "за день")}
-      ${renderMetricCard("Выручка за месяц", monthTotal, "Доход", 0, "за месяц")}
-      ${renderMetricCard("Записи сегодня", todayBookings.length, "В календаре", 0, "сегодня", false)}
-      ${renderMetricCard("Заявки", pendingBookings.length, "Ждут подтверждения", 0, "в работе", false)}
-    </div>
-    <div class="dashboard-layout studio-home" style="margin-top:16px">
-      <section class="card section wide-card">
+    <section class="studio-today-hero card section">
+      <div>
+        <span>Сегодня</span>
+        <h2>${formatDate(today)}</h2>
+        <p>${weekdayLong(today)} · ${currentClock()}</p>
+      </div>
+      <div class="studio-today-pulse">
+        <strong>${todayBookings.length}</strong>
+        <span>${plural(todayBookings.length, "запись", "записи", "записей")} сегодня</span>
+      </div>
+    </section>
+    <div class="dashboard-layout studio-home">
+      <section class="card section next-booking-card wide-card">
         <div class="section-head">
           <h2>Следующая запись</h2>
-          <button class="link-button" data-view="calendar">Открыть календарь</button>
+          ${nextBooking ? `<span class="select-chip">${untilLabel(nextBooking)}</span>` : ""}
         </div>
-        ${renderTodayTimeline(nextBookings)}
+        ${nextBooking ? renderNextBooking(nextBooking) : renderEmptyState("Сегодня записей нет", "Расписание свободно. Можно добавить первую запись.", "Добавить запись", 'type="button" data-action="openBookingModal"')}
       </section>
       <section class="card section">
-        <h2>Заявки ожидают</h2>
-        ${renderBookingMiniList(pendingBookings.slice(0, 5))}
+        <h2>Сегодняшняя выручка</h2>
+        <div class="daily-number"><strong>${money(todayTotal)}</strong><span>расходы: ${money(expensesTotal)}</span></div>
       </section>
       <section class="card section">
-        <h2>Свободные окна сегодня</h2>
-        ${renderFreeWindows(todayBookings)}
+        <h2>Записей сегодня</h2>
+        <div class="daily-number"><strong>${todayBookings.length}</strong><span>в календаре студии</span></div>
+      </section>
+      <section class="card section">
+        <h2>Заявки ждут подтверждения</h2>
+        <div class="daily-number"><strong>${pendingBookings.length}</strong><span>нужно обработать</span></div>
       </section>
       <section class="card section">
         <div class="section-head">
-          <h2>Мини-таймлайн “Сегодня”</h2>
-          <span class="select-chip">${formatDate(today)}</span>
+          <h2>Сегодняшнее расписание</h2>
+          <button class="link-button" data-view="calendar">Календарь</button>
         </div>
-        ${renderTodayRows(todayBookings)}
+        ${renderTodaySchedule(todayBookings)}
       </section>
       <section class="card section">
-        <h2>Финансы сегодня</h2>
-        <div class="finance-mini">
-          <div><span>Доход</span><strong>${money(todayTotal)}</strong></div>
-          <div><span>Расход</span><strong>${money(expensesTotal)}</strong></div>
-          <div><span>Итог</span><strong>${money(todayTotal - expensesTotal)}</strong></div>
-        </div>
+        <h2>Свободные окна</h2>
+        ${renderFreeWindows(todayBookings)}
       </section>
       <section class="card section wide-card">
         <h2>Быстрые действия</h2>
@@ -1063,14 +1292,65 @@ function renderDashboard() {
   `;
 }
 
+function renderNextBooking(booking) {
+  const employee = employeeByName(booking.employee);
+  const color = employee?.color || "#ff6633";
+  return `
+    <div class="next-booking" style="--employee-color:${color}">
+      <span class="service-icon">${serviceIcon(booking.service)}</span>
+      <div>
+        <h3>${booking.client || "Без имени"}</h3>
+        <p class="muted">${booking.service} · ${booking.employee || "сотрудник не указан"}</p>
+      </div>
+      <div class="next-booking-time">
+        <strong>${booking.time}</strong>
+        <span>${untilLabel(booking)}</span>
+      </div>
+      <button class="btn secondary" type="button" data-open-booking="${booking.id}">Открыть запись</button>
+    </div>
+  `;
+}
+
+function renderTodaySchedule(bookings) {
+  const byHour = new Map(bookings.map((booking) => [Number(String(booking.time || "0").slice(0, 2)), booking]));
+  const rows = [];
+  for (let hour = CALENDAR_START_HOUR; hour <= Math.min(CALENDAR_END_HOUR, 20); hour += 2) {
+    const booking = byHour.get(hour);
+    rows.push(booking ? renderTodayScheduleRow(booking) : renderTodayFreeRow(hour));
+  }
+  return `<div class="today-schedule">${rows.join("")}</div>`;
+}
+
+function renderTodayScheduleRow(booking) {
+  const employee = employeeByName(booking.employee);
+  const color = employee?.color || "#ff6633";
+  return `
+    <button class="today-schedule-row busy" type="button" data-open-booking="${booking.id}" style="--employee-color:${color}">
+      <strong>${booking.time}</strong>
+      <span>${booking.client || "Без имени"}</span>
+      <span><i>${serviceIcon(booking.service)}</i>${booking.service}</span>
+      <em class="status-text status-${booking.status.replaceAll(" ", "-")}">${statusTitle(booking.status)}</em>
+    </button>
+  `;
+}
+
+function renderTodayFreeRow(hour) {
+  const time = `${String(hour).padStart(2, "0")}:00`;
+  return `
+    <button class="today-schedule-row free" type="button" data-calendar-slot="${todayKey()}|${time}">
+      <strong>${time}</strong>
+      <span>Свободно</span>
+      <span>окно для записи</span>
+      <em>создать</em>
+    </button>
+  `;
+}
+
 function renderFreeWindows(bookings) {
-  const busyHours = new Set(bookings.filter((booking) => booking.status !== "отменено").map((booking) => Number(String(booking.time || "0").slice(0, 2))));
-  const free = Array.from({ length: CALENDAR_END_HOUR - CALENDAR_START_HOUR + 1 }, (_, index) => CALENDAR_START_HOUR + index)
-    .filter((hour) => !busyHours.has(hour))
-    .slice(0, 6);
+  const free = freeWindowRanges(bookings);
   return `
     <div class="free-slots">
-      ${free.map((hour) => `<button class="select-chip" data-calendar-slot="${new Date().toISOString().slice(0, 10)}|${String(hour).padStart(2, "0")}:00">${String(hour).padStart(2, "0")}:00</button>`).join("") || '<p class="muted">Сегодня всё занято</p>'}
+      ${free.map(([start, end]) => `<button class="select-chip" data-calendar-slot="${todayKey()}|${String(start).padStart(2, "0")}:00">${String(start).padStart(2, "0")}:00–${String(end).padStart(2, "0")}:00</button>`).join("") || renderEmptyState("Окон нет", "Сегодня всё занято.")} 
     </div>
   `;
 }
@@ -1087,7 +1367,7 @@ function renderTodayTimeline(bookings) {
             <em class="status-text status-${booking.status.replaceAll(" ", "-")}">${statusTitle(booking.status)}</em>
           </button>
         `)
-        .join("") || '<p class="muted">На сегодня записей пока нет</p>'}
+        .join("") || renderEmptyState("На сегодня записей нет", "Создай первую запись или выбери свободный слот.")}
     </div>
   `;
 }
@@ -1103,7 +1383,7 @@ function renderTodayRows(bookings) {
             <em>${statusTitle(booking.status)}</em>
           </button>
         `)
-        .join("") || '<p class="muted">Сегодня свободно</p>'}
+        .join("") || renderEmptyState("Сегодня свободно", "Расписание пока пустое.")}
     </div>
   `;
 }
@@ -1119,7 +1399,7 @@ function renderBookingMiniList(bookings) {
             <em>${booking.time}</em>
           </button>
         `)
-        .join("") || '<p class="muted">Нет заявок на подтверждение</p>'}
+        .join("") || renderEmptyState("Заявок нет", "Все записи обработаны.")}
     </div>
   `;
 }
@@ -1814,18 +2094,18 @@ function renderBudget() {
       </section>
       <section class="card section budget-table-card">
         <h2>Расшифровка по платежам</h2>
-        <div class="table-wrap">
-          <table class="budget-table">
-            <thead>
-              <tr>
-                <th>Дата</th><th>Клиент</th><th>Услуга</th><th>Сумма</th><th>Распределение</th><th>Вне копилок</th><th></th>
-              </tr>
-            </thead>
-            <tbody>
-              ${budget.rows.map(renderBudgetRow).join("") || '<tr><td colspan="7">Платежей пока нет</td></tr>'}
-            </tbody>
-          </table>
-        </div>
+        ${budget.rows.length
+          ? `<div class="table-wrap">
+              <table class="budget-table">
+                <thead>
+                  <tr>
+                    <th>Дата</th><th>Клиент</th><th>Услуга</th><th>Сумма</th><th>Распределение</th><th>Вне копилок</th><th></th>
+                  </tr>
+                </thead>
+                <tbody>${budget.rows.map(renderBudgetRow).join("")}</tbody>
+              </table>
+            </div>`
+          : renderEmptyState("Платежей пока нет", "После завершения записи доход попадёт сюда автоматически.")}
       </section>
     </div>
   `;
@@ -2309,12 +2589,12 @@ function renderProfileSettings() {
 }
 
 function renderList(entries) {
-  return `<div class="list">${entries.map(([label, total]) => `<div class="list-item"><span>${label}</span><strong>${money(total)}</strong></div>`).join("") || "Данных пока нет"}</div>`;
+  return `<div class="list">${entries.map(([label, total]) => `<div class="list-item"><span>${label}</span><strong>${money(total)}</strong></div>`).join("") || renderEmptyState("Данных пока нет", "После первых операций здесь появится список.")}</div>`;
 }
 
 function renderBars(entries) {
   const max = Math.max(...entries.map(([, total]) => total), 1);
-  return `<div class="bars">${entries.map(([label, total]) => `<div class="bar-row"><span>${label}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.max(6, (total / max) * 100)}%"></div></div><strong>${money(total)}</strong></div>`).join("") || "Данных пока нет"}</div>`;
+  return `<div class="bars">${entries.map(([label, total]) => `<div class="bar-row"><span>${label}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.max(6, (total / max) * 100)}%"></div></div><strong>${money(total)}</strong></div>`).join("") || renderEmptyState("Данных пока нет", "График появится, когда накопятся операции.")}</div>`;
 }
 
 function bookingFromForm(data) {
@@ -2469,6 +2749,8 @@ function bindCommonEvents() {
       editingBookingId = null;
       bookingModalOpen = false;
       bookingSlotDraft = null;
+      notificationPanelOpen = false;
+      commandPaletteOpen = false;
       if (view !== "clients") selectedClientName = null;
       render();
     });
@@ -2479,15 +2761,73 @@ function bindCommonEvents() {
       editingBookingId = null;
       bookingSlotDraft = null;
       bookingModalOpen = true;
+      commandPaletteOpen = false;
       render();
     });
   });
+
+  document.querySelector("[data-action='toggleNotifications']")?.addEventListener("click", () => {
+    notificationPanelOpen = !notificationPanelOpen;
+    render();
+  });
+
+  document.querySelectorAll("[data-action='openCommandPalette']").forEach((button) => {
+    button.addEventListener("click", () => {
+      commandPaletteOpen = true;
+      notificationPanelOpen = false;
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-action='closeCommandPalette']").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      if (event.target !== button && button.classList.contains("modal-backdrop")) return;
+      commandPaletteOpen = false;
+      commandPaletteQuery = "";
+      render();
+    });
+  });
+
+  document.querySelector("#globalSearch")?.addEventListener("input", (event) => {
+    globalSearchQuery = event.target.value;
+    const box = document.querySelector("#globalSearchResults");
+    if (box) {
+      box.classList.toggle("open", Boolean(globalSearchQuery.trim()));
+      box.innerHTML = renderGlobalSearchResults(globalSearchQuery);
+      bindSearchResultEvents();
+    } else {
+      render();
+    }
+  });
+
+  document.querySelector("#globalSearch")?.addEventListener("focus", () => {
+    if (globalSearchQuery) render();
+  });
+
+  document.querySelector("#commandSearch")?.addEventListener("input", (event) => {
+    commandPaletteQuery = event.target.value;
+    const list = document.querySelector(".command-list");
+    if (list) {
+      list.innerHTML = commandItems(commandPaletteQuery).map(renderSearchResult).join("") || renderEmptyState("Ничего не найдено", "Попробуй имя клиента, услугу или команду.");
+      bindSearchResultEvents();
+    }
+  });
+
+  bindSearchResultEvents();
 
   document.querySelectorAll("[data-action='logout']").forEach((button) => {
     button.addEventListener("click", () => {
       state.sessionUserId = null;
       saveState();
       render();
+    });
+  });
+}
+
+function bindSearchResultEvents() {
+  document.querySelectorAll("[data-search-type]").forEach((button) => {
+    button.addEventListener("click", () => {
+      openSearchItem(button.dataset.searchType, button.dataset.searchId);
     });
   });
 }
@@ -3072,5 +3412,35 @@ function bindViewEvents() {
     });
   });
 }
+
+document.addEventListener("keydown", (event) => {
+  const key = event.key.toLowerCase();
+  if ((event.ctrlKey || event.metaKey) && key === "n") {
+    event.preventDefault();
+    editingBookingId = null;
+    bookingSlotDraft = null;
+    bookingModalOpen = true;
+    notificationPanelOpen = false;
+    commandPaletteOpen = false;
+    render();
+    return;
+  }
+  if ((event.ctrlKey || event.metaKey) && key === "k") {
+    event.preventDefault();
+    commandPaletteOpen = true;
+    notificationPanelOpen = false;
+    render();
+    return;
+  }
+  if (event.key === "Escape" && (bookingModalOpen || payoutModalOpen || commandPaletteOpen || notificationPanelOpen)) {
+    bookingModalOpen = false;
+    payoutModalOpen = false;
+    commandPaletteOpen = false;
+    notificationPanelOpen = false;
+    editingBookingId = null;
+    bookingSlotDraft = null;
+    render();
+  }
+});
 
 render();

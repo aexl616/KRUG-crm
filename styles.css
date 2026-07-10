@@ -182,6 +182,197 @@ textarea:disabled,
   margin-bottom: 20px;
 }
 
+.topbar-tools {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: min(560px, 100%);
+}
+
+.global-search {
+  position: relative;
+  flex: 1 1 260px;
+}
+
+.global-search > span,
+.command-input > span {
+  position: absolute;
+  z-index: 1;
+  left: 12px;
+  top: 50%;
+  color: var(--muted);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.global-search input,
+.command-input input {
+  padding-left: 34px;
+}
+
+.global-search-results,
+.notification-popover {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 10px);
+  right: 0;
+  width: min(420px, calc(100vw - 48px));
+  display: none;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(13, 13, 13, 0.96);
+  box-shadow: 0 22px 58px rgba(0, 0, 0, 0.52);
+  backdrop-filter: blur(18px);
+  animation: listOpen 160ms ease both;
+}
+
+.global-search-results {
+  left: 0;
+  right: auto;
+}
+
+.global-search-results.open {
+  display: grid;
+  gap: 4px;
+}
+
+.notification-popover {
+  display: grid;
+  gap: 10px;
+}
+
+.topbar-icon,
+.topbar-profile {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.topbar-icon {
+  position: relative;
+  width: 42px;
+}
+
+.topbar-icon em {
+  position: absolute;
+  right: -4px;
+  top: -5px;
+  display: grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--accent);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.topbar-icon.active,
+.topbar-icon:hover,
+.topbar-profile:hover {
+  border-color: rgba(255, 102, 51, 0.45);
+  color: var(--accent);
+  background: rgba(255, 102, 51, 0.1);
+}
+
+.topbar-profile {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 6px 6px;
+  font-weight: 900;
+}
+
+.topbar-profile span {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: #fff;
+  background: linear-gradient(180deg, #ff7845, #d94c1c);
+  font-size: 11px;
+}
+
+.search-result,
+.notification-item {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 10px;
+  width: 100%;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+}
+
+.search-result:hover,
+.notification-item:hover {
+  border-color: rgba(255, 102, 51, 0.34);
+  background: rgba(255, 102, 51, 0.1);
+}
+
+.search-result span,
+.notification-item > span {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(255, 102, 51, 0.36);
+  border-radius: 50%;
+  color: var(--accent);
+  background: rgba(255, 102, 51, 0.08);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.search-result strong,
+.search-result small,
+.notification-item strong,
+.notification-item small {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.search-result small,
+.notification-item small,
+.search-empty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.search-empty {
+  padding: 12px;
+}
+
+.popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 6px;
+}
+
+.popover-head span {
+  color: var(--accent);
+  font-weight: 900;
+}
+
+.notification-list {
+  display: grid;
+  gap: 4px;
+}
+
 h1,
 h2,
 h3,
@@ -420,6 +611,159 @@ h3 {
 
 .metric-card {
   min-height: 112px;
+}
+
+.studio-today-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 16px;
+  border-color: rgba(255, 102, 51, 0.2);
+}
+
+.studio-today-hero span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.studio-today-hero h2 {
+  margin-bottom: 4px;
+  font-size: 28px;
+}
+
+.studio-today-hero p {
+  margin-bottom: 0;
+  color: var(--muted);
+}
+
+.studio-today-pulse {
+  display: grid;
+  place-items: center;
+  min-width: 136px;
+  min-height: 92px;
+  padding: 14px;
+  border: 1px solid rgba(255, 102, 51, 0.28);
+  border-radius: 8px;
+  background: rgba(255, 102, 51, 0.08);
+  text-align: center;
+}
+
+.studio-today-pulse strong,
+.daily-number strong {
+  color: var(--accent);
+  font-size: 34px;
+  line-height: 1;
+}
+
+.studio-today-pulse span,
+.daily-number span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.next-booking {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto auto;
+  gap: 14px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--employee-color, var(--accent));
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.next-booking h3,
+.next-booking p {
+  margin-bottom: 0;
+}
+
+.next-booking-time {
+  display: grid;
+  gap: 2px;
+  min-width: 96px;
+  text-align: right;
+}
+
+.next-booking-time strong {
+  color: var(--accent);
+  font-size: 22px;
+}
+
+.next-booking-time span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.daily-number {
+  display: grid;
+  gap: 8px;
+  min-height: 74px;
+  align-content: center;
+}
+
+.today-schedule {
+  display: grid;
+  gap: 8px;
+}
+
+.today-schedule-row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) minmax(120px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-left: 4px solid transparent;
+  border-radius: 8px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.032);
+  text-align: left;
+}
+
+.today-schedule-row.busy {
+  border-left-color: var(--employee-color, var(--accent));
+}
+
+.today-schedule-row.free {
+  color: var(--muted);
+  border-style: dashed;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.today-schedule-row:hover {
+  border-color: rgba(255, 102, 51, 0.4);
+  border-left-color: var(--employee-color, var(--accent));
+  background: rgba(255, 102, 51, 0.08);
+}
+
+.today-schedule-row strong {
+  color: var(--accent);
+}
+
+.today-schedule-row span,
+.today-schedule-row em {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-style: normal;
+}
+
+.today-schedule-row i {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 6px;
+  border-radius: 50%;
+  color: var(--accent);
+  background: rgba(255, 102, 51, 0.1);
+  font-style: normal;
+  font-size: 11px;
 }
 
 .metric-foot {
@@ -1844,6 +2188,34 @@ button.list-item:hover {
   animation: modalIn 180ms ease both;
 }
 
+.command-backdrop {
+  place-items: start center;
+  padding-top: 12vh;
+}
+
+.command-palette {
+  width: min(620px, calc(100vw - 28px));
+  padding: 12px;
+}
+
+.command-input {
+  position: relative;
+  margin-bottom: 10px;
+}
+
+.command-input input {
+  min-height: 50px;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.command-list {
+  display: grid;
+  gap: 4px;
+  max-height: min(520px, 58vh);
+  overflow: auto;
+}
+
 .modal-head {
   display: flex;
   align-items: flex-start;
@@ -1978,6 +2350,10 @@ button.list-item:hover {
     flex-direction: column;
   }
 
+  .topbar-tools {
+    width: 100%;
+  }
+
   .stats,
   .budget-stats,
   .two-col,
@@ -1987,6 +2363,18 @@ button.list-item:hover {
 
   .dashboard-layout {
     grid-template-columns: 1fr;
+  }
+
+  .next-booking {
+    grid-template-columns: 44px minmax(0, 1fr);
+  }
+
+  .next-booking-time {
+    text-align: left;
+  }
+
+  .next-booking .btn {
+    grid-column: 1 / -1;
   }
 
   .budget-wallets,
@@ -2119,6 +2507,14 @@ button.list-item:hover {
     grid-template-columns: 1fr;
   }
 
+  .today-schedule-row {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+
+  .today-schedule-row em {
+    grid-column: 2;
+  }
+
   .mobile-tabs button.active {
     color: #111;
     background: var(--accent);
@@ -2163,6 +2559,28 @@ button.list-item:hover {
 
   .quick-actions {
     grid-template-columns: 1fr;
+  }
+
+  .topbar-tools {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+  }
+
+  .topbar-profile {
+    padding-right: 6px;
+  }
+
+  .topbar-profile strong {
+    display: none;
+  }
+
+  .studio-today-hero {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .studio-today-pulse {
+    width: 100%;
   }
 
   .column-item {
