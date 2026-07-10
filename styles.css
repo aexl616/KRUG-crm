@@ -2210,6 +2210,11 @@ th {
   background: rgba(255, 255, 255, 0.035);
 }
 
+.employee-payout-card.has-warning {
+  border-color: rgba(255, 107, 107, 0.42);
+  background: rgba(255, 107, 107, 0.055);
+}
+
 .employee-payout-head {
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr);
@@ -2258,6 +2263,15 @@ th {
   font-size: 12px;
 }
 
+.payout-warning[hidden] {
+  display: none;
+}
+
+.payout-card-empty {
+  margin: 0;
+  font-size: 12px;
+}
+
 .payout-form-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2276,6 +2290,79 @@ th {
 .payout-list-item > span {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.payout-list-item.has-warning {
+  border-color: rgba(255, 107, 107, 0.35);
+  background: rgba(255, 107, 107, 0.045);
+}
+
+.payout-row-warning {
+  color: var(--danger);
+}
+
+.payout-row-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.payout-row-meta .status-pill {
+  font-style: normal;
+  color: var(--muted);
+}
+
+.finance-warning-list {
+  display: grid;
+  gap: 8px;
+}
+
+.finance-warning-item {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 107, 107, 0.28);
+  border-radius: 8px;
+  background: rgba(255, 107, 107, 0.045);
+}
+
+.finance-warning-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--danger);
+  background: rgba(255, 107, 107, 0.12);
+  font-weight: 800;
+}
+
+.finance-warning-item div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.finance-warning-item small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.finance-warning-empty {
+  display: grid;
+  gap: 4px;
+  padding: 14px;
+  border: 1px solid rgba(83, 199, 128, 0.25);
+  border-radius: 8px;
+  background: rgba(83, 199, 128, 0.05);
+}
+
+.finance-warning-empty span {
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .status-заявка {
@@ -3050,6 +3137,15 @@ button.list-item:hover {
     width: fit-content;
   }
 
+  .finance-warning-item {
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+  }
+
+  .finance-warning-item .btn {
+    grid-column: 2 / -1;
+    width: fit-content;
+  }
+
   .today-schedule-row em {
     grid-column: 2;
   }
@@ -3072,6 +3168,21 @@ button.list-item:hover {
 @media (max-width: 520px) {
   .content {
     padding: 14px;
+  }
+
+  .finance-warning-item {
+    grid-template-columns: 28px minmax(0, 1fr);
+  }
+
+  .finance-warning-item > b,
+  .finance-warning-item .btn {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .payout-row-meta {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .card,

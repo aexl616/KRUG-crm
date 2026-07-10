@@ -303,6 +303,7 @@ function normalizeState(nextState) {
     return {
       ...payment,
       service,
+      amount: numberOrZero(payment.amount),
       soundEngineer,
       performer,
       employee: employeeName || soundEngineer || performer || ""
@@ -312,7 +313,7 @@ function normalizeState(nextState) {
     const serviceName = serviceAliases[booking.serviceName || booking.service] || booking.serviceName || booking.service || services[0] || "";
     const serviceItem = serviceItems.find((service) => service.id === booking.serviceId) || serviceItems.find((service) => service.name === serviceName);
     const employeeName = booking.employeeName || (booking.employee === "Я" ? "AE XL" : booking.employee) || "";
-    const employee = users.find((user) => user.id === booking.employeeId) || users.find((user) => user.name === employeeName) || users[0];
+    const employee = users.find((user) => user.id === booking.employeeId) || users.find((user) => user.name === employeeName);
     const status = bookingStatuses.includes(booking.status) ? booking.status : "заявка";
     const createdAt = booking.createdAt || new Date().toISOString();
     return {
@@ -329,7 +330,7 @@ function normalizeState(nextState) {
       serviceId: booking.serviceId || serviceItem?.id || "",
       serviceName,
       service: serviceName,
-      amount: Number(booking.amount || booking.cost || serviceItem?.price || 0),
+      amount: numberOrZero(booking.amount || booking.cost || serviceItem?.price),
       employeeId: booking.employeeId || employee?.id || "",
       employeeName: employee?.name || employeeName || "",
       employee: employee?.name || employeeName || "",
@@ -346,7 +347,7 @@ function normalizeState(nextState) {
     id: expense.id || crypto.randomUUID(),
     date: expense.date || new Date().toISOString().slice(0, 10),
     title: expense.title || "Расход",
-    amount: Number(expense.amount || 0),
+    amount: numberOrZero(expense.amount),
     comment: expense.comment || ""
   }));
   const clientMap = new Map((nextState.clients || []).map((client) => [client.id || client.name, client]));
@@ -377,6 +378,7 @@ function normalizeState(nextState) {
       employeeId: payout.employeeId || employee?.id || "",
       employeeName: payout.employeeName || employee?.name || payout.recipient || "",
       recipient: payout.recipient || employee?.name || "",
+      amount: numberOrZero(payout.amount),
       createdAt: payout.createdAt || payout.paidAt || new Date().toISOString()
     };
   });
@@ -420,6 +422,11 @@ function money(value) {
   return new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(value || 0);
 }
 
+function numberOrZero(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
 function initials(name = "") {
   const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
   return (parts[0]?.[0] || "?") + (parts[1]?.[0] || "");
@@ -453,7 +460,8 @@ function bookingForPayment(payment) {
 }
 
 function formatDate(value) {
-  return new Intl.DateTimeFormat("ru-RU").format(new Date(`${value}T00:00:00`));
+  const date = new Date(`${String(value || "").slice(0, 10)}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? "дата не указана" : new Intl.DateTimeFormat("ru-RU").format(date);
 }
 
 function addDays(dateString, days) {
@@ -879,35 +887,54 @@ function payoutTotalsFromBudget(budget = calculateBudget()) {
 }
 
 function employeePayoutStats(employeeId) {
-  const employee = state.users.find((user) => user.id === employeeId);
-  if (!employee) return { employee: null, completedBookings: [], totalEarned: 0, totalPaid: 0, totalPlanned: 0, availableToPay: 0, overpaid: 0 };
-  const completedBookings = state.bookings.filter((booking) =>
-    booking.status === "завершено" && bookingEmployeeId(booking) === employee.id && Number(booking.amount || 0) > 0
+  const employee = (state.users || []).find((user) => user.id === employeeId);
+  const emptyStats = {
+    employee: employee || null,
+    completedBookings: [],
+    completedBookingsCount: 0,
+    totalEarned: 0,
+    totalPaid: 0,
+    totalPlanned: 0,
+    availableToPay: 0,
+    overpaid: 0,
+    lastPayoutDate: "",
+    lastPayoutAmount: 0
+  };
+  if (!employee) return emptyStats;
+  const completedBookings = (state.bookings || []).filter((booking) =>
+    booking.status === "завершено" && bookingEmployeeId(booking) === employee.id && numberOrZero(booking.amount) > 0
   );
   const employeePayouts = (state.payouts || []).filter((payout) =>
     payout.status !== "Отменено" && (payout.employeeId === employee.id || (!payout.employeeId && payout.recipient === employee.name))
   );
-  const totalEarned = completedBookings.reduce((sum, booking) => sum + Number(booking.amount || 0), 0);
+  const totalEarned = completedBookings.reduce((sum, booking) => sum + numberOrZero(booking.amount), 0);
   const totalPaid = employeePayouts
     .filter((payout) => !payout.status || payout.status === "Выплачено")
-    .reduce((sum, payout) => sum + Number(payout.amount || 0), 0);
+    .reduce((sum, payout) => sum + Math.max(0, numberOrZero(payout.amount)), 0);
   const totalPlanned = employeePayouts
     .filter((payout) => payout.status === "Запланировано")
-    .reduce((sum, payout) => sum + Number(payout.amount || 0), 0);
+    .reduce((sum, payout) => sum + Math.max(0, numberOrZero(payout.amount)), 0);
   const reserved = totalPaid + totalPlanned;
+  const paidPayouts = employeePayouts
+    .filter((payout) => !payout.status || payout.status === "Выплачено")
+    .sort((a, b) => payoutDateValue(b).localeCompare(payoutDateValue(a)));
+  const lastPayout = paidPayouts[0];
   return {
     employee,
     completedBookings,
+    completedBookingsCount: completedBookings.length,
     totalEarned,
     totalPaid,
     totalPlanned,
     availableToPay: Math.max(0, totalEarned - reserved),
-    overpaid: Math.max(0, reserved - totalEarned)
+    overpaid: Math.max(0, reserved - totalEarned),
+    lastPayoutDate: payoutDateValue(lastPayout),
+    lastPayoutAmount: numberOrZero(lastPayout?.amount)
   };
 }
 
 function allEmployeePayoutStats() {
-  return state.users.map((employee) => employeePayoutStats(employee.id));
+  return (state.users || []).map((employee) => employeePayoutStats(employee.id));
 }
 
 function totalEmployeePayoutAvailable() {
@@ -915,15 +942,82 @@ function totalEmployeePayoutAvailable() {
 }
 
 function validateEmployeePayout(employeeId, amountValue) {
-  const employee = state.users.find((user) => user.id === employeeId);
+  const employee = (state.users || []).find((user) => user.id === employeeId);
   const stats = employeePayoutStats(employeeId);
   const amount = Number(amountValue || 0);
   if (!employee) return { ok: false, error: "Выбери сотрудника для выплаты.", employee, stats, amount };
   if (!amount || amount <= 0) return { ok: false, error: "Укажи сумму выплаты больше нуля.", employee, stats, amount };
   if (amount > stats.availableToPay) {
-    return { ok: false, error: `Нельзя выплатить больше, чем сотрудник заработал. Доступно: ${money(stats.availableToPay)}.`, employee, stats, amount };
+    return { ok: false, error: `Нельзя выплатить больше доступной суммы. Доступно: ${money(stats.availableToPay)}.`, employee, stats, amount };
   }
   return { ok: true, error: "", employee, stats, amount };
+}
+
+function payoutDateValue(payout) {
+  return String(payout?.paidAt || payout?.createdAt || "");
+}
+
+function payoutDataProblems(payout) {
+  const problems = [];
+  if (!payout.employeeId) problems.push("нет employeeId");
+  else if (!(state.users || []).some((employee) => employee.id === payout.employeeId)) problems.push("сотрудник не найден");
+  if (numberOrZero(payout.amount) <= 0) problems.push("сумма не больше нуля");
+  return problems;
+}
+
+function financialWarnings() {
+  const bookings = state.bookings || [];
+  const payments = state.payments || [];
+  const payouts = state.payouts || [];
+  const employees = state.users || [];
+  const warnings = [];
+  const add = (warning) => warnings.push({ date: "", amount: null, action: "", targetId: "", ...warning });
+
+  bookings.filter((booking) => booking.status === "завершено").forEach((booking) => {
+    const payment = payments.find((item) => item.bookingId === booking.id || (booking.paymentId && item.id === booking.paymentId));
+    const bookingLabel = `${booking.clientName || booking.client || "Клиент не указан"} · ${booking.serviceName || booking.service || "услуга не указана"}`;
+    if (!payment) add({ type: "Завершённая запись без платежа", description: bookingLabel, date: booking.date, amount: numberOrZero(booking.amount), action: "booking", targetId: booking.id });
+    if (!bookingEmployeeId(booking)) add({ type: "Запись завершена без сотрудника", description: bookingLabel, date: booking.date, amount: numberOrZero(booking.amount), action: "booking", targetId: booking.id });
+    if (numberOrZero(booking.amount) <= 0) add({ type: "Запись завершена без суммы", description: bookingLabel, date: booking.date, amount: numberOrZero(booking.amount), action: "booking", targetId: booking.id });
+    if (payment && Math.abs(numberOrZero(payment.amount) - numberOrZero(booking.amount)) > 0.01) {
+      add({ type: "Сумма платежа отличается от записи", description: bookingLabel, date: payment.date || booking.date, amount: numberOrZero(payment.amount), action: "payment", targetId: payment.id });
+    }
+  });
+
+  payments.forEach((payment) => {
+    const linkedBookingMissing = payment.bookingId && !bookings.some((booking) => booking.id === payment.bookingId);
+    const deletedBookingMarker = !payment.bookingId && String(payment.comment || "").includes("Исходная запись удалена");
+    if (linkedBookingMissing || deletedBookingMarker) {
+      add({ type: "Платёж связан с удалённой записью", description: `${payment.client || "Клиент не указан"} · ${payment.service || "услуга не указана"}`, date: payment.date, amount: numberOrZero(payment.amount), action: "payment", targetId: payment.id });
+    }
+  });
+
+  payouts.forEach((payout) => {
+    if (!payout.employeeId) add({ type: "Выплата без сотрудника", description: payout.employeeName || payout.recipient || "Получатель не указан", date: payoutDateValue(payout), amount: numberOrZero(payout.amount) });
+    if (numberOrZero(payout.amount) <= 0) add({ type: "Некорректная сумма выплаты", description: payout.employeeName || payout.recipient || "Получатель не указан", date: payoutDateValue(payout), amount: numberOrZero(payout.amount) });
+  });
+
+  allEmployeePayoutStats().forEach((stats) => {
+    if (!stats.employee || stats.overpaid <= 0) return;
+    add({ type: "У сотрудника переплата", description: stats.employee.name, date: stats.lastPayoutDate, amount: stats.overpaid });
+    const activePayouts = payouts
+      .filter((payout) => payout.status !== "Отменено" && payout.employeeId === stats.employee.id && numberOrZero(payout.amount) > 0)
+      .sort((a, b) => payoutDateValue(a).localeCompare(payoutDateValue(b)));
+    let reserved = 0;
+    activePayouts.forEach((payout) => {
+      const before = reserved;
+      reserved += numberOrZero(payout.amount);
+      if (before <= stats.totalEarned && reserved > stats.totalEarned) {
+        add({ type: "Выплата превышает доступную сумму", description: stats.employee.name, date: payoutDateValue(payout), amount: numberOrZero(payout.amount) });
+      }
+    });
+  });
+
+  payouts.filter((payout) => payout.employeeId && !employees.some((employee) => employee.id === payout.employeeId)).forEach((payout) => {
+    add({ type: "Сотрудник выплаты не найден", description: payout.employeeName || payout.recipient || payout.employeeId, date: payoutDateValue(payout), amount: numberOrZero(payout.amount) });
+  });
+
+  return warnings.sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
 }
 
 function availableOutsideBudget() {
@@ -1035,10 +1129,19 @@ function updatePayoutEmployeeSummary(fillAmount = true) {
   const paid = document.querySelector("#payoutPaidValue");
   const planned = document.querySelector("#payoutPlannedValue");
   const available = document.querySelector("#payoutAvailableValue");
+  const overpaid = document.querySelector("#payoutOverpaidValue");
+  const last = document.querySelector("#payoutLastValue");
+  const overpaidHint = document.querySelector("#payoutOverpaidHint");
   if (earned) earned.textContent = money(stats.totalEarned);
   if (paid) paid.textContent = money(stats.totalPaid);
   if (planned) planned.textContent = money(stats.totalPlanned);
   if (available) available.textContent = money(stats.availableToPay);
+  if (overpaid) overpaid.textContent = money(stats.overpaid);
+  if (last) last.textContent = stats.lastPayoutDate ? `${formatDate(stats.lastPayoutDate.slice(0, 10))} · ${money(stats.lastPayoutAmount)}` : "не было";
+  if (overpaidHint) {
+    overpaidHint.hidden = stats.overpaid <= 0;
+    overpaidHint.textContent = `Есть переплата: ${money(stats.overpaid)}. Новая выплата недоступна.`;
+  }
 }
 
 function previousMonthKey(dateString) {
@@ -1411,6 +1514,7 @@ function studioTodayData() {
     expectedIncome,
     completedCount: completed.length,
     averageCheck: completed.length ? completedAmount / completed.length : 0,
+    employeePayoutAvailable: totalEmployeePayoutAvailable(),
     cancelledAmount: bookings.filter((booking) => booking.status === "отменено").reduce((sum, booking) => sum + Number(booking.amount || 0), 0),
     nextBooking: nextTodayBooking(bookings)
   };
@@ -1457,7 +1561,7 @@ function renderTodayMoney(data) {
   const metrics = [
     ["Фактический доход", money(data.actualIncome)], ["Ожидаемый доход", money(data.expectedIncome)],
     ["Завершено записей", data.completedCount], ["Средний чек", money(data.averageCheck)],
-    ["Сумма отмен", money(data.cancelledAmount)]
+    ["Сумма отмен", money(data.cancelledAmount)], ["К выплате сотрудникам", money(data.employeePayoutAvailable)]
   ];
   return `<div class="today-money-grid">${metrics.map(([label, value]) => `<article><span>${label}</span><strong>${value}</strong></article>`).join("")}</div>`;
 }
@@ -2641,9 +2745,9 @@ function renderFinance() {
 }
 
 function renderPayouts() {
-  const paidPayouts = (state.payouts || []).filter((payout) => payout.status === "Выплачено");
-  const plannedPayouts = (state.payouts || []).filter((payout) => payout.status === "Запланировано");
   const employeeStats = allEmployeePayoutStats();
+  const warnings = financialWarnings();
+  const payoutHistory = [...(state.payouts || [])].sort((a, b) => payoutDateValue(b).localeCompare(payoutDateValue(a)));
   return `
     <section class="payouts-page">
       <section class="card section">
@@ -2656,48 +2760,75 @@ function renderPayouts() {
         </div>
       </section>
       <section class="card section">
-      <div class="section-head">
-        <h2>История выплат</h2>
-      </div>
-      <div class="grid two-col">
-        <section>
-          <h3>Запланированные</h3>
-          ${renderPayoutRows(plannedPayouts)}
-        </section>
-        <section>
-          <h3>Выплаченные</h3>
-          ${renderPayoutRows(paidPayouts)}
-        </section>
-      </div>
+        <div class="section-head"><h2>Финансовые предупреждения</h2><span class="select-chip">${warnings.length}</span></div>
+        ${renderFinancialWarnings(warnings)}
+      </section>
+      <section class="card section">
+        <div class="section-head"><h2>История выплат</h2><span class="muted">Все статусы сохранены</span></div>
+        ${renderPayoutRows(payoutHistory)}
       </section>
     </section>
   `;
 }
 
 function renderEmployeePayoutCard(stats) {
-  const { employee, completedBookings, totalEarned, totalPaid, totalPlanned, availableToPay, overpaid } = stats;
+  const { employee, completedBookingsCount, totalEarned, totalPaid, totalPlanned, availableToPay, overpaid, lastPayoutDate, lastPayoutAmount } = stats;
   return `
-    <article class="employee-payout-card" style="--employee-color:${employee.color || "#ff6633"}">
+    <article class="employee-payout-card ${overpaid > 0 ? "has-warning" : ""}" style="--employee-color:${employee.color || "#ff6633"}">
       <div class="employee-payout-head">
         <span class="avatar">${initials(employee.name)}</span>
-        <div><h3>${employee.name}</h3><small>${completedBookings.length} ${plural(completedBookings.length, "завершённая запись", "завершённые записи", "завершённых записей")}</small></div>
+        <div><h3>${employee.name}</h3><small>${employee.position || employee.role || "Сотрудник"}</small></div>
       </div>
       <div class="employee-payout-values">
         <span>Заработано<strong>${money(totalEarned)}</strong></span>
         <span>Выплачено<strong>${money(totalPaid)}</strong></span>
-        ${totalPlanned ? `<span>Запланировано<strong>${money(totalPlanned)}</strong></span>` : ""}
+        <span>Запланировано<strong>${money(totalPlanned)}</strong></span>
         <span class="available">Доступно<strong>${money(availableToPay)}</strong></span>
+        <span>Завершено записей<strong>${completedBookingsCount}</strong></span>
+        <span>Последняя выплата<strong>${lastPayoutDate ? `${formatDate(lastPayoutDate.slice(0, 10))} · ${money(lastPayoutAmount)}` : "не было"}</strong></span>
       </div>
       ${overpaid ? `<p class="payout-warning">Переплата относительно завершённых записей: ${money(overpaid)}</p>` : ""}
+      ${!completedBookingsCount ? `<p class="muted payout-card-empty">Нет завершённых записей.</p>` : ""}
       <button class="btn" type="button" data-open-employee-payout="${employee.id}" ${availableToPay <= 0 ? "disabled" : ""}>Выплатить</button>
     </article>
+  `;
+}
+
+function renderFinancialWarnings(warnings) {
+  if (!warnings.length) return '<div class="finance-warning-empty"><strong>Финансовых предупреждений нет.</strong><span>Связи записей, платежей и выплат выглядят корректно.</span></div>';
+  return `
+    <div class="finance-warning-list">
+      ${warnings.map((warning) => `
+        <article class="finance-warning-item">
+          <span class="finance-warning-icon">!</span>
+          <div>
+            <strong>${warning.type}</strong>
+            <small>${warning.description}${warning.date ? ` · ${formatDate(String(warning.date).slice(0, 10))}` : ""}</small>
+          </div>
+          ${warning.amount !== null ? `<b>${money(warning.amount)}</b>` : ""}
+          ${warning.action === "booking" ? `<button class="btn secondary" type="button" data-open-booking="${warning.targetId}">Открыть</button>` : ""}
+          ${warning.action === "payment" ? `<button class="btn secondary" type="button" data-open-payment="${warning.targetId}">Открыть</button>` : ""}
+        </article>
+      `).join("")}
+    </div>
   `;
 }
 
 function renderPayoutRows(payouts) {
   return `
     <div class="list">
-      ${payouts.map((payout) => `<div class="list-item payout-list-item"><span>${formatDate((payout.paidAt || payout.createdAt).slice(0, 10))} · ${payout.employeeName || payout.recipient}<br><span class="muted">${payout.method || "способ не указан"}${payout.comment ? ` · ${payout.comment}` : ""}${payout.createdBy ? ` · создал ${payout.createdBy}` : ""}</span>${Number.isFinite(Number(payout.remainingAfter)) ? `<br><small class="muted">Остаток после выплаты: ${money(payout.remainingAfter)}</small>` : ""}</span><strong>${money(payout.amount)}</strong></div>`).join("") || renderEmptyState("Выплат пока нет", "Когда появятся выплаты, они будут собраны здесь.")}
+      ${payouts.map((payout) => {
+        const problems = payoutDataProblems(payout);
+        const date = payoutDateValue(payout);
+        return `<div class="list-item payout-list-item ${problems.length ? "has-warning" : ""}">
+          <span>${formatDate(date.slice(0, 10))} · ${payout.employeeName || payout.recipient || "Получатель не указан"}<br>
+            <span class="muted">${payout.method || "способ не указан"}${payout.comment ? ` · ${payout.comment}` : ""}${payout.createdBy ? ` · создал ${payout.createdBy}` : ""}</span>
+            ${Number.isFinite(Number(payout.remainingAfter)) ? `<br><small class="muted">Остаток после выплаты: ${money(payout.remainingAfter)}</small>` : ""}
+            ${problems.length ? `<br><small class="payout-row-warning">Проблема: ${problems.join(", ")}</small>` : ""}
+          </span>
+          <span class="payout-row-meta"><em class="status-pill">${payout.status || "Выплачено"}</em><strong>${money(payout.amount)}</strong></span>
+        </div>`;
+      }).join("") || renderEmptyState("Выплат пока нет", "Когда появятся выплаты, они будут собраны здесь.")}
     </div>
   `;
 }
@@ -2743,7 +2874,7 @@ function renderBudgetPayouts(entries) {
 }
 
 function renderPayoutHistory() {
-  const payouts = [...state.payouts].sort((a, b) => b.paidAt.localeCompare(a.paidAt)).slice(0, 4);
+  const payouts = [...(state.payouts || [])].sort((a, b) => payoutDateValue(b).localeCompare(payoutDateValue(a))).slice(0, 4);
   if (!payouts.length) return '<p class="muted payout-empty">Журнал выплат пока пуст</p>';
   return `
     <div class="payout-history">
@@ -2752,11 +2883,11 @@ function renderPayoutHistory() {
         .map(
           (payout) => `
             <div class="payout-history-row">
-              <span>${formatDate(payout.paidAt.slice(0, 10))}</span>
-              <strong>${payout.recipient}<small>${payout.service}</small></strong>
+              <span>${formatDate(payoutDateValue(payout).slice(0, 10))}</span>
+              <strong>${payout.employeeName || payout.recipient || "Получатель не указан"}<small>${payout.service || "Выплата сотруднику"}</small></strong>
               <div class="payout-history-amount">
                 <em>${money(payout.amount)}</em>
-                <b class="payout-status">${payout.status}</b>
+                <b class="payout-status">${payout.status || "Выплачено"}</b>
                 ${
                   payout.status === "Запланировано"
                     ? `<button class="mini-confirm" type="button" title="Подтвердить выплату" data-confirm-payout="${payout.id}">✓</button><button class="mini-cancel" type="button" title="Убрать из плана" data-cancel-payout="${payout.id}">×</button>`
@@ -2812,7 +2943,10 @@ function renderPayoutModal() {
             <span>Уже выплачено<strong id="payoutPaidValue">${money(selectedStats.totalPaid)}</strong></span>
             <span>Запланировано<strong id="payoutPlannedValue">${money(selectedStats.totalPlanned)}</strong></span>
             <span class="available">Доступно<strong id="payoutAvailableValue">${money(available)}</strong></span>
+            <span>Переплата<strong id="payoutOverpaidValue">${money(selectedStats.overpaid)}</strong></span>
+            <span>Последняя выплата<strong id="payoutLastValue">${selectedStats.lastPayoutDate ? `${formatDate(selectedStats.lastPayoutDate.slice(0, 10))} · ${money(selectedStats.lastPayoutAmount)}` : "не было"}</strong></span>
           </div>
+          <p class="payout-warning full" id="payoutOverpaidHint" ${selectedStats.overpaid <= 0 ? "hidden" : ""}>Есть переплата: ${money(selectedStats.overpaid)}. Новая выплата недоступна.</p>
           <div class="field">
             <label>Сумма</label>
             <input name="amount" id="payoutAmount" type="number" min="1" max="${available}" step="1" required value="${available || ""}" />
@@ -3280,7 +3414,6 @@ function deleteBookingSafely(bookingId) {
       linkedPaymentIds.has(payment.id)
         ? {
             ...payment,
-            bookingId: "",
             comment: String(payment.comment || "").includes(marker)
               ? payment.comment
               : `${payment.comment || "Запись завершена"} · ${marker}`
