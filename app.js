@@ -482,29 +482,39 @@ function sortedEntries(group) {
 }
 
 function knownClients() {
-  const clients = new Map();
+  const clients = [];
   const upsertKnownClient = (item = {}) => {
     const name = String(item.name || item.clientName || item.client || "").trim();
-    if (!name) return;
+    if (!name) return null;
     const phone = String(item.phone || "").trim();
     const telegram = String(item.telegram || "").trim();
-    const key = phone ? `phone:${phone}` : telegram ? `telegram:${telegram}` : `name:${name.toLowerCase()}`;
-    const existing = clients.get(key) || { name, phone: "", telegram: "", total: 0, visits: 0, lastDate: "", last: null };
+    const normalizedName = name.toLowerCase();
+    const existing = clients.find((client) =>
+      (phone && client.phone === phone) ||
+      (telegram && client.telegram === telegram) ||
+      client.name.toLowerCase() === normalizedName
+    );
+    if (!existing) {
+      const client = { name, phone, telegram, total: 0, visits: 0, lastDate: "", last: null };
+      clients.push(client);
+      return client;
+    }
     existing.name = name || existing.name;
     existing.phone = phone || existing.phone;
     existing.telegram = telegram || existing.telegram;
-    clients.set(key, existing);
+    return existing;
   };
 
   state.clients.forEach(upsertKnownClient);
   state.bookings.forEach((booking) => {
-    upsertKnownClient(booking);
-    const key = booking.phone ? `phone:${booking.phone}` : booking.telegram ? `telegram:${booking.telegram}` : `name:${String(booking.clientName || booking.client || "").trim().toLowerCase()}`;
-    const client = clients.get(key);
+    const client = upsertKnownClient(booking);
     if (!client) return;
     if (booking.status === "завершено") {
       client.visits += 1;
-      client.total += Number(booking.amount || 0);
+      const hasLinkedPayment = state.payments.some((payment) =>
+        payment.bookingId === booking.id || (booking.paymentId && payment.id === booking.paymentId)
+      );
+      if (!hasLinkedPayment) client.total += Number(booking.amount || 0);
     }
     if (!client.lastDate || String(booking.date || "").localeCompare(client.lastDate) > 0) {
       client.lastDate = booking.date || "";
@@ -512,9 +522,7 @@ function knownClients() {
     }
   });
   state.payments.forEach((payment) => {
-    upsertKnownClient(payment);
-    const key = payment.phone ? `phone:${payment.phone}` : payment.telegram ? `telegram:${payment.telegram}` : `name:${String(payment.client || "").trim().toLowerCase()}`;
-    const client = clients.get(key);
+    const client = upsertKnownClient(payment);
     if (!client) return;
     client.total += Number(payment.amount || 0);
     if (!payment.bookingId) client.visits += 1;
@@ -524,7 +532,7 @@ function knownClients() {
     }
   });
 
-  return [...clients.values()].sort((a, b) => String(b.lastDate || "").localeCompare(String(a.lastDate || "")) || a.name.localeCompare(b.name));
+  return clients.sort((a, b) => String(b.lastDate || "").localeCompare(String(a.lastDate || "")) || a.name.localeCompare(b.name));
 }
 
 function clientSuggestions(query) {
@@ -2842,16 +2850,19 @@ function updateBookingStatus(bookingId, status) {
 function deleteBookingSafely(bookingId) {
   const booking = state.bookings.find((item) => item.id === bookingId);
   if (!booking) return false;
-  const linkedPayment = paymentForBooking(bookingId);
-  const message = linkedPayment
+  const linkedPayments = state.payments.filter((payment) =>
+    payment.bookingId === bookingId || (booking.paymentId && payment.id === booking.paymentId)
+  );
+  const linkedPaymentIds = new Set(linkedPayments.map((payment) => payment.id));
+  const message = linkedPayments.length
     ? "У этой записи есть связанный платёж. Удалить только запись? Платёж останется в финансах."
     : "Удалить запись?";
   if (!confirm(message)) return false;
 
-  if (linkedPayment) {
+  if (linkedPayments.length) {
     const marker = "Исходная запись удалена";
     state.payments = state.payments.map((payment) =>
-      payment.id === linkedPayment.id
+      linkedPaymentIds.has(payment.id)
         ? {
             ...payment,
             bookingId: "",
