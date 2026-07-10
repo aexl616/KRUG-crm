@@ -2,6 +2,7 @@ const STORAGE_KEY = "studio-income-app-v1";
 const PAYOUT_RESET_VERSION = 2;
 const CALENDAR_START_HOUR = 9;
 const CALENDAR_END_HOUR = 23;
+const CALENDAR_HOUR_HEIGHT = 72;
 
 const defaultServiceGroups = [
   { id: "recording", name: "Запись", order: 1 },
@@ -448,14 +449,18 @@ function formatDate(value) {
 function addDays(dateString, days) {
   const date = new Date(`${dateString}T00:00:00`);
   date.setDate(date.getDate() + days);
-  return date.toISOString().slice(0, 10);
+  return localDateKey(date);
 }
 
 function weekStart(dateString) {
   const date = new Date(`${dateString}T00:00:00`);
   const day = date.getDay() || 7;
   date.setDate(date.getDate() - day + 1);
-  return date.toISOString().slice(0, 10);
+  return localDateKey(date);
+}
+
+function localDateKey(date = new Date()) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
 function weekDays(startDate = calendarWeekStart) {
@@ -915,12 +920,9 @@ function applyServicePrice(serviceName) {
   if (!amountInput) return;
 
   amountInput.min = String(priceRule.min);
-  amountInput.readOnly = priceRule.mode === "fixed";
-  if (priceRule.mode === "fixed" || Number(amountInput.value || 0) < priceRule.min) {
-    amountInput.value = priceRule.price || "";
-  }
   if (priceHint) priceHint.textContent = priceRule.hint;
-  if (durationInput && service) durationInput.value = service.duration || "1 час";
+  if (service) applyBookingServiceFields(service);
+  if (durationInput && !service) durationInput.readOnly = false;
 }
 
 function applyServiceCategory(category) {
@@ -1118,7 +1120,7 @@ function renderEmptyState(title, text, actionLabel = "", actionAttrs = "") {
 }
 
 function todayKey() {
-  return new Date().toISOString().slice(0, 10);
+  return localDateKey();
 }
 
 function weekdayLong(dateString) {
@@ -1635,6 +1637,44 @@ function serviceById(id) {
   return catalogServices().find((service) => service.id === id);
 }
 
+function serviceFieldLocks(service = {}) {
+  const manual = service.mode === "manual";
+  const hasPrice = Number(service.price || 0) > 0;
+  const hasDuration = Boolean(String(service.duration || "").trim()) && !/^0(?:\D|$)/.test(String(service.duration).trim());
+  return {
+    price: !manual && (service.mode === "fixed" || (!service.mode && hasPrice)),
+    duration: !manual && hasDuration
+  };
+}
+
+function serviceLockHint(service = {}) {
+  const locks = serviceFieldLocks(service);
+  if (locks.price && locks.duration) return "Стоимость и длительность заданы выбранной услугой.";
+  if (locks.price) return "Стоимость задана выбранной услугой.";
+  if (locks.duration) return "Длительность задана выбранной услугой.";
+  return "Значения можно изменить вручную.";
+}
+
+function applyBookingServiceFields(service = {}) {
+  const locks = serviceFieldLocks(service);
+  const amountInputs = document.querySelectorAll("#bookingAmountInput, #amountInput");
+  const durationInputs = document.querySelectorAll("#bookingDurationInput, #bookingInlineDurationInput");
+  amountInputs.forEach((input) => {
+    if (service.id) input.value = service.price || "";
+    input.readOnly = locks.price;
+    input.classList.toggle("catalog-locked", locks.price);
+  });
+  durationInputs.forEach((input) => {
+    if (service.id) input.value = service.duration || "1 час";
+    input.readOnly = locks.duration;
+    input.classList.toggle("catalog-locked", locks.duration);
+  });
+  document.querySelectorAll("[data-service-lock-hint]").forEach((hint) => {
+    hint.textContent = serviceLockHint(service);
+    hint.classList.toggle("locked", locks.price || locks.duration);
+  });
+}
+
 function employeeByName(name) {
   return state.users.find((user) => user.name === name);
 }
@@ -1665,6 +1705,22 @@ function bookingDurationMinutes(booking) {
   if (value.includes("мин")) return Math.max(15, amount);
   if (value.includes("день") || value.includes("дня") || value.includes("дней")) return 8 * 60;
   return Math.max(15, amount * 60);
+}
+
+function calendarBookingGeometry(booking) {
+  const startMinutes = bookingStartMinutes(booking);
+  const visibleEndMinutes = (CALENDAR_END_HOUR + 1) * 60;
+  const durationMinutes = Math.min(bookingDurationMinutes(booking), Math.max(15, visibleEndMinutes - startMinutes));
+  const minuteOffset = startMinutes % 60;
+  const top = (minuteOffset / 60) * CALENDAR_HOUR_HEIGHT;
+  const height = Math.max(34, (durationMinutes / 60) * CALENDAR_HOUR_HEIGHT - 6);
+  return {
+    startMinutes,
+    durationMinutes,
+    top,
+    height,
+    sizeClass: durationMinutes <= 45 ? "duration-short" : durationMinutes <= 90 ? "duration-compact" : durationMinutes >= 180 ? "duration-long" : "duration-medium"
+  };
 }
 
 function bookingConflicts(booking, excludeId = booking.id) {
@@ -1734,10 +1790,11 @@ function renderCalendar() {
   calendarWeekStart = weekStart(calendarDate);
   const days = calendarMode === "day" ? [calendarDate] : weekDays(calendarWeekStart);
   const hours = Array.from({ length: CALENDAR_END_HOUR - CALENDAR_START_HOUR + 1 }, (_, index) => CALENDAR_START_HOUR + index);
-  const weekEnd = addDays(calendarWeekStart, 6);
   const visibleBookings = calendarBookings();
   if (selectedBookingId && !visibleBookings.some((booking) => booking.id === selectedBookingId)) selectedBookingId = null;
-  const title = calendarMode === "day" ? `${formatDate(calendarDate)} · ${weekdayLong(calendarDate)}` : `${formatDate(calendarWeekStart)} — ${formatDate(weekEnd)}`;
+  const periodStart = days[0];
+  const periodEnd = days[days.length - 1];
+  const title = calendarMode === "day" ? `${formatDate(periodStart)} · ${weekdayLong(periodStart)}` : `${formatDate(periodStart)} — ${formatDate(periodEnd)}`;
 
   return `
     <section class="calendar-page calendar-mode-${calendarMode}">
@@ -1802,8 +1859,9 @@ function renderCalendarBooking(booking) {
   const employee = state.users.find((user) => user.id === booking.employeeId) || employeeByName(booking.employee);
   const color = employee?.color || "#ff6633";
   const conflicts = bookingConflicts(booking);
+  const geometry = calendarBookingGeometry(booking);
   return `
-    <article class="calendar-booking ${selectedBookingId === booking.id ? "selected" : ""} ${conflicts.length ? "has-conflict" : ""} status-${booking.status.replaceAll(" ", "-")}" data-calendar-booking="${booking.id}" style="--employee-color:${color}">
+    <article class="calendar-booking ${geometry.sizeClass} ${selectedBookingId === booking.id ? "selected" : ""} ${conflicts.length ? "has-conflict" : ""} status-${booking.status.replaceAll(" ", "-")}" data-calendar-booking="${booking.id}" style="--employee-color:${color};--booking-top:${geometry.top}px;--booking-height:${geometry.height}px">
       <strong><i>${serviceIcon(booking.service)}</i>${booking.time} · ${booking.client || "Без имени"}</strong>
       <span>${booking.service} · ${booking.duration || "1 час"}</span>
       <span class="calendar-booking-employee"><b></b>${booking.employee || "Сотрудник не указан"}</span>
@@ -1874,6 +1932,9 @@ function renderBookingModal() {
   const defaultEmployee = filteredEmployee?.name || currentUser()?.name || activeEmployees()[0]?.name || "";
   const employeeOptions = bookingEmployeeOptions(booking.employee || defaultEmployee);
   const status = booking.status || "подтверждено";
+  const fieldLocks = serviceFieldLocks(service);
+  const durationValue = fieldLocks.duration ? service.duration : booking.duration || service.duration || "1 час";
+  const amountValue = fieldLocks.price ? service.price : booking.amount || service.price || 0;
   const conflictDraft = {
     ...booking,
     employeeId: booking.employeeId || filteredEmployee?.id || employeeOptions[0]?.id || "",
@@ -1920,7 +1981,7 @@ function renderBookingModal() {
           </div>
           <div class="field">
             <label>Дата</label>
-            <input name="date" type="date" required value="${booking.date || new Date().toISOString().slice(0, 10)}" />
+            <input name="date" type="date" required value="${booking.date || todayKey()}" />
           </div>
           <div class="field">
             <label>Время</label>
@@ -1928,11 +1989,12 @@ function renderBookingModal() {
           </div>
           <div class="field">
             <label>Длительность</label>
-            <input name="duration" id="bookingDurationInput" value="${booking.duration || service.duration || "1 час"}" />
+            <input name="duration" id="bookingDurationInput" class="${fieldLocks.duration ? "catalog-locked" : ""}" value="${durationValue}" ${fieldLocks.duration ? "readonly" : ""} />
           </div>
           <div class="field">
             <label>Стоимость</label>
-            <input name="amount" id="bookingAmountInput" type="number" min="0" step="1" required value="${booking.amount || service.price || 0}" />
+            <input name="amount" id="bookingAmountInput" class="${fieldLocks.price ? "catalog-locked" : ""}" type="number" min="0" step="1" required value="${amountValue}" ${fieldLocks.price ? "readonly" : ""} />
+            <span class="field-note ${fieldLocks.price || fieldLocks.duration ? "locked" : ""}" data-service-lock-hint>${serviceLockHint(service)}</span>
           </div>
           <div class="field">
             <label>Сотрудник</label>
@@ -2072,7 +2134,9 @@ function renderBookingForm() {
   const selectedCategoryId = booking.serviceCategoryId || selectedServiceItem.categoryId || catalogGroups()[0]?.id || "";
   const selectableBookingServices = catalogServices().filter((service) => service.categoryId === selectedCategoryId && (service.active !== false || service.name === selectedService));
   const priceRule = servicePriceRule(selectedService);
-  const amountValue = booking.amount || priceRule.price || "";
+  const fieldLocks = serviceFieldLocks(selectedServiceItem);
+  const amountValue = fieldLocks.price ? selectedServiceItem.price : booking.amount || priceRule.price || "";
+  const durationValue = fieldLocks.duration ? selectedServiceItem.duration : booking.duration || selectedServiceItem.duration || "1 час";
   const defaultUser = currentUser()?.name || state.users[0]?.name || "";
   const employeeOptions = bookingEmployeeOptions(booking.employee || defaultUser);
 
@@ -2110,7 +2174,7 @@ function renderBookingForm() {
         </div>
         <div class="field">
           <label>Дата</label>
-          <input name="date" type="date" required value="${booking.date || new Date().toISOString().slice(0, 10)}" />
+          <input name="date" type="date" required value="${booking.date || todayKey()}" />
         </div>
         <div class="field">
           <label>Время</label>
@@ -2118,12 +2182,13 @@ function renderBookingForm() {
         </div>
         <div class="field">
           <label>Длительность</label>
-          <input name="duration" id="bookingInlineDurationInput" value="${booking.duration || selectedServiceItem.duration || "1 час"}" />
+          <input name="duration" id="bookingInlineDurationInput" class="${fieldLocks.duration ? "catalog-locked" : ""}" value="${durationValue}" ${fieldLocks.duration ? "readonly" : ""} />
         </div>
         <div class="field">
           <label>Стоимость</label>
-          <input name="amount" id="amountInput" type="number" min="${priceRule.min}" step="1" required value="${amountValue}" ${priceRule.mode === "fixed" ? "readonly" : ""} />
+          <input name="amount" id="amountInput" class="${fieldLocks.price ? "catalog-locked" : ""}" type="number" min="${priceRule.min}" step="1" required value="${amountValue}" ${fieldLocks.price ? "readonly" : ""} />
           <span class="field-note" id="priceHint">${priceRule.hint}</span>
+          <span class="field-note ${fieldLocks.price || fieldLocks.duration ? "locked" : ""}" data-service-lock-hint>${serviceLockHint(selectedServiceItem)}</span>
         </div>
         <div class="field">
           <label>Сотрудник</label>
@@ -2960,6 +3025,7 @@ function renderBars(entries) {
 function bookingFromForm(data) {
   const existing = state.bookings.find((booking) => booking.id === data.id);
   const service = serviceByName(data.service) || serviceById(data.serviceId) || {};
+  const fieldLocks = serviceFieldLocks(service);
   const employee = state.users.find((user) => user.id === data.employeeId) || state.users.find((user) => user.name === data.employee) || {};
   const now = new Date().toISOString();
   const createdAt = existing?.createdAt || now;
@@ -2969,7 +3035,7 @@ function bookingFromForm(data) {
     id: data.id || crypto.randomUUID(),
     date: data.date,
     time: data.time,
-    duration: data.duration.trim() || service.duration || "1 час",
+    duration: fieldLocks.duration ? service.duration : data.duration.trim() || service.duration || "1 час",
     clientName: data.client.trim(),
     client: data.client.trim(),
     phone: data.phone.trim(),
@@ -2978,7 +3044,7 @@ function bookingFromForm(data) {
     serviceId: service.id || existing?.serviceId || "",
     serviceName,
     service: serviceName,
-    amount: Number(data.amount || 0),
+    amount: fieldLocks.price ? Number(service.price || 0) : Number(data.amount || 0),
     employeeId: employee.id || existing?.employeeId || "",
     employeeName,
     employee: employeeName,
@@ -3367,10 +3433,7 @@ function bindViewEvents() {
   document.querySelector("#bookingServiceSelect")?.addEventListener("change", (event) => {
     const service = serviceById(event.target.value) || serviceByName(event.target.value);
     if (!service) return;
-    const amount = document.querySelector("#bookingAmountInput");
-    const duration = document.querySelector("#bookingDurationInput");
-    if (amount) amount.value = service.price || 0;
-    if (duration) duration.value = service.duration || "1 час";
+    applyBookingServiceFields(service);
     updateBookingConflictWarning();
   });
 
@@ -3382,10 +3445,7 @@ function bindViewEvents() {
     const first = services[0];
     if (!first) return;
     select.value = first.id;
-    const amount = document.querySelector("#bookingAmountInput");
-    const duration = document.querySelector("#bookingDurationInput");
-    if (amount) amount.value = first.price || 0;
-    if (duration) duration.value = first.duration || "1 час";
+    applyBookingServiceFields(first);
     updateBookingConflictWarning();
   });
 

@@ -1273,10 +1273,21 @@ input[readonly] {
   cursor: not-allowed;
 }
 
+input.catalog-locked {
+  border-color: rgba(255, 102, 51, 0.28);
+  background:
+    linear-gradient(90deg, rgba(255, 102, 51, 0.08), transparent 42%),
+    #1b1b16;
+}
+
 .field-note {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.35;
+}
+
+.field-note.locked {
+  color: rgba(255, 166, 128, 0.9);
 }
 
 .client-picker {
@@ -1631,6 +1642,7 @@ th {
 .calendar-grid {
   display: grid;
   grid-template-columns: 74px repeat(var(--calendar-days, 7), minmax(118px, 1fr));
+  --calendar-hour-height: 72px;
   overflow: auto;
 }
 
@@ -1691,6 +1703,12 @@ th {
   font-weight: 800;
 }
 
+.calendar-hour,
+.calendar-slot {
+  height: var(--calendar-hour-height);
+  min-height: var(--calendar-hour-height);
+}
+
 .calendar-slot {
   position: relative;
   display: grid;
@@ -1702,6 +1720,7 @@ th {
   color: var(--text);
   background: rgba(255, 255, 255, 0.018);
   text-align: left;
+  overflow: visible;
 }
 
 .calendar-slot::after {
@@ -1741,8 +1760,16 @@ th {
 }
 
 .calendar-booking {
+  position: absolute;
+  z-index: 3;
+  top: var(--booking-top, 6px);
+  left: 6px;
+  right: 6px;
   display: grid;
+  align-content: start;
   gap: 3px;
+  height: var(--booking-height, 66px);
+  min-height: 34px;
   padding: 8px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-left: 4px solid var(--employee-color);
@@ -1750,6 +1777,7 @@ th {
   background: rgba(255, 255, 255, 0.055);
   box-shadow: 0 10px 22px rgba(0, 0, 0, 0.22);
   transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
+  overflow: hidden;
 }
 
 .calendar-booking::after {
@@ -1767,6 +1795,29 @@ th {
 .calendar-booking em {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.calendar-booking.duration-short {
+  align-content: center;
+  padding: 4px 6px;
+}
+
+.calendar-booking.duration-short > span,
+.calendar-booking.duration-short > div,
+.calendar-booking.duration-short > em,
+.calendar-booking.duration-compact .calendar-booking-employee,
+.calendar-booking.duration-compact .calendar-booking-meta {
+  display: none;
+}
+
+.calendar-booking.duration-short strong {
+  font-size: 10px;
+  line-height: 1.15;
+}
+
+.calendar-booking.duration-long {
+  gap: 7px;
+  padding: 10px;
 }
 
 .calendar-booking-employee {
