@@ -70,6 +70,13 @@ const defaultState = {
     }
   ],
   bookings: [],
+  calendarSettings: {
+    mode: "week",
+    date: new Date().toISOString().slice(0, 10),
+    employee: "",
+    status: "",
+    service: ""
+  },
   payouts: [],
   expenses: [],
   payoutResetVersion: PAYOUT_RESET_VERSION
@@ -187,7 +194,12 @@ let editingBookingId = null;
 let bookingModalOpen = false;
 let bookingSlotDraft = null;
 let selectedBookingId = null;
-let calendarWeekStart = weekStart(new Date().toISOString().slice(0, 10));
+let calendarMode = state.calendarSettings?.mode === "day" ? "day" : "week";
+let calendarDate = state.calendarSettings?.date || new Date().toISOString().slice(0, 10);
+let calendarWeekStart = weekStart(calendarDate);
+let calendarEmployeeFilter = state.calendarSettings?.employee || "";
+let calendarStatusFilter = state.calendarSettings?.status || "";
+let calendarServiceFilter = state.calendarSettings?.service || "";
 let clientFilter = "";
 let bookingDateFilter = "";
 let bookingStatusFilter = "";
@@ -366,6 +378,13 @@ function normalizeState(nextState) {
     clients: [...clientMap.values()],
     payments,
     bookings,
+    calendarSettings: {
+      mode: nextState.calendarSettings?.mode === "day" ? "day" : "week",
+      date: nextState.calendarSettings?.date || new Date().toISOString().slice(0, 10),
+      employee: nextState.calendarSettings?.employee || "",
+      status: nextState.calendarSettings?.status || "",
+      service: nextState.calendarSettings?.service || ""
+    },
     payouts: shouldResetPayouts ? [] : nextState.payouts || [],
     expenses,
     payoutResetVersion: PAYOUT_RESET_VERSION
@@ -1517,29 +1536,128 @@ function employeeByName(name) {
   return state.users.find((user) => user.name === name);
 }
 
+function saveCalendarSettings() {
+  state.calendarSettings = {
+    mode: calendarMode,
+    date: calendarDate,
+    employee: calendarEmployeeFilter,
+    status: calendarStatusFilter,
+    service: calendarServiceFilter
+  };
+  saveState();
+}
+
+function bookingEmployeeId(booking) {
+  return booking.employeeId || state.users.find((user) => user.name === booking.employee)?.id || booking.employee || "";
+}
+
+function bookingStartMinutes(booking) {
+  const [hours, minutes] = String(booking.time || "00:00").split(":").map(Number);
+  return (hours || 0) * 60 + (minutes || 0);
+}
+
+function bookingDurationMinutes(booking) {
+  const value = String(booking.duration || "1 час").toLowerCase();
+  const amount = Number(value.match(/\d+(?:[.,]\d+)?/)?.[0]?.replace(",", ".") || 1);
+  if (value.includes("мин")) return Math.max(15, amount);
+  if (value.includes("день") || value.includes("дня") || value.includes("дней")) return 8 * 60;
+  return Math.max(15, amount * 60);
+}
+
+function bookingConflicts(booking, excludeId = booking.id) {
+  const activeStatuses = ["заявка", "подтверждено", "в процессе"];
+  if (!activeStatuses.includes(booking.status) || !booking.date || !booking.time || !bookingEmployeeId(booking)) return [];
+  const start = bookingStartMinutes(booking);
+  const end = start + bookingDurationMinutes(booking);
+  return state.bookings.filter((candidate) => {
+    if (candidate.id === excludeId || candidate.date !== booking.date || !activeStatuses.includes(candidate.status)) return false;
+    if (bookingEmployeeId(candidate) !== bookingEmployeeId(booking)) return false;
+    const candidateStart = bookingStartMinutes(candidate);
+    const candidateEnd = candidateStart + bookingDurationMinutes(candidate);
+    return start < candidateEnd && candidateStart < end;
+  });
+}
+
+function calendarBookingMatches(booking) {
+  if (calendarEmployeeFilter && bookingEmployeeId(booking) !== calendarEmployeeFilter) return false;
+  if (calendarStatusFilter && booking.status !== calendarStatusFilter) return false;
+  if (calendarServiceFilter.startsWith("group:") && booking.serviceCategoryId !== calendarServiceFilter.slice(6)) return false;
+  if (calendarServiceFilter.startsWith("service:") && booking.serviceId !== calendarServiceFilter.slice(8)) return false;
+  return true;
+}
+
+function calendarBookings() {
+  return state.bookings.filter(calendarBookingMatches);
+}
+
+function renderCalendarFilters() {
+  return `
+    <div class="calendar-filters">
+      <select id="calendarEmployeeFilter" aria-label="Сотрудник">
+        <option value="">Все сотрудники</option>
+        ${state.users.map((user) => `<option value="${user.id}" ${calendarEmployeeFilter === user.id ? "selected" : ""}>${user.name}</option>`).join("")}
+      </select>
+      <select id="calendarStatusFilter" aria-label="Статус">
+        <option value="">Все статусы</option>
+        ${bookingStatuses.map((status) => `<option value="${status}" ${calendarStatusFilter === status ? "selected" : ""}>${statusTitle(status)}</option>`).join("")}
+      </select>
+      <select id="calendarServiceFilter" aria-label="Услуга или категория">
+        <option value="">Все услуги</option>
+        ${catalogGroups().map((group) => `<option value="group:${group.id}" ${calendarServiceFilter === `group:${group.id}` ? "selected" : ""}>Категория · ${group.name}</option>`).join("")}
+        ${catalogServices().map((service) => `<option value="service:${service.id}" ${calendarServiceFilter === `service:${service.id}` ? "selected" : ""}>${service.name}</option>`).join("")}
+      </select>
+      ${(calendarEmployeeFilter || calendarStatusFilter || calendarServiceFilter) ? '<button class="btn secondary" type="button" data-action="clearCalendarFilters">Сбросить</button>' : ""}
+    </div>
+  `;
+}
+
+function renderDaySummary(day, bookings) {
+  const now = new Date();
+  const next = bookings.find((booking) => booking.status !== "отменено" && new Date(`${booking.date}T${booking.time}`) >= now);
+  const completedTotal = bookings.filter((booking) => booking.status === "завершено").reduce((sum, booking) => sum + Number(booking.amount || 0), 0);
+  return `
+    <div class="calendar-day-summary">
+      <article><span>Записей</span><strong>${bookings.length}</strong></article>
+      <article><span>Следующая</span><strong>${next ? `${next.time} · ${next.client}` : "нет"}</strong></article>
+      <article><span>Завершено</span><strong>${money(completedTotal)}</strong></article>
+      <article><span>Заявок</span><strong>${bookings.filter((booking) => booking.status === "заявка").length}</strong></article>
+      <article><span>Отмен</span><strong>${bookings.filter((booking) => booking.status === "отменено").length}</strong></article>
+    </div>
+  `;
+}
+
 function renderCalendar() {
-  const days = weekDays();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayKey();
+  calendarWeekStart = weekStart(calendarDate);
+  const days = calendarMode === "day" ? [calendarDate] : weekDays(calendarWeekStart);
   const hours = Array.from({ length: CALENDAR_END_HOUR - CALENDAR_START_HOUR + 1 }, (_, index) => CALENDAR_START_HOUR + index);
   const weekEnd = addDays(calendarWeekStart, 6);
+  const visibleBookings = calendarBookings();
+  if (selectedBookingId && !visibleBookings.some((booking) => booking.id === selectedBookingId)) selectedBookingId = null;
+  const title = calendarMode === "day" ? `${formatDate(calendarDate)} · ${weekdayLong(calendarDate)}` : `${formatDate(calendarWeekStart)} — ${formatDate(weekEnd)}`;
 
   return `
-    <section class="calendar-page">
+    <section class="calendar-page calendar-mode-${calendarMode}">
       <div class="card section calendar-toolbar">
         <div>
-          <h2>${formatDate(calendarWeekStart)} — ${formatDate(weekEnd)}</h2>
-          <p class="muted">Нажми на свободный слот, чтобы добавить запись. Нажми на запись, чтобы открыть редактирование.</p>
+          <h2>${title}</h2>
+          <p class="muted">Нажми на свободный слот, чтобы добавить запись.</p>
         </div>
         <div class="actions">
-          <button class="btn secondary" data-action="prevWeek">Назад</button>
-          <button class="btn secondary" data-action="todayWeek">Сегодня</button>
-          <button class="btn secondary" data-action="nextWeek">Вперёд</button>
-          <span class="select-chip">Неделя</span>
+          <button class="btn secondary" data-action="prevCalendarPeriod">Назад</button>
+          <button class="btn secondary" data-action="todayCalendar">Сегодня</button>
+          <button class="btn secondary" data-action="nextCalendarPeriod">Вперёд</button>
+          <div class="calendar-view-switch" role="group" aria-label="Вид календаря">
+            <button type="button" class="${calendarMode === "week" ? "active" : ""}" data-calendar-mode="week">Неделя</button>
+            <button type="button" class="${calendarMode === "day" ? "active" : ""}" data-calendar-mode="day">День</button>
+          </div>
           <button class="btn" data-action="openBookingModal">Добавить запись</button>
         </div>
       </div>
+      ${renderCalendarFilters()}
+      ${calendarMode === "day" ? renderDaySummary(calendarDate, visibleBookings.filter((booking) => booking.date === calendarDate)) : ""}
       <div class="calendar-workspace">
-        <section class="card calendar-grid">
+        <section class="card calendar-grid" style="--calendar-days:${days.length}">
           <div class="calendar-corner"></div>
           ${days.map((day) => `<div class="calendar-day-head ${day === today ? "today" : ""}"><strong>${weekdayLabel(day)}</strong></div>`).join("")}
           ${hours
@@ -1559,7 +1677,7 @@ function renderCalendar() {
 
 function renderCalendarSlot(day, hour, today) {
   const hourText = `${String(hour).padStart(2, "0")}:`;
-  const bookings = state.bookings.filter((booking) => booking.date === day && String(booking.time || "").startsWith(hourText));
+  const bookings = calendarBookings().filter((booking) => booking.date === day && String(booking.time || "").startsWith(hourText));
   const currentLine = day === today && currentHourLine(hour);
   return `
     <button class="calendar-slot ${day === today ? "today" : ""}" data-calendar-slot="${day}|${String(hour).padStart(2, "0")}:00">
@@ -1578,19 +1696,25 @@ function currentHourLine(hour) {
 }
 
 function renderCalendarBooking(booking) {
-  const employee = employeeByName(booking.employee);
+  const employee = state.users.find((user) => user.id === booking.employeeId) || employeeByName(booking.employee);
   const color = employee?.color || "#ff6633";
+  const conflicts = bookingConflicts(booking);
   return `
-    <article class="calendar-booking ${selectedBookingId === booking.id ? "selected" : ""} status-${booking.status.replaceAll(" ", "-")}" data-calendar-booking="${booking.id}" style="--employee-color:${color}">
+    <article class="calendar-booking ${selectedBookingId === booking.id ? "selected" : ""} ${conflicts.length ? "has-conflict" : ""} status-${booking.status.replaceAll(" ", "-")}" data-calendar-booking="${booking.id}" style="--employee-color:${color}">
       <strong><i>${serviceIcon(booking.service)}</i>${booking.time} · ${booking.client || "Без имени"}</strong>
       <span>${booking.service} · ${booking.duration || "1 час"}</span>
-      <em class="calendar-status-badge">${statusTitle(booking.status)}</em>
+      <span class="calendar-booking-employee"><b></b>${booking.employee || "Сотрудник не указан"}</span>
+      <span class="calendar-booking-meta">${Number(booking.amount || 0) ? money(booking.amount) : "Стоимость не указана"}</span>
+      <div class="calendar-booking-badges">
+        <em class="calendar-status-badge">${statusTitle(booking.status)}</em>
+        ${conflicts.length ? '<em class="calendar-conflict-badge">Конфликт</em>' : ""}
+      </div>
     </article>
   `;
 }
 
 function renderBookingDetailsPanel() {
-  const booking = state.bookings.find((item) => item.id === selectedBookingId);
+  const booking = state.bookings.find((item) => item.id === selectedBookingId && calendarBookingMatches(item));
   if (!booking) {
     return `
       <aside class="card section booking-details empty">
@@ -1620,9 +1744,10 @@ function renderBookingDetailsPanel() {
       </div>
       <div class="booking-side-actions">
         <button class="btn secondary" data-side-edit-booking="${booking.id}">Редактировать</button>
-        <button class="btn" data-side-status-booking="${booking.id}" data-status="завершено">Завершить</button>
-        <button class="btn secondary" data-side-status-booking="${booking.id}" data-status="в процессе">В процесс</button>
-        <button class="btn danger" data-side-status-booking="${booking.id}" data-status="отменено">Отменить</button>
+        ${booking.status === "заявка" ? `<button class="btn" data-side-status-booking="${booking.id}" data-status="подтверждено">Подтвердить</button>` : ""}
+        ${booking.status === "подтверждено" ? `<button class="btn" data-side-status-booking="${booking.id}" data-status="в процессе">В процесс</button>` : ""}
+        ${booking.status === "в процессе" ? `<button class="btn" data-side-status-booking="${booking.id}" data-status="завершено">Завершить</button>` : ""}
+        ${!["завершено", "отменено"].includes(booking.status) ? `<button class="btn danger" data-side-status-booking="${booking.id}" data-status="отменено">Отменить</button>` : ""}
         <button class="btn danger" data-side-delete-booking="${booking.id}">Удалить запись</button>
       </div>
       <div class="status-history">
@@ -1642,9 +1767,17 @@ function renderBookingModal() {
   const service = serviceById(booking.serviceId) || serviceByName(booking.serviceName || booking.service) || catalogServices()[0] || {};
   const selectedCategoryId = service.categoryId || catalogGroups()[0]?.id || "";
   const visibleServices = catalogServices().filter((item) => item.categoryId === selectedCategoryId && (item.active !== false || item.name === booking.service));
-  const defaultEmployee = currentUser()?.name || activeEmployees()[0]?.name || "";
+  const filteredEmployee = state.users.find((user) => user.id === calendarEmployeeFilter);
+  const defaultEmployee = filteredEmployee?.name || currentUser()?.name || activeEmployees()[0]?.name || "";
   const employeeOptions = bookingEmployeeOptions(booking.employee || defaultEmployee);
   const status = booking.status || "подтверждено";
+  const conflictDraft = {
+    ...booking,
+    employeeId: booking.employeeId || filteredEmployee?.id || employeeOptions[0]?.id || "",
+    employee: booking.employee || filteredEmployee?.name || defaultEmployee,
+    status
+  };
+  const conflicts = bookingConflicts(conflictDraft, booking.id || editingBookingId);
 
   return `
     <div class="modal-backdrop" data-action="closeBookingModal">
@@ -1710,6 +1843,10 @@ function renderBookingModal() {
             <label>Комментарий</label>
             <textarea name="comment">${booking.comment || ""}</textarea>
           </div>
+          <div id="bookingConflictWarning" class="booking-conflict-warning full ${conflicts.length ? "visible" : ""}">
+            <strong>Конфликт по времени</strong>
+            <span>${conflicts.length ? `У сотрудника уже есть ${conflicts.length} пересекающаяся запись.` : ""}</span>
+          </div>
           <div class="actions full modal-actions">
             <button class="btn" type="submit">Сохранить</button>
             ${editingBookingId ? '<button class="btn" type="button" data-action="completeBookingFromModal">Завершить</button>' : ""}
@@ -1721,6 +1858,26 @@ function renderBookingModal() {
       </section>
     </div>
   `;
+}
+
+function updateBookingConflictWarning() {
+  const form = document.querySelector("#bookingModalForm");
+  const warning = document.querySelector("#bookingConflictWarning");
+  if (!form || !warning) return;
+  const data = Object.fromEntries(new FormData(form));
+  const employee = state.users.find((user) => user.id === data.employeeId);
+  const conflicts = bookingConflicts({
+    id: data.id,
+    date: data.date,
+    time: data.time,
+    duration: data.duration,
+    employeeId: data.employeeId,
+    employee: employee?.name || "",
+    status: data.status
+  }, data.id || editingBookingId);
+  warning.classList.toggle("visible", conflicts.length > 0);
+  const text = warning.querySelector("span");
+  if (text) text.textContent = conflicts.length ? `У сотрудника уже есть ${conflicts.length} пересекающаяся запись.` : "";
 }
 
 function filteredBookings() {
@@ -2991,27 +3148,70 @@ function bindSearchResultEvents() {
 }
 
 function bindViewEvents() {
-  document.querySelector("[data-action='prevWeek']")?.addEventListener("click", () => {
-    calendarWeekStart = addDays(calendarWeekStart, -7);
+  document.querySelector("[data-action='prevCalendarPeriod']")?.addEventListener("click", () => {
+    calendarDate = addDays(calendarDate, calendarMode === "day" ? -1 : -7);
+    calendarWeekStart = weekStart(calendarDate);
+    saveCalendarSettings();
     render();
   });
 
-  document.querySelector("[data-action='nextWeek']")?.addEventListener("click", () => {
-    calendarWeekStart = addDays(calendarWeekStart, 7);
+  document.querySelector("[data-action='nextCalendarPeriod']")?.addEventListener("click", () => {
+    calendarDate = addDays(calendarDate, calendarMode === "day" ? 1 : 7);
+    calendarWeekStart = weekStart(calendarDate);
+    saveCalendarSettings();
     render();
   });
 
-  document.querySelector("[data-action='todayWeek']")?.addEventListener("click", () => {
-    calendarWeekStart = weekStart(new Date().toISOString().slice(0, 10));
+  document.querySelector("[data-action='todayCalendar']")?.addEventListener("click", () => {
+    calendarDate = todayKey();
+    calendarWeekStart = weekStart(calendarDate);
+    saveCalendarSettings();
+    render();
+  });
+
+  document.querySelectorAll("[data-calendar-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      calendarMode = button.dataset.calendarMode === "day" ? "day" : "week";
+      saveCalendarSettings();
+      render();
+    });
+  });
+
+  document.querySelector("#calendarEmployeeFilter")?.addEventListener("change", (event) => {
+    calendarEmployeeFilter = event.target.value;
+    saveCalendarSettings();
+    render();
+  });
+
+  document.querySelector("#calendarStatusFilter")?.addEventListener("change", (event) => {
+    calendarStatusFilter = event.target.value;
+    saveCalendarSettings();
+    render();
+  });
+
+  document.querySelector("#calendarServiceFilter")?.addEventListener("change", (event) => {
+    calendarServiceFilter = event.target.value;
+    saveCalendarSettings();
+    render();
+  });
+
+  document.querySelector("[data-action='clearCalendarFilters']")?.addEventListener("click", () => {
+    calendarEmployeeFilter = "";
+    calendarStatusFilter = "";
+    calendarServiceFilter = "";
+    saveCalendarSettings();
     render();
   });
 
   document.querySelectorAll("[data-calendar-slot]").forEach((slot) => {
     slot.addEventListener("click", () => {
       const [date, time] = slot.dataset.calendarSlot.split("|");
+      const employee = state.users.find((user) => user.id === calendarEmployeeFilter);
       editingBookingId = null;
-      bookingSlotDraft = { date, time, status: "подтверждено" };
+      calendarDate = date;
+      bookingSlotDraft = { date, time, status: "подтверждено", employeeId: employee?.id || "", employee: employee?.name || "" };
       bookingModalOpen = true;
+      saveCalendarSettings();
       render();
     });
   });
@@ -3068,6 +3268,7 @@ function bindViewEvents() {
     const duration = document.querySelector("#bookingDurationInput");
     if (amount) amount.value = service.price || 0;
     if (duration) duration.value = service.duration || "1 час";
+    updateBookingConflictWarning();
   });
 
   document.querySelector("#bookingCategorySelect")?.addEventListener("change", (event) => {
@@ -3082,6 +3283,11 @@ function bindViewEvents() {
     const duration = document.querySelector("#bookingDurationInput");
     if (amount) amount.value = first.price || 0;
     if (duration) duration.value = first.duration || "1 час";
+    updateBookingConflictWarning();
+  });
+
+  document.querySelectorAll("#bookingModalForm [name='date'], #bookingModalForm [name='time'], #bookingModalForm [name='duration'], #bookingModalForm [name='employeeId'], #bookingModalForm [name='status']").forEach((field) => {
+    field.addEventListener(field.tagName === "INPUT" ? "input" : "change", updateBookingConflictWarning);
   });
 
   document.querySelector("#bookingModalForm")?.addEventListener("submit", (event) => {
