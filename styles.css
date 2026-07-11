@@ -2194,6 +2194,55 @@ th {
   gap: 16px;
 }
 
+.payout-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.payout-summary-grid article {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.payout-summary-grid span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.payout-summary-grid strong {
+  overflow-wrap: anywhere;
+  font-size: 18px;
+}
+
+.payout-summary-grid .accent strong {
+  color: var(--accent);
+}
+
+.payout-summary-grid .warning {
+  border-color: rgba(255, 107, 107, 0.3);
+  background: rgba(255, 107, 107, 0.05);
+}
+
+.payout-summary-grid .warning strong {
+  color: var(--danger);
+}
+
+.payout-accrual-empty {
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.025);
+  font-size: 13px;
+}
+
 .employee-payout-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2272,6 +2321,16 @@ th {
   font-size: 12px;
 }
 
+.employee-payout-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.employee-payout-actions .btn {
+  flex: 1 1 auto;
+}
+
 .payout-form-summary {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2287,6 +2346,34 @@ th {
   margin-top: 2px;
 }
 
+.field-note.field-error {
+  color: var(--danger);
+}
+
+.payout-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+  align-items: end;
+  gap: 9px;
+  margin-bottom: 14px;
+}
+
+.payout-filters label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.payout-filters label > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.payout-filters select {
+  width: 100%;
+}
+
 .payout-list-item > span {
   min-width: 0;
   overflow-wrap: anywhere;
@@ -2295,6 +2382,20 @@ th {
 .payout-list-item.has-warning {
   border-color: rgba(255, 107, 107, 0.35);
   background: rgba(255, 107, 107, 0.045);
+}
+
+.payout-list-item.selected {
+  border-color: rgba(255, 102, 51, 0.65);
+  box-shadow: 0 0 0 2px rgba(255, 102, 51, 0.13);
+}
+
+.payout-comment {
+  display: inline-block;
+  max-width: min(720px, 60vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
 }
 
 .payout-row-warning {
@@ -2313,6 +2414,21 @@ th {
   color: var(--muted);
 }
 
+.payout-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 7px;
+}
+
+.payout-row-actions .link-button {
+  font-size: 12px;
+}
+
+.danger-text {
+  color: var(--danger);
+}
+
 .finance-warning-list {
   display: grid;
   gap: 8px;
@@ -2327,6 +2443,16 @@ th {
   border: 1px solid rgba(255, 107, 107, 0.28);
   border-radius: 8px;
   background: rgba(255, 107, 107, 0.045);
+}
+
+.finance-warning-item.level-info {
+  border-color: rgba(124, 140, 255, 0.28);
+  background: rgba(124, 140, 255, 0.05);
+}
+
+.finance-warning-item.level-critical {
+  border-color: rgba(255, 107, 107, 0.48);
+  background: rgba(255, 107, 107, 0.075);
 }
 
 .finance-warning-icon {
@@ -2346,9 +2472,32 @@ th {
   min-width: 0;
 }
 
+.finance-warning-level {
+  width: fit-content;
+  color: var(--danger);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.level-info .finance-warning-level,
+.level-info .finance-warning-icon {
+  color: #9aa7ff;
+}
+
+.finance-warning-manual {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .finance-warning-item small {
   color: var(--muted);
   overflow-wrap: anywhere;
+}
+
+.finance-warning-item small b {
+  color: var(--text);
+  font-weight: 700;
 }
 
 .finance-warning-empty {
@@ -2902,6 +3051,10 @@ button.list-item:hover {
   .wide-card {
     grid-column: 1 / -1;
   }
+
+  .payout-summary-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 940px) {
@@ -2950,6 +3103,14 @@ button.list-item:hover {
 
   .employee-payout-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .payout-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .payout-filters .btn {
+    width: fit-content;
   }
 
   .today-metrics,
@@ -3174,6 +3335,11 @@ button.list-item:hover {
     grid-template-columns: 28px minmax(0, 1fr);
   }
 
+  .payout-summary-grid,
+  .payout-filters {
+    grid-template-columns: 1fr;
+  }
+
   .finance-warning-item > b,
   .finance-warning-item .btn {
     grid-column: 2;
@@ -3183,6 +3349,19 @@ button.list-item:hover {
   .payout-row-meta {
     width: 100%;
     justify-content: space-between;
+  }
+
+  .payout-list-item {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .payout-comment {
+    max-width: calc(100vw - 64px);
+  }
+
+  .employee-payout-actions .btn {
+    flex-basis: 100%;
   }
 
   .card,
