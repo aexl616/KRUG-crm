@@ -1185,6 +1185,40 @@ h3 {
   gap: 8px;
 }
 
+.studio-availability-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.studio-availability-strip > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.studio-availability-strip span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.studio-availability-strip strong {
+  overflow-wrap: anywhere;
+}
+
+.studio-availability-strip.free {
+  border-color: rgba(83, 199, 128, 0.25);
+}
+
+.studio-availability-strip.free > div:first-child strong {
+  color: #72e39a;
+}
+
+.studio-availability-strip.busy > div:first-child strong {
+  color: #ffd58a;
+}
+
 .timeline-row,
 .timeline-button {
   width: 100%;
@@ -1614,7 +1648,7 @@ th {
 
 .calendar-day-summary {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -1881,6 +1915,57 @@ th {
 .calendar-booking.has-conflict {
   border-color: rgba(255, 174, 51, 0.72);
   box-shadow: 0 0 0 1px rgba(255, 174, 51, 0.22), 0 12px 26px rgba(0, 0, 0, 0.28);
+}
+
+.calendar-booking.employee-conflict:not(.studio-conflict) {
+  border-color: rgba(124, 140, 255, 0.55);
+}
+
+.calendar-conflict-badge.secondary {
+  border-color: rgba(124, 140, 255, 0.45);
+  color: #b9c1ff !important;
+  background: rgba(124, 140, 255, 0.1);
+}
+
+.studio-block-card {
+  --employee-color: #8d929b;
+  border-style: dashed;
+  border-left-style: solid;
+  background: rgba(141, 146, 155, 0.13);
+}
+
+.studio-block-card strong i {
+  color: #c7cbd1;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.studio-block-card .calendar-booking-employee b {
+  background: #8d929b;
+  box-shadow: 0 0 0 3px rgba(141, 146, 155, 0.18);
+}
+
+.studio-block-card.selected {
+  border-color: rgba(255, 102, 51, 0.78);
+}
+
+.studio-block-pill {
+  color: #d7dade;
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.calendar-availability-summary {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.calendar-availability-summary .section-head {
+  margin-bottom: 0;
+}
+
+.calendar-availability-summary h3 {
+  margin-bottom: 2px;
 }
 
 .booking-conflict-warning {
@@ -3105,6 +3190,14 @@ button.list-item:hover {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .studio-availability-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .studio-availability-strip .btn {
+    width: fit-content;
+  }
+
   .payout-filters {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -3337,6 +3430,10 @@ button.list-item:hover {
 
   .payout-summary-grid,
   .payout-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .studio-availability-strip {
     grid-template-columns: 1fr;
   }
 

@@ -3,6 +3,7 @@ const PAYOUT_RESET_VERSION = 2;
 const CALENDAR_START_HOUR = 9;
 const CALENDAR_END_HOUR = 23;
 const CALENDAR_HOUR_HEIGHT = 72;
+const studioBlockTypes = ["Тех. блок", "Уборка", "Ремонт", "Контент", "Личное", "Закрыто", "Другое"];
 
 const defaultServiceGroups = [
   { id: "recording", name: "Запись", order: 1 },
@@ -71,6 +72,7 @@ const defaultState = {
     }
   ],
   bookings: [],
+  studioBlocks: [],
   calendarSettings: {
     mode: "week",
     date: new Date().toISOString().slice(0, 10),
@@ -195,6 +197,10 @@ let editingBookingId = null;
 let bookingModalOpen = false;
 let bookingSlotDraft = null;
 let selectedBookingId = null;
+let studioBlockModalOpen = false;
+let editingStudioBlockId = null;
+let studioBlockDraft = null;
+let selectedStudioBlockId = null;
 let calendarMode = state.calendarSettings?.mode === "day" ? "day" : "week";
 let calendarDate = state.calendarSettings?.date || new Date().toISOString().slice(0, 10);
 let calendarWeekStart = weekStart(calendarDate);
@@ -388,6 +394,22 @@ function normalizeState(nextState) {
       createdAt: payout.createdAt || payout.paidAt || new Date().toISOString()
     };
   });
+  const studioBlocks = (nextState.studioBlocks || []).map((block) => {
+    const createdAt = block.createdAt || new Date().toISOString();
+    return {
+      ...block,
+      id: block.id || crypto.randomUUID(),
+      date: block.date || localDateKey(),
+      time: block.time || "12:00",
+      duration: block.duration || "1 час",
+      title: block.title || block.type || "Технический блок",
+      type: studioBlockTypes.includes(block.type) ? block.type : "Другое",
+      comment: block.comment || "",
+      status: block.status === "cancelled" ? "cancelled" : "active",
+      createdAt,
+      updatedAt: block.updatedAt || createdAt
+    };
+  });
   return {
     ...nextState,
     users,
@@ -397,6 +419,7 @@ function normalizeState(nextState) {
     clients: [...clientMap.values()],
     payments,
     bookings,
+    studioBlocks,
     calendarSettings: {
       mode: nextState.calendarSettings?.mode === "day" ? "day" : "week",
       date: nextState.calendarSettings?.date || new Date().toISOString().slice(0, 10),
@@ -615,6 +638,7 @@ function render() {
       </section>
       ${renderMobileTabs()}
       ${bookingModalOpen ? renderBookingModal() : ""}
+      ${studioBlockModalOpen ? renderStudioBlockModal() : ""}
       ${payoutModalOpen ? renderPayoutModal() : ""}
       ${commandPaletteOpen ? renderCommandPalette() : ""}
     </div>
@@ -1407,22 +1431,40 @@ function nextTodayBooking(bookings = todaysBookings()) {
   return bookings.find((booking) => upcomingStatuses.includes(booking.status) && minutesUntil(booking.date, booking.time) >= -15) || null;
 }
 
-function freeWindowRanges(bookings) {
-  const busy = bookings
-    .filter((booking) => booking.status !== "отменено")
-    .map((booking) => {
-      const start = Number(String(booking.time || "0").slice(0, 2));
-      return { start, end: Math.min(CALENDAR_END_HOUR + 1, start + parseDurationHours(booking.duration)) };
-    })
+function formatMinutes(totalMinutes) {
+  const safe = Math.max(0, Math.min(24 * 60, Number(totalMinutes || 0)));
+  return `${String(Math.floor(safe / 60)).padStart(2, "0")}:${String(safe % 60).padStart(2, "0")}`;
+}
+
+function eventTimeRange(event) {
+  return `${formatMinutes(bookingStartMinutes(event))}–${formatMinutes(bookingEndMinutes(event))}`;
+}
+
+function studioBusyIntervals(date) {
+  const dayStart = CALENDAR_START_HOUR * 60;
+  const dayEnd = (CALENDAR_END_HOUR + 1) * 60;
+  const events = [
+    ...(state.bookings || []).filter((booking) => booking.date === date && isActiveBooking(booking)),
+    ...(state.studioBlocks || []).filter((block) => block.date === date && isActiveStudioBlock(block))
+  ];
+  return events
+    .filter(hasValidEventTime)
+    .map((event) => ({ start: Math.max(dayStart, bookingStartMinutes(event)), end: Math.min(dayEnd, bookingEndMinutes(event)) }))
+    .filter((slot) => slot.end > slot.start)
     .sort((a, b) => a.start - b.start);
+}
+
+function freeWindowRanges(date = todayKey()) {
+  const busy = studioBusyIntervals(typeof date === "string" ? date : date?.[0]?.date || todayKey());
   const ranges = [];
-  let cursor = CALENDAR_START_HOUR;
+  let cursor = CALENDAR_START_HOUR * 60;
   busy.forEach((slot) => {
     if (slot.start > cursor) ranges.push([cursor, slot.start]);
     cursor = Math.max(cursor, slot.end);
   });
-  if (cursor <= CALENDAR_END_HOUR) ranges.push([cursor, CALENDAR_END_HOUR + 1]);
-  return ranges.filter(([start, end]) => end - start >= 1).slice(0, 6);
+  const dayEnd = (CALENDAR_END_HOUR + 1) * 60;
+  if (cursor < dayEnd) ranges.push([cursor, dayEnd]);
+  return ranges.filter(([start, end]) => end - start >= 30).slice(0, 8);
 }
 
 function studioNotifications() {
@@ -1582,6 +1624,7 @@ function studioTodayData() {
   const expectedIncome = bookings.filter((booking) => activeStatuses.includes(booking.status)).reduce((sum, booking) => sum + Number(booking.amount || 0), 0);
   const completed = bookings.filter((booking) => booking.status === "завершено");
   const completedAmount = completed.reduce((sum, booking) => sum + Number(booking.amount || 0), 0);
+  const studioBlocks = (state.studioBlocks || []).filter((block) => block.date === today && isActiveStudioBlock(block));
   return {
     today,
     bookings,
@@ -1591,6 +1634,8 @@ function studioTodayData() {
     completedCount: completed.length,
     averageCheck: completed.length ? completedAmount / completed.length : 0,
     employeePayoutAvailable: totalEmployeePayoutAvailable(),
+    studioBlocks,
+    availability: currentStudioAvailability(today),
     cancelledAmount: bookings.filter((booking) => booking.status === "отменено").reduce((sum, booking) => sum + Number(booking.amount || 0), 0),
     nextBooking: nextTodayBooking(bookings)
   };
@@ -1605,7 +1650,7 @@ function studioAttentionItems() {
     const active = activeStatuses.includes(booking.status);
     const addIssue = (type, text, priority) => items.push({ booking, type, text, priority, dateTime: `${booking.date} ${booking.time || "00:00"}` });
     if (booking.status === "заявка" && booking.date >= today && booking.date <= until) addIssue("Заявка", "Ожидает подтверждения", 1);
-    if (active && bookingConflicts(booking).length) addIssue("Конфликт", "Пересечение по сотруднику и времени", 0);
+    if (active && studioConflictsForBooking(booking).length) addIssue("Конфликт студии", "Пространство занято другим событием", 0);
     if (active && !booking.phone && !booking.telegram) addIssue("Нет контактов", "Не указан телефон или Telegram", 2);
     if (active && !bookingEmployeeId(booking)) addIssue("Нет сотрудника", "Нужно назначить исполнителя", 2);
     if (booking.status === "завершено" && !paymentForBooking(booking.id)) addIssue("Нет платежа", "Завершённая запись без связанной оплаты", 0);
@@ -1621,6 +1666,32 @@ function renderTodaySummary(data) {
     ["Доход", money(data.actualIncome)], ["Ожидается", money(data.expectedIncome)]
   ];
   return `<div class="today-metrics">${metrics.map(([label, value]) => `<article><span>${label}</span><strong>${value}</strong></article>`).join("")}</div>`;
+}
+
+function currentStudioAvailability(date = todayKey()) {
+  const now = new Date();
+  const nowMinutes = date === todayKey() ? now.getHours() * 60 + now.getMinutes() : CALENDAR_START_HOUR * 60;
+  const activeEvents = [
+    ...(state.bookings || []).filter((booking) => booking.date === date && isActiveBooking(booking)),
+    ...(state.studioBlocks || []).filter((block) => block.date === date && isActiveStudioBlock(block))
+  ].filter(hasValidEventTime);
+  const current = activeEvents.find((event) => bookingStartMinutes(event) <= nowMinutes && bookingEndMinutes(event) > nowMinutes) || null;
+  const free = freeWindowRanges(date);
+  const nextFree = free.find((range) => range[0] <= nowMinutes && range[1] > nowMinutes) || free.find((range) => range[0] >= nowMinutes) || null;
+  return { current, nextFree };
+}
+
+function renderTodayAvailability(data) {
+  const current = data.availability.current;
+  const currentIsBlock = current && (state.studioBlocks || []).some((block) => block.id === current.id);
+  return `
+    <section class="card section studio-availability-strip ${current ? "busy" : "free"}">
+      <div><span>Студия сейчас</span><strong>${current ? "Занята" : "Свободна"}</strong></div>
+      <div><span>${current ? "До какого времени" : "Ближайшее окно"}</span><strong>${current ? `${formatMinutes(bookingEndMinutes(current))} · ${currentIsBlock ? current.title : current.client || current.service}` : data.availability.nextFree ? `${formatMinutes(data.availability.nextFree[0])}–${formatMinutes(data.availability.nextFree[1])}` : "окон нет"}</strong></div>
+      <div><span>Технических блоков сегодня</span><strong>${data.studioBlocks.length}</strong></div>
+      <button class="btn secondary" type="button" data-view="calendar">Открыть календарь</button>
+    </section>
+  `;
 }
 
 function renderAttentionList(items) {
@@ -1662,6 +1733,7 @@ function renderDashboard() {
       <div class="section-head"><h2>Сегодняшняя сводка</h2><span class="muted">Оперативные показатели дня</span></div>
       ${renderTodaySummary(data)}
     </section>
+    ${renderTodayAvailability(data)}
     <div class="dashboard-layout studio-home">
       <section class="card section next-booking-card studio-home-next">
         <div class="section-head">
@@ -1738,7 +1810,7 @@ function renderTodayBookingList(bookings) {
     <div class="today-booking-list">
       ${bookings.map((booking) => {
         const employee = state.users.find((user) => user.id === booking.employeeId) || employeeByName(booking.employee);
-        const conflicts = bookingConflicts(booking);
+        const conflicts = studioConflictsForBooking(booking);
         return `
           <button class="today-booking-card status-${booking.status.replaceAll(" ", "-")}" type="button" data-open-booking="${booking.id}" style="--employee-color:${employee?.color || "#ff6633"}">
             <div class="today-booking-time"><strong>${booking.time}</strong><span>${booking.duration || "1 час"}</span></div>
@@ -1750,7 +1822,7 @@ function renderTodayBookingList(bookings) {
             <div class="today-booking-side">
               <strong>${money(booking.amount)}</strong>
               <span class="status-pill status-${booking.status.replaceAll(" ", "-")}">${statusTitle(booking.status)}</span>
-              ${conflicts.length ? '<em class="calendar-conflict-badge">Конфликт</em>' : ""}
+              ${conflicts.length ? '<em class="calendar-conflict-badge">Студия занята</em>' : ""}
             </div>
           </button>
         `;
@@ -1794,11 +1866,11 @@ function renderTodayFreeRow(hour) {
   `;
 }
 
-function renderFreeWindows(bookings) {
-  const free = freeWindowRanges(bookings);
+function renderFreeWindows(date = todayKey()) {
+  const free = freeWindowRanges(date);
   return `
     <div class="free-slots">
-      ${free.map(([start, end]) => `<button class="select-chip" data-calendar-slot="${todayKey()}|${String(start).padStart(2, "0")}:00">${String(start).padStart(2, "0")}:00–${String(end).padStart(2, "0")}:00</button>`).join("") || renderEmptyState("Окон нет", "Сегодня всё занято.")} 
+      ${free.map(([start, end]) => `<button class="select-chip" data-calendar-slot="${date}|${formatMinutes(start)}">${formatMinutes(start)}–${formatMinutes(end)}</button>`).join("") || renderEmptyState(date === todayKey() ? "Сегодня свободных окон нет" : "Свободных окон нет", "Студия занята в пределах рабочего дня.")} 
     </div>
   `;
 }
@@ -1940,16 +2012,79 @@ function bookingEmployeeId(booking) {
 }
 
 function bookingStartMinutes(booking) {
-  const [hours, minutes] = String(booking.time || "00:00").split(":").map(Number);
-  return (hours || 0) * 60 + (minutes || 0);
+  const match = String(booking?.time || "").match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return 0;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return 0;
+  return hours * 60 + minutes;
 }
 
 function bookingDurationMinutes(booking) {
-  const value = String(booking.duration || "1 час").toLowerCase();
+  if (typeof booking?.duration === "number") {
+    if (!Number.isFinite(booking.duration) || booking.duration <= 0) return 60;
+    return Math.max(15, booking.duration <= 24 ? booking.duration * 60 : booking.duration);
+  }
+  const value = String(booking?.duration || "1 час").toLowerCase();
   const amount = Number(value.match(/\d+(?:[.,]\d+)?/)?.[0]?.replace(",", ".") || 1);
+  if (!Number.isFinite(amount) || amount <= 0) return 60;
+  if (/^\d+(?:[.,]\d+)?$/.test(value.trim())) return Math.max(15, amount <= 24 ? amount * 60 : amount);
   if (value.includes("мин")) return Math.max(15, amount);
   if (value.includes("день") || value.includes("дня") || value.includes("дней")) return 8 * 60;
   return Math.max(15, amount * 60);
+}
+
+function bookingEndMinutes(booking) {
+  return bookingStartMinutes(booking) + bookingDurationMinutes(booking);
+}
+
+function hasValidEventTime(event) {
+  return /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(String(event?.time || ""));
+}
+
+function bookingsOverlap(a, b) {
+  if (!a || !b || a.date !== b.date || !hasValidEventTime(a) || !hasValidEventTime(b)) return false;
+  return bookingStartMinutes(a) < bookingEndMinutes(b) && bookingStartMinutes(b) < bookingEndMinutes(a);
+}
+
+function isActiveBooking(booking) {
+  return ["заявка", "подтверждено", "в процессе"].includes(booking?.status);
+}
+
+function isActiveStudioBlock(block) {
+  return block?.status !== "cancelled";
+}
+
+function studioConflictsForBooking(booking, excludeId = booking?.id) {
+  if (!isActiveBooking(booking) || !booking?.date || !hasValidEventTime(booking)) return [];
+  const bookingConflicts = (state.bookings || [])
+    .filter((candidate) => candidate.id !== excludeId && isActiveBooking(candidate) && bookingsOverlap(booking, candidate))
+    .map((candidate) => ({ kind: "booking", item: candidate }));
+  const blockConflicts = (state.studioBlocks || [])
+    .filter((block) => isActiveStudioBlock(block) && bookingsOverlap(booking, block))
+    .map((block) => ({ kind: "block", item: block }));
+  return [...bookingConflicts, ...blockConflicts];
+}
+
+function studioConflictsForBlock(block, excludeId = block?.id) {
+  if (!isActiveStudioBlock(block) || !block?.date || !hasValidEventTime(block)) return [];
+  const bookingConflicts = (state.bookings || [])
+    .filter((booking) => isActiveBooking(booking) && bookingsOverlap(block, booking))
+    .map((booking) => ({ kind: "booking", item: booking }));
+  const blockConflicts = (state.studioBlocks || [])
+    .filter((candidate) => candidate.id !== excludeId && isActiveStudioBlock(candidate) && bookingsOverlap(block, candidate))
+    .map((candidate) => ({ kind: "block", item: candidate }));
+  return [...bookingConflicts, ...blockConflicts];
+}
+
+function employeeConflictsForBooking(booking, excludeId = booking?.id) {
+  if (!isActiveBooking(booking) || !bookingEmployeeId(booking)) return [];
+  return (state.bookings || []).filter((candidate) =>
+    candidate.id !== excludeId &&
+    isActiveBooking(candidate) &&
+    bookingEmployeeId(candidate) === bookingEmployeeId(booking) &&
+    bookingsOverlap(booking, candidate)
+  );
 }
 
 function calendarBookingGeometry(booking) {
@@ -1969,17 +2104,7 @@ function calendarBookingGeometry(booking) {
 }
 
 function bookingConflicts(booking, excludeId = booking.id) {
-  const activeStatuses = ["заявка", "подтверждено", "в процессе"];
-  if (!activeStatuses.includes(booking.status) || !booking.date || !booking.time || !bookingEmployeeId(booking)) return [];
-  const start = bookingStartMinutes(booking);
-  const end = start + bookingDurationMinutes(booking);
-  return state.bookings.filter((candidate) => {
-    if (candidate.id === excludeId || candidate.date !== booking.date || !activeStatuses.includes(candidate.status)) return false;
-    if (bookingEmployeeId(candidate) !== bookingEmployeeId(booking)) return false;
-    const candidateStart = bookingStartMinutes(candidate);
-    const candidateEnd = candidateStart + bookingDurationMinutes(candidate);
-    return start < candidateEnd && candidateStart < end;
-  });
+  return employeeConflictsForBooking(booking, excludeId);
 }
 
 function calendarBookingMatches(booking) {
@@ -2026,7 +2151,17 @@ function renderDaySummary(day, bookings) {
       <article><span>Завершено</span><strong>${money(completedTotal)}</strong></article>
       <article><span>Заявок</span><strong>${bookings.filter((booking) => booking.status === "заявка").length}</strong></article>
       <article><span>Отмен</span><strong>${bookings.filter((booking) => booking.status === "отменено").length}</strong></article>
+      <article><span>Тех. блоков</span><strong>${(state.studioBlocks || []).filter((block) => block.date === day && isActiveStudioBlock(block)).length}</strong></article>
     </div>
+  `;
+}
+
+function renderDayAvailability(day) {
+  return `
+    <section class="card section calendar-availability-summary">
+      <div class="section-head"><div><h3>Свободные окна</h3><p class="muted">Активные записи и технические блоки учитываются вместе.</p></div></div>
+      ${renderFreeWindows(day)}
+    </section>
   `;
 }
 
@@ -2037,6 +2172,7 @@ function renderCalendar() {
   const hours = Array.from({ length: CALENDAR_END_HOUR - CALENDAR_START_HOUR + 1 }, (_, index) => CALENDAR_START_HOUR + index);
   const visibleBookings = calendarBookings();
   if (selectedBookingId && !visibleBookings.some((booking) => booking.id === selectedBookingId)) selectedBookingId = null;
+  if (selectedStudioBlockId && !(state.studioBlocks || []).some((block) => block.id === selectedStudioBlockId && days.includes(block.date))) selectedStudioBlockId = null;
   const periodStart = days[0];
   const periodEnd = days[days.length - 1];
   const title = calendarMode === "day" ? `${formatDate(periodStart)} · ${weekdayLong(periodStart)}` : `${formatDate(periodStart)} — ${formatDate(periodEnd)}`;
@@ -2057,10 +2193,12 @@ function renderCalendar() {
             <button type="button" class="${calendarMode === "day" ? "active" : ""}" data-calendar-mode="day">День</button>
           </div>
           <button class="btn" data-action="openBookingModal">Добавить запись</button>
+          <button class="btn secondary" data-action="openStudioBlockModal">Заблокировать время</button>
         </div>
       </div>
       ${renderCalendarFilters()}
       ${calendarMode === "day" ? renderDaySummary(calendarDate, visibleBookings.filter((booking) => booking.date === calendarDate)) : ""}
+      ${calendarMode === "day" ? renderDayAvailability(calendarDate) : ""}
       <div class="calendar-workspace">
         <section class="card calendar-grid" style="--calendar-days:${days.length}">
           <div class="calendar-corner"></div>
@@ -2083,11 +2221,13 @@ function renderCalendar() {
 function renderCalendarSlot(day, hour, today) {
   const hourText = `${String(hour).padStart(2, "0")}:`;
   const bookings = calendarBookings().filter((booking) => booking.date === day && String(booking.time || "").startsWith(hourText));
+  const blocks = (state.studioBlocks || []).filter((block) => block.date === day && isActiveStudioBlock(block) && String(block.time || "").startsWith(hourText));
   const currentLine = day === today && currentHourLine(hour);
   return `
     <button class="calendar-slot ${day === today ? "today" : ""}" data-calendar-slot="${day}|${String(hour).padStart(2, "0")}:00">
       ${currentLine ? `<span class="current-time-line" style="top:${currentLine}%"></span>` : ""}
       ${bookings.map(renderCalendarBooking).join("")}
+      ${blocks.map(renderCalendarStudioBlock).join("")}
     </button>
   `;
 }
@@ -2103,23 +2243,43 @@ function currentHourLine(hour) {
 function renderCalendarBooking(booking) {
   const employee = state.users.find((user) => user.id === booking.employeeId) || employeeByName(booking.employee);
   const color = employee?.color || "#ff6633";
-  const conflicts = bookingConflicts(booking);
+  const studioConflicts = studioConflictsForBooking(booking);
+  const employeeConflicts = employeeConflictsForBooking(booking);
   const geometry = calendarBookingGeometry(booking);
   return `
-    <article class="calendar-booking ${geometry.sizeClass} ${selectedBookingId === booking.id ? "selected" : ""} ${conflicts.length ? "has-conflict" : ""} status-${booking.status.replaceAll(" ", "-")}" data-calendar-booking="${booking.id}" style="--employee-color:${color};--booking-top:${geometry.top}px;--booking-height:${geometry.height}px">
+    <article class="calendar-booking ${geometry.sizeClass} ${selectedBookingId === booking.id ? "selected" : ""} ${studioConflicts.length ? "has-conflict studio-conflict" : employeeConflicts.length ? "has-conflict employee-conflict" : ""} status-${booking.status.replaceAll(" ", "-")}" data-calendar-booking="${booking.id}" style="--employee-color:${color};--booking-top:${geometry.top}px;--booking-height:${geometry.height}px">
       <strong><i>${serviceIcon(booking.service)}</i>${booking.time} · ${booking.client || "Без имени"}</strong>
       <span>${booking.service} · ${booking.duration || "1 час"}</span>
       <span class="calendar-booking-employee"><b></b>${booking.employee || "Сотрудник не указан"}</span>
       <span class="calendar-booking-meta">${Number(booking.amount || 0) ? money(booking.amount) : "Стоимость не указана"}</span>
       <div class="calendar-booking-badges">
         <em class="calendar-status-badge">${statusTitle(booking.status)}</em>
-        ${conflicts.length ? '<em class="calendar-conflict-badge">Конфликт</em>' : ""}
+        ${studioConflicts.length ? '<em class="calendar-conflict-badge">Студия занята</em>' : employeeConflicts.length ? '<em class="calendar-conflict-badge secondary">Сотрудник занят</em>' : ""}
+      </div>
+    </article>
+  `;
+}
+
+function renderCalendarStudioBlock(block) {
+  const geometry = calendarBookingGeometry(block);
+  const conflicts = studioConflictsForBlock(block);
+  return `
+    <article class="calendar-booking studio-block-card ${geometry.sizeClass} ${selectedStudioBlockId === block.id ? "selected" : ""} ${conflicts.length ? "has-conflict studio-conflict" : ""}" data-calendar-studio-block="${block.id}" style="--booking-top:${geometry.top}px;--booking-height:${geometry.height}px">
+      <strong><i>■</i>${eventTimeRange(block)}</strong>
+      <span>${block.type} · ${block.duration || "1 час"}</span>
+      <span class="calendar-booking-employee"><b></b>${block.title || "Студия недоступна"}</span>
+      ${block.comment ? `<span class="calendar-booking-meta">${block.comment}</span>` : ""}
+      <div class="calendar-booking-badges">
+        <em class="calendar-status-badge">Технический блок</em>
+        ${conflicts.length ? '<em class="calendar-conflict-badge">Конфликт студии</em>' : ""}
       </div>
     </article>
   `;
 }
 
 function renderBookingDetailsPanel() {
+  const studioBlock = (state.studioBlocks || []).find((block) => block.id === selectedStudioBlockId);
+  if (studioBlock) return renderStudioBlockDetailsPanel(studioBlock);
   const booking = state.bookings.find((item) => item.id === selectedBookingId && calendarBookingMatches(item));
   if (!booking) {
     return `
@@ -2164,6 +2324,27 @@ function renderBookingDetailsPanel() {
   `;
 }
 
+function renderStudioBlockDetailsPanel(block) {
+  const conflicts = studioConflictsForBlock(block);
+  return `
+    <aside class="card section booking-details studio-block-details">
+      <div class="section-head"><h2>${block.title || "Технический блок"}</h2><span class="status-pill studio-block-pill">${block.type}</span></div>
+      <div class="details-list">
+        ${renderDetailRow("Дата", formatDate(block.date))}
+        ${renderDetailRow("Время", eventTimeRange(block))}
+        ${renderDetailRow("Длительность", block.duration || "1 час")}
+        ${renderDetailRow("Тип", block.type)}
+        ${renderDetailRow("Комментарий", block.comment || "нет")}
+        ${renderDetailRow("Занятость", conflicts.length ? `Конфликт студии · ${conflicts.length}` : "Студия заблокирована")}
+      </div>
+      <div class="booking-side-actions">
+        <button class="btn secondary" type="button" data-edit-studio-block="${block.id}">Редактировать</button>
+        <button class="btn danger" type="button" data-delete-studio-block="${block.id}">Удалить блок</button>
+      </div>
+    </aside>
+  `;
+}
+
 function renderDetailRow(label, value) {
   return `<div><span>${label}</span><strong>${value}</strong></div>`;
 }
@@ -2186,7 +2367,7 @@ function renderBookingModal() {
     employee: booking.employee || filteredEmployee?.name || defaultEmployee,
     status
   };
-  const conflicts = bookingConflicts(conflictDraft, booking.id || editingBookingId);
+  const conflicts = studioConflictsForBooking(conflictDraft, booking.id || editingBookingId);
 
   return `
     <div class="modal-backdrop" data-action="closeBookingModal">
@@ -2254,8 +2435,8 @@ function renderBookingModal() {
             <textarea name="comment">${booking.comment || ""}</textarea>
           </div>
           <div id="bookingConflictWarning" class="booking-conflict-warning full ${conflicts.length ? "visible" : ""}">
-            <strong>Конфликт по времени</strong>
-            <span>${conflicts.length ? `У сотрудника уже есть ${conflicts.length} пересекающаяся запись.` : ""}</span>
+            <strong>В это время студия уже занята</strong>
+            <span>${conflicts.length ? conflicts.map(describeStudioConflict).join(" ") : ""}</span>
           </div>
           <div class="actions full modal-actions">
             <button class="btn" type="submit">Сохранить</button>
@@ -2276,7 +2457,7 @@ function updateBookingConflictWarning() {
   if (!form || !warning) return;
   const data = Object.fromEntries(new FormData(form));
   const employee = state.users.find((user) => user.id === data.employeeId);
-  const conflicts = bookingConflicts({
+  const conflicts = studioConflictsForBooking({
     id: data.id,
     date: data.date,
     time: data.time,
@@ -2287,7 +2468,71 @@ function updateBookingConflictWarning() {
   }, data.id || editingBookingId);
   warning.classList.toggle("visible", conflicts.length > 0);
   const text = warning.querySelector("span");
-  if (text) text.textContent = conflicts.length ? `У сотрудника уже есть ${conflicts.length} пересекающаяся запись.` : "";
+  if (text) text.textContent = conflicts.length ? conflicts.map(describeStudioConflict).join(" ") : "";
+}
+
+function describeStudioConflict(conflict) {
+  const item = conflict.item;
+  if (conflict.kind === "block") return `Конфликт с блоком: ${item.title || item.type}, ${eventTimeRange(item)}.`;
+  return `Конфликт: ${eventTimeRange(item)}, ${item.client || "Без имени"}, ${item.service || "услуга не указана"}, ${statusTitle(item.status)}.`;
+}
+
+function studioBlockFromForm(data) {
+  const existing = (state.studioBlocks || []).find((block) => block.id === data.id);
+  const now = new Date().toISOString();
+  return {
+    id: data.id || crypto.randomUUID(),
+    date: data.date,
+    time: data.time,
+    duration: String(data.duration || "").trim() || "1 час",
+    type: studioBlockTypes.includes(data.type) ? data.type : "Другое",
+    title: String(data.title || "").trim() || data.type || "Технический блок",
+    comment: String(data.comment || "").trim(),
+    status: "active",
+    createdAt: existing?.createdAt || now,
+    updatedAt: now
+  };
+}
+
+function renderStudioBlockModal() {
+  const block = (state.studioBlocks || []).find((item) => item.id === editingStudioBlockId) || studioBlockDraft || {};
+  const draft = { ...block, status: "active", date: block.date || calendarDate, time: block.time || "12:00", duration: block.duration || "1 час" };
+  const conflicts = studioConflictsForBlock(draft, block.id || editingStudioBlockId);
+  return `
+    <div class="modal-backdrop" data-action="closeStudioBlockModal">
+      <section class="card modal studio-block-modal" role="dialog" aria-modal="true" aria-label="Технический блок">
+        <div class="modal-head">
+          <div><h2>${editingStudioBlockId ? "Редактировать блок" : "Заблокировать время"}</h2><p class="muted">Блок занимает всё пространство студии и не связан с финансами.</p></div>
+          <button class="icon-btn" type="button" data-action="closeStudioBlockModal">×</button>
+        </div>
+        <form id="studioBlockForm" class="form-grid">
+          <input type="hidden" name="id" value="${block.id || ""}" />
+          <div class="field"><label>Дата</label><input name="date" type="date" required value="${draft.date}" /></div>
+          <div class="field"><label>Время</label><input name="time" type="time" required value="${draft.time}" /></div>
+          <div class="field"><label>Длительность</label><input name="duration" required value="${draft.duration}" placeholder="Например: 1 час или 90 минут" /></div>
+          <div class="field"><label>Тип</label><select name="type">${studioBlockTypes.map((type) => `<option ${draft.type === type ? "selected" : ""}>${type}</option>`).join("")}</select></div>
+          <div class="field full"><label>Название</label><input name="title" required value="${block.title || ""}" placeholder="Например: уборка и подготовка" /></div>
+          <div class="field full"><label>Комментарий</label><textarea name="comment" placeholder="Что нужно учесть сотрудникам">${block.comment || ""}</textarea></div>
+          <div id="studioBlockConflictWarning" class="booking-conflict-warning full ${conflicts.length ? "visible" : ""}">
+            <strong>В это время студия уже занята</strong>
+            <span>${conflicts.length ? conflicts.map(describeStudioConflict).join(" ") : ""}</span>
+          </div>
+          <div class="actions full modal-actions"><button class="btn" type="submit">Сохранить блок</button><button class="btn secondary" type="button" data-action="closeStudioBlockModal">Отмена</button></div>
+        </form>
+      </section>
+    </div>
+  `;
+}
+
+function updateStudioBlockConflictWarning() {
+  const form = document.querySelector("#studioBlockForm");
+  const warning = document.querySelector("#studioBlockConflictWarning");
+  if (!form || !warning) return;
+  const data = Object.fromEntries(new FormData(form));
+  const conflicts = studioConflictsForBlock({ ...data, status: "active" }, data.id || editingStudioBlockId);
+  warning.classList.toggle("visible", conflicts.length > 0);
+  const text = warning.querySelector("span");
+  if (text) text.textContent = conflicts.length ? conflicts.map(describeStudioConflict).join(" ") : "";
 }
 
 function filteredBookings() {
@@ -3599,6 +3844,7 @@ function bindCommonEvents() {
     button.addEventListener("click", () => {
       editingBookingId = null;
       bookingSlotDraft = null;
+      studioBlockModalOpen = false;
       bookingModalOpen = true;
       commandPaletteOpen = false;
       render();
@@ -3727,11 +3973,19 @@ function bindViewEvents() {
     render();
   });
 
+  document.querySelector("[data-action='openStudioBlockModal']")?.addEventListener("click", () => {
+    editingStudioBlockId = null;
+    studioBlockDraft = { date: calendarDate, time: "12:00", duration: "1 час", type: "Тех. блок" };
+    studioBlockModalOpen = true;
+    render();
+  });
+
   document.querySelectorAll("[data-calendar-slot]").forEach((slot) => {
     slot.addEventListener("click", () => {
       const [date, time] = slot.dataset.calendarSlot.split("|");
       const employee = state.users.find((user) => user.id === calendarEmployeeFilter);
       editingBookingId = null;
+      selectedStudioBlockId = null;
       calendarDate = date;
       bookingSlotDraft = { date, time, status: "подтверждено", employeeId: employee?.id || "", employee: employee?.name || "" };
       bookingModalOpen = true;
@@ -3744,11 +3998,73 @@ function bindViewEvents() {
     card.addEventListener("click", (event) => {
       event.stopPropagation();
       selectedBookingId = card.dataset.calendarBooking;
+      selectedStudioBlockId = null;
       editingBookingId = null;
       bookingSlotDraft = null;
       bookingModalOpen = false;
       render();
     });
+  });
+
+  document.querySelectorAll("[data-calendar-studio-block]").forEach((card) => {
+    card.addEventListener("click", (event) => {
+      event.stopPropagation();
+      selectedStudioBlockId = card.dataset.calendarStudioBlock;
+      selectedBookingId = null;
+      bookingModalOpen = false;
+      studioBlockModalOpen = false;
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-edit-studio-block]").forEach((button) => {
+    button.addEventListener("click", () => {
+      editingStudioBlockId = button.dataset.editStudioBlock;
+      studioBlockDraft = null;
+      studioBlockModalOpen = true;
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-delete-studio-block]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!confirm("Удалить технический блок?")) return;
+      state.studioBlocks = (state.studioBlocks || []).filter((block) => block.id !== button.dataset.deleteStudioBlock);
+      selectedStudioBlockId = null;
+      saveState();
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-action='closeStudioBlockModal']").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      if (event.target !== button && button.classList.contains("modal-backdrop")) return;
+      studioBlockModalOpen = false;
+      editingStudioBlockId = null;
+      studioBlockDraft = null;
+      render();
+    });
+  });
+
+  document.querySelectorAll("#studioBlockForm [name='date'], #studioBlockForm [name='time'], #studioBlockForm [name='duration']").forEach((field) => {
+    field.addEventListener("input", updateStudioBlockConflictWarning);
+  });
+
+  document.querySelector("#studioBlockForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(event.target));
+    const block = studioBlockFromForm(data);
+    const conflicts = studioConflictsForBlock(block, block.id);
+    if (conflicts.length && !confirm("В это время студия уже занята. Сохранить блок с конфликтом?")) return;
+    if (data.id) state.studioBlocks = (state.studioBlocks || []).map((item) => item.id === data.id ? block : item);
+    else state.studioBlocks = [...(state.studioBlocks || []), block];
+    selectedStudioBlockId = block.id;
+    selectedBookingId = null;
+    studioBlockModalOpen = false;
+    editingStudioBlockId = null;
+    studioBlockDraft = null;
+    saveState();
+    render();
   });
 
   document.querySelectorAll("[data-side-edit-booking]").forEach((button) => {
@@ -3812,6 +4128,8 @@ function bindViewEvents() {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.target));
     const booking = bookingFromForm(data);
+    const studioConflicts = studioConflictsForBooking(booking, booking.id);
+    if (studioConflicts.length && !confirm("В это время студия уже занята. Сохранить запись с конфликтом?")) return;
     const previousStatus = state.bookings.find((item) => item.id === booking.id)?.status;
     if (!data.id) {
       appendStatusHistory(booking, booking.status, "создана запись");
@@ -4234,6 +4552,8 @@ function bindViewEvents() {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.target));
     const booking = bookingFromForm(data);
+    const studioConflicts = studioConflictsForBooking(booking, booking.id);
+    if (studioConflicts.length && !confirm("В это время студия уже занята. Сохранить запись с конфликтом?")) return;
     if (data.id) {
       state.bookings = state.bookings.map((item) => (item.id === data.id ? booking : item));
     } else {
@@ -4291,6 +4611,7 @@ function bindViewEvents() {
       if (card.classList.contains("booking-card") && event.target.closest("button")) return;
       const booking = state.bookings.find((item) => item.id === card.dataset.openBooking);
       selectedBookingId = card.dataset.openBooking;
+      selectedStudioBlockId = null;
       if (booking) {
         calendarDate = booking.date;
         calendarWeekStart = weekStart(calendarDate);
@@ -4427,13 +4748,16 @@ document.addEventListener("keydown", (event) => {
     render();
     return;
   }
-  if (event.key === "Escape" && (bookingModalOpen || payoutModalOpen || commandPaletteOpen || notificationPanelOpen)) {
+  if (event.key === "Escape" && (bookingModalOpen || studioBlockModalOpen || payoutModalOpen || commandPaletteOpen || notificationPanelOpen)) {
     bookingModalOpen = false;
+    studioBlockModalOpen = false;
     payoutModalOpen = false;
     commandPaletteOpen = false;
     notificationPanelOpen = false;
     editingBookingId = null;
     bookingSlotDraft = null;
+    editingStudioBlockId = null;
+    studioBlockDraft = null;
     render();
   }
 });
