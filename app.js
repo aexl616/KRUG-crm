@@ -4,6 +4,12 @@ const CALENDAR_START_HOUR = 9;
 const CALENDAR_END_HOUR = 23;
 const CALENDAR_HOUR_HEIGHT = 72;
 const studioBlockTypes = ["Тех. блок", "Уборка", "Ремонт", "Контент", "Личное", "Закрыто", "Другое"];
+const accessRoles = [
+  { id: "owner", label: "Владелец" },
+  { id: "admin", label: "Админ" },
+  { id: "engineer", label: "Звукорежиссёр" },
+  { id: "staff", label: "Сотрудник" }
+];
 
 const defaultServiceGroups = [
   { id: "recording", name: "Запись", order: 1 },
@@ -42,8 +48,8 @@ const employeeRoles = ["Владелец", "Администратор", "Зву
 const defaultState = {
   sessionUserId: null,
   users: [
-    { id: "u1", name: "AE XL", login: "admin", password: "admin123", role: "admin", position: "Владелец", percent: 0, fixedRate: 0, color: "#ff6633", phone: "", telegram: "", active: true },
-    { id: "u2", name: "Сотрудник", login: "staff", password: "staff123", role: "staff", position: "Звукорежиссёр", percent: 25, fixedRate: 0, color: "#7c8cff", phone: "", telegram: "", active: true }
+    { id: "u1", name: "AE XL", login: "admin", password: "admin123", role: "owner", position: "Владелец", percent: 0, fixedRate: 0, color: "#ff6633", phone: "", telegram: "", active: true },
+    { id: "u2", name: "Сотрудник", login: "staff", password: "staff123", role: "engineer", position: "Звукорежиссёр", percent: 25, fixedRate: 0, color: "#7c8cff", phone: "", telegram: "", active: true }
   ],
   services: ["Запись", "Сведение", "Мастеринг", "Аренда студии"],
   serviceGroups: defaultServiceGroups,
@@ -227,6 +233,7 @@ let notificationPanelOpen = false;
 let globalSearchQuery = "";
 let commandPaletteOpen = false;
 let commandPaletteQuery = "";
+let accessNotice = "";
 
 const app = document.querySelector("#app");
 
@@ -291,20 +298,35 @@ function normalizeState(nextState) {
     }
   });
   const services = serviceItems.map((service) => service.name);
-  const users = (nextState.users || defaultState.users).map((user, index) => ({
-    id: user.id || crypto.randomUUID(),
-    name: user.name === "Я" ? "AE XL" : user.name || `Сотрудник ${index + 1}`,
-    login: user.login || `staff${index + 1}`,
-    password: user.password || "1234",
-    role: user.role || "staff",
-    position: (user.name === "Я" || user.name === "AE XL") ? "Владелец" : user.position || (user.role === "admin" ? "Администратор" : "Звукорежиссёр"),
-    percent: Number(user.percent || 0),
-    fixedRate: Number(user.fixedRate || 0),
-    color: user.color || (index === 0 ? "#ff6633" : "#7c8cff"),
-    phone: user.phone || "",
-    telegram: user.telegram || "",
-    active: user.active !== false
-  }));
+  let users = (nextState.users || defaultState.users).map((user, index) => {
+    const name = user.name === "Я" ? "AE XL" : user.name || `Сотрудник ${index + 1}`;
+    const position = name === "AE XL" ? "Владелец" : user.position || (user.role === "admin" ? "Администратор" : "Звукорежиссёр");
+    const role = name === "AE XL"
+      ? "owner"
+      : user.role === "owner" ? "owner"
+        : user.role === "admin" ? "admin"
+          : user.role === "engineer" || /звукореж/i.test(position) ? "engineer" : "staff";
+    return {
+      id: user.id || crypto.randomUUID(),
+      name,
+      login: user.login || `staff${index + 1}`,
+      password: user.password || "1234",
+      role,
+      position,
+      percent: Number(user.percent || 0),
+      fixedRate: Number(user.fixedRate || 0),
+      color: user.color || (index === 0 ? "#ff6633" : "#7c8cff"),
+      phone: user.phone || "",
+      telegram: user.telegram || "",
+      active: user.active !== false
+    };
+  });
+  if (!users.some((user) => user.role === "owner") && users.length) {
+    const ownerId = users.find((user) => user.name === "AE XL")?.id || users[0].id;
+    users = users.map((user) => user.id === ownerId ? { ...user, role: "owner", position: user.position || "Владелец" } : user);
+  }
+  if (!users.length) users = structuredClone(defaultState.users);
+  const owner = users.find((user) => user.role === "owner") || users[0];
   const payments = (nextState.payments || []).map((payment) => {
     const service = serviceAliases[payment.service] || payment.service;
     const category = classifyService(service);
@@ -413,6 +435,11 @@ function normalizeState(nextState) {
   return {
     ...nextState,
     users,
+    access: {
+      currentUserId: users.some((user) => user.id === nextState.access?.currentUserId)
+        ? nextState.access.currentUserId
+        : users.some((user) => user.id === nextState.sessionUserId) ? nextState.sessionUserId : owner?.id || ""
+    },
     serviceGroups,
     serviceItems,
     services: [...services],
@@ -443,8 +470,110 @@ function currentUser() {
   return state.users.find((user) => user.id === state.sessionUserId);
 }
 
+function currentRole() {
+  return currentUser()?.role || "staff";
+}
+
+function roleLabel(role = currentRole()) {
+  return accessRoles.find((item) => item.id === role)?.label || "Сотрудник";
+}
+
+function isOwner() {
+  return currentRole() === "owner";
+}
+
 function isAdmin() {
-  return currentUser()?.role === "admin";
+  return ["owner", "admin"].includes(currentRole());
+}
+
+function isManagerRole() {
+  return ["owner", "admin"].includes(currentRole());
+}
+
+function isRestrictedRole() {
+  return ["engineer", "staff"].includes(currentRole());
+}
+
+function canViewSection(sectionId) {
+  const sections = {
+    owner: ["dashboard", "calendar", "bookings", "clients", "finance", "payments", "payouts", "budget", "reports", "settings"],
+    admin: ["dashboard", "calendar", "bookings", "clients", "payments", "payouts", "reports", "settings"],
+    engineer: ["dashboard", "calendar", "bookings", "clients", "payouts"],
+    staff: ["dashboard", "calendar", "bookings", "payouts"]
+  };
+  return (sections[currentRole()] || sections.staff).includes(sectionId);
+}
+
+function canViewBooking(booking) {
+  if (isManagerRole()) return true;
+  return Boolean(booking?.employeeId && booking.employeeId === currentUser()?.id);
+}
+
+function canEditBooking(booking) {
+  return isManagerRole() && canViewBooking(booking);
+}
+
+function canChangeBookingStatus(booking) {
+  return isManagerRole() || (canViewBooking(booking) && isRestrictedRole());
+}
+
+function canCreateBooking() {
+  return isManagerRole();
+}
+
+function canViewClient(client) {
+  if (isManagerRole()) return true;
+  const name = typeof client === "string" ? client : client?.name;
+  return (state.bookings || []).some((booking) => canViewBooking(booking) && (booking.client === name || booking.clientName === name));
+}
+
+function canViewPayment() {
+  return ["owner", "admin"].includes(currentRole());
+}
+
+function canViewPayout(payout) {
+  return isManagerRole() || payout?.employeeId === currentUser()?.id;
+}
+
+function canManagePayouts() {
+  return isManagerRole();
+}
+
+function canEditSettings() {
+  return isManagerRole();
+}
+
+function canViewFinance() {
+  return isOwner();
+}
+
+function accessibleBookings() {
+  return (state.bookings || []).filter(canViewBooking);
+}
+
+function denyAccess() {
+  accessNotice = "У вас нет доступа к этому разделу.";
+  view = "dashboard";
+}
+
+function switchLocalUser(userId) {
+  const user = state.users.find((item) => item.id === userId);
+  if (!user) return false;
+  state.sessionUserId = user.id;
+  state.access = { ...(state.access || {}), currentUserId: user.id };
+  view = "dashboard";
+  settingsTab = "services";
+  selectedBookingId = null;
+  selectedClientName = null;
+  calendarEmployeeFilter = "";
+  bookingEmployeeFilter = "";
+  payoutEmployeeFilter = "";
+  payoutStatusFilter = "";
+  payoutPeriodFilter = "all";
+  payoutProblemsOnly = false;
+  accessNotice = `Режим просмотра: ${user.name} · ${roleLabel(user.role)}.`;
+  saveState();
+  return true;
 }
 
 function money(value) {
@@ -603,7 +732,9 @@ function knownClients() {
     }
   });
 
-  return clients.sort((a, b) => String(b.lastDate || "").localeCompare(String(a.lastDate || "")) || a.name.localeCompare(b.name));
+  return clients
+    .filter(canViewClient)
+    .sort((a, b) => String(b.lastDate || "").localeCompare(String(a.lastDate || "")) || a.name.localeCompare(b.name));
 }
 
 function clientSuggestions(query) {
@@ -619,12 +750,14 @@ function render() {
     renderLogin();
     return;
   }
+  if (!canViewSection(view)) denyAccess();
 
   app.innerHTML = `
     <div class="app-shell">
       ${renderSidebar()}
       <section class="content">
         ${renderTopbar()}
+        ${accessNotice ? `<div class="access-notice" role="status"><strong>${accessNotice}</strong><button class="icon-btn" type="button" data-action="closeAccessNotice">×</button></div>` : ""}
         ${view === "calendar" ? renderCalendar() : ""}
         ${view === "dashboard" ? renderDashboard() : ""}
         ${view === "bookings" ? renderBookings() : ""}
@@ -672,7 +805,7 @@ function renderLogin() {
             <input name="password" type="password" autocomplete="current-password" required value="admin123" />
           </div>
           <button class="btn" type="submit">Войти</button>
-          <div class="hint">Админ: admin / admin123. Сотрудник: staff / staff123.</div>
+          <div class="hint">Владелец: admin / admin123. Звукорежиссёр: staff / staff123.</div>
         </div>
       </form>
     </section>
@@ -686,8 +819,7 @@ function renderLogin() {
       alert("Неверный логин или пароль");
       return;
     }
-    state.sessionUserId = user.id;
-    saveState();
+    switchLocalUser(user.id);
     render();
   });
 }
@@ -706,7 +838,9 @@ function renderSidebar() {
       <nav class="nav">${navButtons()}</nav>
       <div class="user-card">
         <strong>${currentUser().name}</strong>
-        <span>${isAdmin() ? "администратор" : "сотрудник"}</span>
+        <span>${roleLabel()}</span>
+        ${isRestrictedRole() ? '<em class="restricted-access-badge">Ограниченный доступ</em>' : ""}
+        ${!isOwner() ? '<button class="logout owner-return" type="button" data-action="returnOwner">Вернуться владельцем</button>' : ""}
         <button class="logout" data-action="logout">Выйти</button>
       </div>
     </aside>
@@ -727,7 +861,7 @@ function navButtons() {
     ["settings", "Настройки"]
   ];
   return items
-    .filter(([key]) => key !== "settings" || isAdmin())
+    .filter(([key]) => canViewSection(key))
     .map(([key, label]) => `<button class="${view === key ? "active" : ""}" data-view="${key}">${label}</button>`)
     .join("");
 }
@@ -756,8 +890,9 @@ function renderTopbar() {
         </button>
         <button class="topbar-profile" type="button" data-action="openCommandPalette" title="Ctrl + K">
           <span>${initials(currentUser().name)}</span>
-          <strong>${currentUser().name}</strong>
+          <strong>${currentUser().name}<small>${roleLabel()}</small></strong>
         </button>
+        ${!isOwner() ? '<button class="topbar-icon topbar-owner-return" type="button" data-action="returnOwner" title="Вернуться в режим владельца">В</button>' : ""}
         ${notificationPanelOpen ? `<div class="notification-popover">${renderNotifications(notifications)}</div>` : ""}
       </div>
     </header>
@@ -1421,7 +1556,7 @@ function untilLabel(booking) {
 
 function todaysBookings() {
   const today = todayKey();
-  return state.bookings.filter((booking) => booking.date === today).sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+  return accessibleBookings().filter((booking) => booking.date === today).sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
 }
 
 function nextTodayBooking(bookings = todaysBookings()) {
@@ -1476,11 +1611,11 @@ function studioNotifications() {
     return booking.status !== "отменено" && minutes > 0 && minutes <= 30;
   });
   if (soon) notifications.push({ icon: "⏱", title: `Через ${minutesUntil(soon.date, soon.time)} минут запись`, text: `${soon.client || "Без имени"} · ${soon.service}` });
-  const pending = state.bookings.filter((booking) => booking.status === "заявка");
+  const pending = accessibleBookings().filter((booking) => booking.status === "заявка");
   if (pending.length) notifications.push({ icon: "!", title: `Осталось подтвердить ${pending.length} ${plural(pending.length, "запись", "записи", "записей")}`, text: "Открой раздел Записи или календарь." });
-  const payoutAvailable = totalEmployeePayoutAvailable();
+  const payoutAvailable = isManagerRole() ? totalEmployeePayoutAvailable() : employeePayoutStats(currentUser()?.id || "").availableToPay;
   if (payoutAvailable > 0) notifications.push({ icon: "₽", title: "Нужно выплатить сотруднику", text: `Доступно к выплате: ${money(payoutAvailable)}` });
-  const birthdayClient = state.clients.find((client) => client.birthday === today || client.birthDate === today);
+  const birthdayClient = state.clients.find((client) => canViewClient(client) && (client.birthday === today || client.birthDate === today));
   if (birthdayClient) notifications.push({ icon: "○", title: "Сегодня день рождения клиента", text: birthdayClient.name });
   return notifications;
 }
@@ -1497,17 +1632,17 @@ function searchItems(query) {
   const q = query.trim().toLowerCase();
   if (!q) return [];
   const items = [];
-  state.clients.forEach((client) => {
+  state.clients.filter(canViewClient).forEach((client) => {
     items.push({ type: "client", id: client.name, icon: "К", title: client.name, text: [client.phone, client.telegram].filter(Boolean).join(" · ") || "клиент" });
   });
-  state.bookings.forEach((booking) => {
+  accessibleBookings().forEach((booking) => {
     items.push({ type: "booking", id: booking.id, icon: serviceIcon(booking.service), title: `${booking.client || "Без имени"} · ${booking.time || ""}`, text: [formatDate(booking.date), booking.service, booking.employee, booking.phone, booking.telegram, statusTitle(booking.status)].filter(Boolean).join(" · ") });
   });
-  catalogServices().forEach((service) => {
+  (isManagerRole() ? catalogServices() : []).forEach((service) => {
     const group = catalogGroups().find((item) => item.id === service.categoryId);
     items.push({ type: "service", id: service.id, icon: serviceIcon(service.name), title: service.name, text: `${group?.name || "Услуга"} · ${money(service.price)} · ${service.duration}` });
   });
-  state.users.forEach((user) => {
+  (isManagerRole() ? state.users : [currentUser()].filter(Boolean)).forEach((user) => {
     items.push({ type: "employee", id: user.id, icon: initials(user.name), title: user.name, text: `${user.position || "Сотрудник"} · ${user.telegram || user.phone || "контакты не указаны"}` });
   });
   return items
@@ -1521,7 +1656,7 @@ function commandItems(query = "") {
     { type: "view", id: "calendar", icon: "К", title: "Открыть календарь", text: "Недельное расписание" },
     { type: "view", id: "payments", icon: "₽", title: "Добавить доход", text: "Раздел платежей" },
     { type: "view", id: "finance", icon: "−", title: "Добавить расход", text: "Финансы" }
-  ];
+  ].filter((item) => item.type !== "view" ? canCreateBooking() : canViewSection(item.id));
   const q = query.trim().toLowerCase();
   const filtered = q ? commands.filter((item) => [item.title, item.text].some((value) => value.toLowerCase().includes(q))) : commands;
   return [...filtered, ...searchItems(query)].slice(0, 10);
@@ -1579,6 +1714,11 @@ function openSearchItem(type, id) {
   commandPaletteOpen = false;
   commandPaletteQuery = "";
   if (type === "action" && decodedId === "new-booking") {
+    if (!canCreateBooking()) {
+      denyAccess();
+      render();
+      return;
+    }
     editingBookingId = null;
     bookingSlotDraft = null;
     bookingModalOpen = true;
@@ -1586,29 +1726,51 @@ function openSearchItem(type, id) {
     return;
   }
   if (type === "view") {
-    view = decodedId;
+    if (!canViewSection(decodedId)) denyAccess();
+    else view = decodedId;
     render();
     return;
   }
   if (type === "booking") {
+    const booking = state.bookings.find((item) => item.id === decodedId);
+    if (!canViewBooking(booking)) {
+      denyAccess();
+      render();
+      return;
+    }
     selectedBookingId = decodedId;
     view = "calendar";
     render();
     return;
   }
   if (type === "client") {
+    if (!canViewClient(decodedId)) {
+      denyAccess();
+      render();
+      return;
+    }
     selectedClientName = decodedId;
     view = "clients";
     render();
     return;
   }
   if (type === "employee") {
+    if (!canEditSettings()) {
+      denyAccess();
+      render();
+      return;
+    }
     settingsTab = "employees";
     view = "settings";
     render();
     return;
   }
   if (type === "service") {
+    if (!canEditSettings()) {
+      denyAccess();
+      render();
+      return;
+    }
     settingsTab = "services";
     view = "settings";
     render();
@@ -1633,7 +1795,7 @@ function studioTodayData() {
     expectedIncome,
     completedCount: completed.length,
     averageCheck: completed.length ? completedAmount / completed.length : 0,
-    employeePayoutAvailable: totalEmployeePayoutAvailable(),
+    employeePayoutAvailable: isManagerRole() ? totalEmployeePayoutAvailable() : employeePayoutStats(currentUser()?.id || "").availableToPay,
     studioBlocks,
     availability: currentStudioAvailability(today),
     cancelledAmount: bookings.filter((booking) => booking.status === "отменено").reduce((sum, booking) => sum + Number(booking.amount || 0), 0),
@@ -1646,7 +1808,7 @@ function studioAttentionItems() {
   const until = addDays(today, 7);
   const activeStatuses = ["заявка", "подтверждено", "в процессе"];
   const items = [];
-  state.bookings.forEach((booking) => {
+  accessibleBookings().forEach((booking) => {
     const active = activeStatuses.includes(booking.status);
     const addIssue = (type, text, priority) => items.push({ booking, type, text, priority, dateTime: `${booking.date} ${booking.time || "00:00"}` });
     if (booking.status === "заявка" && booking.date >= today && booking.date <= until) addIssue("Заявка", "Ожидает подтверждения", 1);
@@ -1663,7 +1825,7 @@ function renderTodaySummary(data) {
     ["Всего", data.bookings.length], ["Подтверждено", data.counts["подтверждено"]],
     ["В процессе", data.counts["в процессе"]], ["Завершено", data.counts["завершено"]],
     ["Отменено", data.counts["отменено"]], ["Заявок", data.counts["заявка"]],
-    ["Доход", money(data.actualIncome)], ["Ожидается", money(data.expectedIncome)]
+    ...(isManagerRole() ? [["Доход", money(data.actualIncome)], ["Ожидается", money(data.expectedIncome)]] : [])
   ];
   return `<div class="today-metrics">${metrics.map(([label, value]) => `<article><span>${label}</span><strong>${value}</strong></article>`).join("")}</div>`;
 }
@@ -1684,10 +1846,11 @@ function currentStudioAvailability(date = todayKey()) {
 function renderTodayAvailability(data) {
   const current = data.availability.current;
   const currentIsBlock = current && (state.studioBlocks || []).some((block) => block.id === current.id);
+  const canNameCurrent = currentIsBlock || canViewBooking(current);
   return `
     <section class="card section studio-availability-strip ${current ? "busy" : "free"}">
       <div><span>Студия сейчас</span><strong>${current ? "Занята" : "Свободна"}</strong></div>
-      <div><span>${current ? "До какого времени" : "Ближайшее окно"}</span><strong>${current ? `${formatMinutes(bookingEndMinutes(current))} · ${currentIsBlock ? current.title : current.client || current.service}` : data.availability.nextFree ? `${formatMinutes(data.availability.nextFree[0])}–${formatMinutes(data.availability.nextFree[1])}` : "окон нет"}</strong></div>
+      <div><span>${current ? "До какого времени" : "Ближайшее окно"}</span><strong>${current ? `${formatMinutes(bookingEndMinutes(current))} · ${canNameCurrent ? currentIsBlock ? current.title : current.client || current.service : "другая запись"}` : data.availability.nextFree ? `${formatMinutes(data.availability.nextFree[0])}–${formatMinutes(data.availability.nextFree[1])}` : "окон нет"}</strong></div>
       <div><span>Технических блоков сегодня</span><strong>${data.studioBlocks.length}</strong></div>
       <button class="btn secondary" type="button" data-view="calendar">Открыть календарь</button>
     </section>
@@ -1753,18 +1916,18 @@ function renderDashboard() {
         <div class="section-head"><h2>Требует внимания</h2><span class="select-chip">${attention.length}</span></div>
         ${renderAttentionList(attention)}
       </section>
-      <section class="card section studio-home-money">
+      ${isManagerRole() ? `<section class="card section studio-home-money">
         <h2>Деньги сегодня</h2>
         ${renderTodayMoney(data)}
-      </section>
+      </section>` : ""}
       <section class="card section studio-home-quick">
         <h2>Быстрые действия</h2>
         <div class="quick-actions">
-          <button class="quick-action" data-action="openBookingModal"><span>+</span>Новая запись</button>
+          ${canCreateBooking() ? '<button class="quick-action" data-action="openBookingModal"><span>+</span>Новая запись</button>' : ""}
           <button class="quick-action" data-view="calendar"><span>○</span>Открыть календарь</button>
-          <button class="quick-action" data-view="clients"><span>К</span>Добавить клиента</button>
-          <button class="quick-action" data-view="payments"><span>₽</span>Добавить платёж</button>
-          <button class="quick-action" data-view="reports"><span>↗</span>Открыть отчёты</button>
+          ${canViewSection("clients") ? '<button class="quick-action" data-view="clients"><span>К</span>Открыть клиентов</button>' : ""}
+          ${canViewSection("payments") ? '<button class="quick-action" data-view="payments"><span>₽</span>Добавить платёж</button>' : ""}
+          ${canViewSection("reports") ? '<button class="quick-action" data-view="reports"><span>↗</span>Открыть отчёты</button>' : ""}
         </div>
       </section>
     </div>
@@ -2108,6 +2271,7 @@ function bookingConflicts(booking, excludeId = booking.id) {
 }
 
 function calendarBookingMatches(booking) {
+  if (!canViewBooking(booking)) return false;
   if (calendarEmployeeFilter && bookingEmployeeId(booking) !== calendarEmployeeFilter) return false;
   if (calendarStatusFilter && booking.status !== calendarStatusFilter) return false;
   if (calendarServiceFilter.startsWith("group:") && booking.serviceCategoryId !== calendarServiceFilter.slice(6)) return false;
@@ -2116,15 +2280,16 @@ function calendarBookingMatches(booking) {
 }
 
 function calendarBookings() {
-  return state.bookings.filter(calendarBookingMatches);
+  return accessibleBookings().filter(calendarBookingMatches);
 }
 
 function renderCalendarFilters() {
+  const visibleEmployees = isManagerRole() ? state.users : [currentUser()].filter(Boolean);
   return `
     <div class="calendar-filters">
       <select id="calendarEmployeeFilter" aria-label="Сотрудник">
         <option value="">Все сотрудники</option>
-        ${state.users.map((user) => `<option value="${user.id}" ${calendarEmployeeFilter === user.id ? "selected" : ""}>${user.name}</option>`).join("")}
+        ${visibleEmployees.map((user) => `<option value="${user.id}" ${calendarEmployeeFilter === user.id ? "selected" : ""}>${user.name}</option>`).join("")}
       </select>
       <select id="calendarStatusFilter" aria-label="Статус">
         <option value="">Все статусы</option>
@@ -2192,8 +2357,7 @@ function renderCalendar() {
             <button type="button" class="${calendarMode === "week" ? "active" : ""}" data-calendar-mode="week">Неделя</button>
             <button type="button" class="${calendarMode === "day" ? "active" : ""}" data-calendar-mode="day">День</button>
           </div>
-          <button class="btn" data-action="openBookingModal">Добавить запись</button>
-          <button class="btn secondary" data-action="openStudioBlockModal">Заблокировать время</button>
+          ${canCreateBooking() ? '<button class="btn" data-action="openBookingModal">Добавить запись</button><button class="btn secondary" data-action="openStudioBlockModal">Заблокировать время</button>' : ""}
         </div>
       </div>
       ${renderCalendarFilters()}
@@ -2305,16 +2469,16 @@ function renderBookingDetailsPanel() {
         ${renderDetailRow("Telegram", booking.telegram || "не указан")}
         ${renderDetailRow("Сумма", money(booking.amount))}
         ${renderDetailRow("Сотрудник", booking.employee || "не указан")}
-        ${renderDetailRow("Платёж", paymentForBooking(booking.id) ? `<button class="link-button inline-link" data-open-payment="${paymentForBooking(booking.id).id}">${money(paymentForBooking(booking.id).amount)}</button>` : "ещё не создан")}
+        ${canViewPayment() ? renderDetailRow("Платёж", paymentForBooking(booking.id) ? `<button class="link-button inline-link" data-open-payment="${paymentForBooking(booking.id).id}">${money(paymentForBooking(booking.id).amount)}</button>` : "ещё не создан") : ""}
         ${renderDetailRow("Комментарий", booking.comment || "нет")}
       </div>
       <div class="booking-side-actions">
-        <button class="btn secondary" data-side-edit-booking="${booking.id}">Редактировать</button>
-        ${booking.status === "заявка" ? `<button class="btn" data-side-status-booking="${booking.id}" data-status="подтверждено">Подтвердить</button>` : ""}
-        ${booking.status === "подтверждено" ? `<button class="btn" data-side-status-booking="${booking.id}" data-status="в процессе">В процесс</button>` : ""}
-        ${booking.status === "в процессе" ? `<button class="btn" data-side-status-booking="${booking.id}" data-status="завершено">Завершить</button>` : ""}
-        ${!["завершено", "отменено"].includes(booking.status) ? `<button class="btn danger" data-side-status-booking="${booking.id}" data-status="отменено">Отменить</button>` : ""}
-        <button class="btn danger" data-side-delete-booking="${booking.id}">Удалить запись</button>
+        ${canEditBooking(booking) ? `<button class="btn secondary" data-side-edit-booking="${booking.id}">Редактировать</button>` : ""}
+        ${canChangeBookingStatus(booking) && booking.status === "заявка" ? `<button class="btn" data-side-status-booking="${booking.id}" data-status="подтверждено">Подтвердить</button>` : ""}
+        ${canChangeBookingStatus(booking) && booking.status === "подтверждено" ? `<button class="btn" data-side-status-booking="${booking.id}" data-status="в процессе">В процесс</button>` : ""}
+        ${canChangeBookingStatus(booking) && booking.status === "в процессе" ? `<button class="btn" data-side-status-booking="${booking.id}" data-status="завершено">Завершить</button>` : ""}
+        ${isManagerRole() && !["завершено", "отменено"].includes(booking.status) ? `<button class="btn danger" data-side-status-booking="${booking.id}" data-status="отменено">Отменить</button>` : ""}
+        ${canEditBooking(booking) ? `<button class="btn danger" data-side-delete-booking="${booking.id}">Удалить запись</button>` : ""}
       </div>
       <div class="status-history">
         <h3>История статусов</h3>
@@ -2338,8 +2502,10 @@ function renderStudioBlockDetailsPanel(block) {
         ${renderDetailRow("Занятость", conflicts.length ? `Конфликт студии · ${conflicts.length}` : "Студия заблокирована")}
       </div>
       <div class="booking-side-actions">
+        ${isManagerRole() ? `
         <button class="btn secondary" type="button" data-edit-studio-block="${block.id}">Редактировать</button>
         <button class="btn danger" type="button" data-delete-studio-block="${block.id}">Удалить блок</button>
+        ` : '<span class="muted">Технический блок доступен только для просмотра.</span>'}
       </div>
     </aside>
   `;
@@ -2474,6 +2640,7 @@ function updateBookingConflictWarning() {
 function describeStudioConflict(conflict) {
   const item = conflict.item;
   if (conflict.kind === "block") return `Конфликт с блоком: ${item.title || item.type}, ${eventTimeRange(item)}.`;
+  if (!canViewBooking(item)) return `Конфликт: ${eventTimeRange(item)}, другая запись студии.`;
   return `Конфликт: ${eventTimeRange(item)}, ${item.client || "Без имени"}, ${item.service || "услуга не указана"}, ${statusTitle(item.status)}.`;
 }
 
@@ -2537,7 +2704,7 @@ function updateStudioBlockConflictWarning() {
 
 function filteredBookings() {
   const search = bookingSearchFilter.trim().toLowerCase();
-  return [...state.bookings]
+  return [...accessibleBookings()]
     .sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`))
     .filter((booking) => !bookingDateFilter || booking.date === bookingDateFilter)
     .filter((booking) => !bookingStatusFilter || booking.status === bookingStatusFilter)
@@ -2549,7 +2716,8 @@ function filteredBookings() {
 function renderBookings() {
   const bookings = filteredBookings();
   const services = [...new Map([...catalogServices().map((service) => [service.id, service]), ...state.bookings.filter((booking) => booking.service).map((booking) => [booking.serviceId || booking.service, { id: booking.serviceId || booking.service, name: booking.service }])]).values()];
-  const employees = [...new Map([...state.users.map((user) => [user.id || user.name, user]), ...state.bookings.filter((booking) => booking.employee).map((booking) => [booking.employeeId || booking.employee, { id: booking.employeeId || booking.employee, name: booking.employee }])]).values()];
+  const employeeSource = isManagerRole() ? state.users : [currentUser()].filter(Boolean);
+  const employees = [...new Map([...employeeSource.map((user) => [user.id || user.name, user]), ...bookings.filter((booking) => booking.employee).map((booking) => [booking.employeeId || booking.employee, { id: booking.employeeId || booking.employee, name: booking.employee }])]).values()];
 
   return `
     <div class="grid two-col bookings-page">
@@ -2571,10 +2739,10 @@ function renderBookings() {
           </select>
         </div>
         <div class="booking-list">
-          ${bookings.map(renderBookingCard).join("") || renderEmptyState("Пока нет записей", "Создай первую запись из календаря или кнопкой ниже.", "Создать первую запись", 'type="button" data-action="openBookingModal"')}
+          ${bookings.map(renderBookingCard).join("") || (canCreateBooking() ? renderEmptyState("Пока нет записей", "Создай первую запись из календаря или кнопкой ниже.", "Создать первую запись", 'type="button" data-action="openBookingModal"') : renderEmptyState("Назначенных записей нет", "Здесь появятся записи, назначенные на вас."))}
         </div>
       </section>
-      ${renderBookingForm()}
+      ${canCreateBooking() ? renderBookingForm() : ""}
     </div>
   `;
 }
@@ -2582,10 +2750,11 @@ function renderBookings() {
 function renderBookingCard(booking) {
   const employee = employeeByName(booking.employee);
   const color = employee?.color || "#ff6633";
-  const canConfirm = booking.status === "заявка";
-  const canStart = ["заявка", "подтверждено"].includes(booking.status);
-  const canComplete = booking.status !== "завершено" && booking.status !== "отменено";
-  const canCancel = booking.status !== "завершено" && booking.status !== "отменено";
+  const canChangeStatus = canChangeBookingStatus(booking);
+  const canConfirm = canChangeStatus && booking.status === "заявка";
+  const canStart = canChangeStatus && ["заявка", "подтверждено"].includes(booking.status);
+  const canComplete = canChangeStatus && booking.status !== "завершено" && booking.status !== "отменено";
+  const canCancel = isManagerRole() && booking.status !== "завершено" && booking.status !== "отменено";
   return `
     <article class="booking-card ${selectedBookingId === booking.id ? "selected" : ""}" data-open-booking="${booking.id}" style="--employee-color:${color}">
       <div class="booking-card-head">
@@ -2610,8 +2779,7 @@ function renderBookingCard(booking) {
         ${canStart ? `<button class="btn secondary" data-booking-status="${booking.id}" data-status="в процессе">Начать</button>` : ""}
         ${canComplete ? `<button class="btn" data-booking-status="${booking.id}" data-status="завершено">Завершить</button>` : ""}
         ${canCancel ? `<button class="btn danger" data-booking-status="${booking.id}" data-status="отменено">Отменить</button>` : ""}
-        <button class="icon-btn" title="Редактировать" data-edit-booking="${booking.id}">✎</button>
-        ${isAdmin() ? `<button class="icon-btn" title="Удалить" data-delete-booking="${booking.id}">×</button>` : ""}
+        ${canEditBooking(booking) ? `<button class="icon-btn" title="Редактировать" data-edit-booking="${booking.id}">✎</button><button class="icon-btn" title="Удалить" data-delete-booking="${booking.id}">×</button>` : ""}
       </div>
     </article>
   `;
@@ -2844,15 +3012,16 @@ function filteredPayments() {
 
 function renderClients() {
   const clientNames = [...new Set([
-    ...state.clients.map((item) => item.name),
-    ...state.payments.map((item) => item.client),
-    ...state.bookings.map((item) => item.client)
+    ...state.clients.filter(canViewClient).map((item) => item.name),
+    ...(isManagerRole() ? state.payments : []).map((item) => item.client),
+    ...accessibleBookings().map((item) => item.client)
   ].map((name) => String(name || "").trim()).filter(Boolean))];
   const clients = clientNames
     .map((name) => [name, clientStats(name).total])
     .sort((a, b) => sortClients(a[0], b[0], a[1], b[1]))
     .filter(([name]) => !clientFilter || name.toLowerCase().includes(clientFilter.toLowerCase()));
-  if (selectedClientName) return renderClientDetail(selectedClientName);
+  if (selectedClientName && canViewClient(selectedClientName)) return renderClientDetail(selectedClientName);
+  if (selectedClientName) selectedClientName = null;
 
   return `
     <section class="card section">
@@ -2868,7 +3037,7 @@ function renderClients() {
       <div class="client-card-grid">
         ${clients
           .map(([name, total]) => renderClientCard(name, total))
-          .join("") || renderEmptyState("Пока нет клиентов", "Клиенты появятся автоматически из записей и платежей.", "Создать запись", 'type="button" data-action="openBookingModal"')}
+          .join("") || (canCreateBooking() ? renderEmptyState("Пока нет клиентов", "Клиенты появятся автоматически из записей и платежей.", "Создать запись", 'type="button" data-action="openBookingModal"') : renderEmptyState("Связанных клиентов нет", "Здесь появятся клиенты из назначенных на вас записей."))}
       </div>
     </section>
   `;
@@ -3066,32 +3235,32 @@ function renderFinance() {
 }
 
 function renderPayouts() {
-  const employeeStats = allEmployeePayoutStats();
-  const warnings = financialWarnings();
-  const payoutHistory = [...(state.payouts || [])].sort((a, b) => payoutDateValue(b).localeCompare(payoutDateValue(a)));
+  const employeeStats = isManagerRole() ? allEmployeePayoutStats() : [employeePayoutStats(currentUser()?.id || "")].filter((stats) => stats.employee);
+  const warnings = isManagerRole() ? financialWarnings() : [];
+  const payoutHistory = [...(state.payouts || [])].filter(canViewPayout).sort((a, b) => payoutDateValue(b).localeCompare(payoutDateValue(a)));
   const filteredHistory = payoutHistory.filter(payoutMatchesFilters);
   const summary = payoutSummary(employeeStats, warnings);
   const hasCompletedBookings = employeeStats.some((stats) => stats.completedBookingsCount > 0);
   return `
     <section class="payouts-page">
       <section class="card section payout-summary-section">
-        <div class="section-head"><div><h2>Сводка выплат</h2><p class="muted">Текущее состояние расчётов с командой.</p></div><span class="select-chip">${summary.payableEmployees} к выплате</span></div>
+        <div class="section-head"><div><h2>${isManagerRole() ? "Сводка выплат" : "Мои выплаты"}</h2><p class="muted">${isManagerRole() ? "Текущее состояние расчётов с командой." : "Начисления по вашим завершённым записям."}</p></div><span class="select-chip">${summary.payableEmployees} к выплате</span></div>
         ${renderPayoutSummary(summary)}
       </section>
       <section class="card section">
         <div class="section-head">
           <div><h2>Расчёты с сотрудниками</h2><p class="muted">Заработок считается по завершённым записям.</p></div>
-          <button class="btn payout-button" type="button" data-action="openPayout">Новая выплата</button>
+          ${canManagePayouts() ? '<button class="btn payout-button" type="button" data-action="openPayout">Новая выплата</button>' : ""}
         </div>
         ${employeeStats.length && !hasCompletedBookings ? '<div class="payout-accrual-empty"><strong>Пока нет завершённых услуг — начислений сотрудникам нет.</strong></div>' : ""}
         <div class="employee-payout-grid">
           ${employeeStats.map((stats) => renderEmployeePayoutCard(stats, warnings)).join("") || renderEmptyState("Нет сотрудников", "Добавьте сотрудников в настройках, чтобы считать выплаты.")}
         </div>
       </section>
-      <section class="card section">
+      ${isManagerRole() ? `<section class="card section">
         <div class="section-head"><h2>Финансовые предупреждения</h2><span class="select-chip">${warnings.length}</span></div>
         ${renderFinancialWarnings(warnings)}
-      </section>
+      </section>` : ""}
       <section class="card section">
         <div class="section-head"><h2>История выплат</h2><span class="muted">Все статусы сохранены</span></div>
         ${renderPayoutFilters()}
@@ -3115,7 +3284,7 @@ function renderPayoutSummary(summary) {
 }
 
 function renderPayoutFilters() {
-  const employees = state.users || [];
+  const employees = isManagerRole() ? state.users || [] : [currentUser()].filter(Boolean);
   return `
     <div class="payout-filters">
       <label><span>Сотрудник</span><select id="payoutEmployeeFilter"><option value="">Все сотрудники</option>${employees.map((employee) => `<option value="${employee.id}" ${payoutEmployeeFilter === employee.id ? "selected" : ""}>${employee.name}</option>`).join("")}</select></label>
@@ -3153,7 +3322,7 @@ function renderEmployeePayoutCard(stats, warnings = []) {
       ${employeeWarnings.length ? `<p class="payout-warning">${employeeWarnings.length} ${plural(employeeWarnings.length, "предупреждение", "предупреждения", "предупреждений")} по расчётам.</p>` : ""}
       ${!completedBookingsCount ? `<p class="muted payout-card-empty">Нет завершённых записей.</p>` : ""}
       <div class="employee-payout-actions">
-        <button class="btn" type="button" data-open-employee-payout="${employee.id}" ${availableToPay <= 0 || overpaid > 0 ? "disabled" : ""}>Выплатить</button>
+        ${canManagePayouts() ? `<button class="btn" type="button" data-open-employee-payout="${employee.id}" ${availableToPay <= 0 || overpaid > 0 ? "disabled" : ""}>Выплатить</button>` : ""}
         <button class="btn secondary" type="button" data-payout-filter-employee="${employee.id}">История</button>
         <button class="btn secondary" type="button" data-open-employee-bookings="${employee.id}">Записи</button>
       </div>
@@ -3192,7 +3361,7 @@ function renderPayoutRows(payouts, totalCount = payouts.length) {
         const problems = payoutDataProblems(payout);
         const date = payoutDateValue(payout);
         const employee = (state.users || []).find((item) => item.id === payout.employeeId);
-        const canRepeat = employee && employeePayoutStats(employee.id).availableToPay > 0 && employeePayoutStats(employee.id).overpaid <= 0;
+        const canRepeat = canManagePayouts() && employee && employeePayoutStats(employee.id).availableToPay > 0 && employeePayoutStats(employee.id).overpaid <= 0;
         return `<div class="list-item payout-list-item ${problems.length ? "has-warning" : ""} ${highlightedPayoutId === payout.id ? "selected" : ""}" data-payout-row="${payout.id}">
           <span>${formatDate(date.slice(0, 10))} · ${payout.employeeName || payout.recipient || "Получатель не указан"}<br>
             <span class="muted payout-comment" title="${payout.comment || ""}">${payout.method || "способ не указан"}${payout.comment ? ` · ${payout.comment}` : ""}${payout.createdBy ? ` · создал ${payout.createdBy}` : ""}</span>
@@ -3200,8 +3369,8 @@ function renderPayoutRows(payouts, totalCount = payouts.length) {
             ${problems.length ? `<br><small class="payout-row-warning">Проблема: ${problems.join(", ")}</small>` : ""}
             <span class="payout-row-actions">
               ${canRepeat ? `<button class="link-button" type="button" data-repeat-payout="${payout.id}">Повторить выплату</button>` : ""}
-              ${employee ? `<button class="link-button" type="button" data-payout-filter-employee="${employee.id}">Фильтр по сотруднику</button><button class="link-button" type="button" data-open-employee-settings="${employee.id}">Открыть сотрудника</button>` : ""}
-              ${payout.status === "Запланировано" ? `<button class="link-button danger-text" type="button" data-cancel-payout="${payout.id}">Отменить выплату</button>` : ""}
+              ${employee ? `<button class="link-button" type="button" data-payout-filter-employee="${employee.id}">Фильтр по сотруднику</button>${canEditSettings() ? `<button class="link-button" type="button" data-open-employee-settings="${employee.id}">Открыть сотрудника</button>` : ""}` : ""}
+              ${canManagePayouts() && payout.status === "Запланировано" ? `<button class="link-button danger-text" type="button" data-cancel-payout="${payout.id}">Отменить выплату</button>` : ""}
             </span>
           </span>
           <span class="payout-row-meta"><em class="status-pill">${payout.status || "Выплачено"}</em><strong>${money(payout.amount)}</strong></span>
@@ -3443,18 +3612,21 @@ function renderReports() {
 }
 
 function renderSettings() {
-  if (!isAdmin()) return "";
+  if (!canEditSettings()) return "";
+  const tabs = [
+    ["services", "Каталог услуг"],
+    ["employees", "Сотрудники"],
+    ["payouts", "Выплаты"],
+    ...(isOwner() ? [["budget", "Бюджет / копилки"]] : []),
+    ["general", "Общие настройки"],
+    ["profile", "Профиль"],
+    ["access", "Текущий пользователь"]
+  ];
+  if (!tabs.some(([key]) => key === settingsTab)) settingsTab = "services";
   return `
     <section class="card section settings-shell">
       <div class="settings-tabs">
-        ${[
-          ["services", "Каталог услуг"],
-          ["employees", "Сотрудники"],
-          ["payouts", "Выплаты"],
-          ["budget", "Бюджет / копилки"],
-          ["general", "Общие настройки"],
-          ["profile", "Профиль"]
-        ].map(([key, label]) => `<button class="${settingsTab === key ? "active" : ""}" data-settings-tab="${key}">${label}</button>`).join("")}
+        ${tabs.map(([key, label]) => `<button class="${settingsTab === key ? "active" : ""}" data-settings-tab="${key}">${label}</button>`).join("")}
       </div>
       ${settingsTab === "services" ? renderServiceSettings() : ""}
       ${settingsTab === "employees" ? renderEmployeeSettings() : ""}
@@ -3462,6 +3634,7 @@ function renderSettings() {
       ${settingsTab === "budget" ? renderSettingsPlaceholder("Бюджет / копилки", "Базовые правила копилок сохранены в текущей логике бюджета. Здесь заложена отдельная вкладка для дальнейшей настройки.") : ""}
       ${settingsTab === "general" ? renderSettingsPlaceholder("Общие настройки", "Общие параметры CRM: профиль студии, уведомления и рабочее время можно будет развивать в этом разделе.") : ""}
       ${settingsTab === "profile" ? renderProfileSettings() : ""}
+      ${settingsTab === "access" ? renderAccessSettings() : ""}
     </section>
   `;
 }
@@ -3472,6 +3645,23 @@ function renderSettingsPlaceholder(title, text) {
       <section>
         <h2>${title}</h2>
         <p class="muted">${text}</p>
+      </section>
+    </div>
+  `;
+}
+
+function renderAccessSettings() {
+  const owner = state.users.find((user) => user.role === "owner") || state.users[0];
+  return `
+    <div class="settings-grid single">
+      <section class="access-test-panel">
+        <div class="section-head"><div><h2>Текущий пользователь</h2><p class="muted">Локальный тест ролей. Это не настоящая авторизация.</p></div><span class="status-pill">${roleLabel()}</span></div>
+        <p class="access-honesty">Роли в этой версии ограничивают интерфейс локально. Для настоящей защиты нужны серверная авторизация и база данных.</p>
+        <form id="currentUserForm" class="form-grid">
+          <div class="field full"><label>Режим просмотра</label><select name="userId">${state.users.map((user) => `<option value="${user.id}" ${user.id === currentUser().id ? "selected" : ""}>${user.name} · ${roleLabel(user.role)}</option>`).join("")}</select></div>
+          <button class="btn" type="submit">Переключить пользователя</button>
+          ${!isOwner() && owner ? '<button class="btn secondary" type="button" data-action="returnOwner">Вернуться в режим владельца</button>' : ""}
+        </form>
       </section>
     </div>
   `;
@@ -3548,7 +3738,7 @@ function renderEmployeeSettings() {
         <form id="userForm" class="form-grid">
           <div class="field"><label>Имя</label><input name="name" required /></div>
           <div class="field"><label>Должность</label><input name="position" value="Звукорежиссёр" /></div>
-          <div class="field"><label>Роль</label><select name="role">${employeeRoles.map((role) => `<option>${role}</option>`).join("")}</select></div>
+          <div class="field"><label>Доступ</label><select name="role">${accessRoles.map((role) => `<option value="${role.id}">${role.label}</option>`).join("")}</select></div>
           <div class="field"><label>Процент</label><input name="percent" type="number" min="0" max="100" step="1" value="0" /></div>
           <div class="field"><label>Фикс. ставка</label><input name="fixedRate" type="number" min="0" step="1" value="0" /></div>
           <div class="field"><label>Цвет календаря</label><input name="color" type="color" value="#ff6633" /></div>
@@ -3588,7 +3778,7 @@ function renderEmployeeCard(user) {
         <div class="field"><label>Цвет</label><input name="color" type="color" value="${user.color || "#ff6633"}" /></div>
         <div class="field"><label>Телефон</label><input name="phone" value="${user.phone || ""}" /></div>
         <div class="field"><label>Telegram</label><input name="telegram" value="${user.telegram || ""}" /></div>
-        <div class="field"><label>Доступ</label><select name="role"><option value="staff" ${user.role !== "admin" ? "selected" : ""}>Сотрудник</option><option value="admin" ${user.role === "admin" ? "selected" : ""}>Админ</option></select></div>
+        <div class="field"><label>Доступ</label><select name="role">${accessRoles.map((role) => `<option value="${role.id}" ${user.role === role.id ? "selected" : ""}>${role.label}</option>`).join("")}</select></div>
         <label class="check-row"><input name="active" type="checkbox" ${user.active !== false ? "checked" : ""} /> активен</label>
       </div>
       <div class="actions">
@@ -3607,7 +3797,7 @@ function renderProfileSettings() {
         <p class="muted">Отображаемое имя администратора во всём интерфейсе: <strong>AE XL</strong>.</p>
         <div class="list">
           <div class="list-item"><span>Текущий пользователь</span><strong>${currentUser().name}</strong></div>
-          <div class="list-item"><span>Роль</span><strong>${isAdmin() ? "администратор" : "сотрудник"}</strong></div>
+          <div class="list-item"><span>Роль</span><strong>${roleLabel()}</strong></div>
         </div>
       </section>
     </div>
@@ -3806,8 +3996,9 @@ function deleteBookingSafely(bookingId) {
 }
 
 function clientStats(name) {
-  const payments = state.payments.filter((item) => item.client === name);
-  const bookings = state.bookings.filter((item) => item.client === name);
+  const bookings = state.bookings.filter((item) => item.client === name && canViewBooking(item));
+  const bookingIds = new Set(bookings.map((booking) => booking.id));
+  const payments = state.payments.filter((item) => item.client === name && (isManagerRole() || (item.bookingId && bookingIds.has(item.bookingId))));
   const completedBookings = bookings.filter((item) => item.status === "завершено");
   const standalonePayments = payments.filter((payment) => !payment.bookingId);
   const visits = completedBookings.length + standalonePayments.length;
@@ -3828,7 +4019,11 @@ function clientStats(name) {
 function bindCommonEvents() {
   document.querySelectorAll("[data-view]").forEach((button) => {
     button.addEventListener("click", () => {
-      view = button.dataset.view;
+      if (!canViewSection(button.dataset.view)) denyAccess();
+      else {
+        view = button.dataset.view;
+        accessNotice = "";
+      }
       editingPaymentId = null;
       editingBookingId = null;
       bookingModalOpen = false;
@@ -3842,6 +4037,11 @@ function bindCommonEvents() {
 
   document.querySelectorAll("[data-action='openBookingModal']").forEach((button) => {
     button.addEventListener("click", () => {
+      if (!canCreateBooking()) {
+        denyAccess();
+        render();
+        return;
+      }
       editingBookingId = null;
       bookingSlotDraft = null;
       studioBlockModalOpen = false;
@@ -3906,6 +4106,20 @@ function bindCommonEvents() {
       saveState();
       render();
     });
+  });
+
+  document.querySelectorAll("[data-action='returnOwner']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const owner = state.users.find((user) => user.role === "owner") || state.users.find((user) => user.name === "AE XL") || state.users[0];
+      if (!owner) return;
+      switchLocalUser(owner.id);
+      render();
+    });
+  });
+
+  document.querySelector("[data-action='closeAccessNotice']")?.addEventListener("click", () => {
+    accessNotice = "";
+    render();
   });
 }
 
@@ -3974,6 +4188,11 @@ function bindViewEvents() {
   });
 
   document.querySelector("[data-action='openStudioBlockModal']")?.addEventListener("click", () => {
+    if (!isManagerRole()) {
+      denyAccess();
+      render();
+      return;
+    }
     editingStudioBlockId = null;
     studioBlockDraft = { date: calendarDate, time: "12:00", duration: "1 час", type: "Тех. блок" };
     studioBlockModalOpen = true;
@@ -3982,6 +4201,11 @@ function bindViewEvents() {
 
   document.querySelectorAll("[data-calendar-slot]").forEach((slot) => {
     slot.addEventListener("click", () => {
+      if (!canCreateBooking()) {
+        accessNotice = "Создание записей доступно владельцу и администратору.";
+        render();
+        return;
+      }
       const [date, time] = slot.dataset.calendarSlot.split("|");
       const employee = state.users.find((user) => user.id === calendarEmployeeFilter);
       editingBookingId = null;
@@ -4019,6 +4243,7 @@ function bindViewEvents() {
 
   document.querySelectorAll("[data-edit-studio-block]").forEach((button) => {
     button.addEventListener("click", () => {
+      if (!isManagerRole()) return;
       editingStudioBlockId = button.dataset.editStudioBlock;
       studioBlockDraft = null;
       studioBlockModalOpen = true;
@@ -4028,6 +4253,7 @@ function bindViewEvents() {
 
   document.querySelectorAll("[data-delete-studio-block]").forEach((button) => {
     button.addEventListener("click", () => {
+      if (!isManagerRole()) return;
       if (!confirm("Удалить технический блок?")) return;
       state.studioBlocks = (state.studioBlocks || []).filter((block) => block.id !== button.dataset.deleteStudioBlock);
       selectedStudioBlockId = null;
@@ -4069,6 +4295,8 @@ function bindViewEvents() {
 
   document.querySelectorAll("[data-side-edit-booking]").forEach((button) => {
     button.addEventListener("click", () => {
+      const booking = state.bookings.find((item) => item.id === button.dataset.sideEditBooking);
+      if (!canEditBooking(booking)) return;
       editingBookingId = button.dataset.sideEditBooking;
       bookingModalOpen = true;
       render();
@@ -4077,6 +4305,8 @@ function bindViewEvents() {
 
   document.querySelectorAll("[data-side-status-booking]").forEach((button) => {
     button.addEventListener("click", () => {
+      const booking = state.bookings.find((item) => item.id === button.dataset.sideStatusBooking);
+      if (!canChangeBookingStatus(booking)) return;
       updateBookingStatus(button.dataset.sideStatusBooking, button.dataset.status);
       saveState();
       render();
@@ -4085,6 +4315,8 @@ function bindViewEvents() {
 
   document.querySelectorAll("[data-side-delete-booking]").forEach((button) => {
     button.addEventListener("click", () => {
+      const booking = state.bookings.find((item) => item.id === button.dataset.sideDeleteBooking);
+      if (!canEditBooking(booking)) return;
       if (!deleteBookingSafely(button.dataset.sideDeleteBooking)) return;
       saveState();
       render();
@@ -4128,6 +4360,8 @@ function bindViewEvents() {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.target));
     const booking = bookingFromForm(data);
+    const existingBooking = state.bookings.find((item) => item.id === data.id);
+    if (existingBooking ? !canEditBooking(existingBooking) : !canCreateBooking()) return;
     const studioConflicts = studioConflictsForBooking(booking, booking.id);
     if (studioConflicts.length && !confirm("В это время студия уже занята. Сохранить запись с конфликтом?")) return;
     const previousStatus = state.bookings.find((item) => item.id === booking.id)?.status;
@@ -4218,6 +4452,12 @@ function bindViewEvents() {
       settingsTab = button.dataset.settingsTab;
       render();
     });
+  });
+
+  document.querySelector("#currentUserForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(event.target));
+    if (switchLocalUser(data.userId)) render();
   });
 
   document.querySelector("#serviceGroupForm")?.addEventListener("submit", (event) => {
@@ -4329,6 +4569,7 @@ function bindViewEvents() {
   });
 
   document.querySelector("[data-action='openPayout']")?.addEventListener("click", () => {
+    if (!canManagePayouts()) return;
     payoutEmployeeIdDraft = "";
     payoutModalOpen = true;
     render();
@@ -4336,6 +4577,7 @@ function bindViewEvents() {
 
   document.querySelectorAll("[data-open-employee-payout]").forEach((button) => {
     button.addEventListener("click", () => {
+      if (!canManagePayouts()) return;
       payoutEmployeeIdDraft = button.dataset.openEmployeePayout;
       payoutModalOpen = true;
       render();
@@ -4344,6 +4586,7 @@ function bindViewEvents() {
 
   document.querySelectorAll("[data-repeat-payout]").forEach((button) => {
     button.addEventListener("click", () => {
+      if (!canManagePayouts()) return;
       const payout = (state.payouts || []).find((item) => item.id === button.dataset.repeatPayout);
       const stats = employeePayoutStats(payout?.employeeId || "");
       if (!payout || !stats.employee || stats.availableToPay <= 0 || stats.overpaid > 0) return;
@@ -4372,6 +4615,11 @@ function bindViewEvents() {
 
   document.querySelectorAll("[data-open-employee-settings]").forEach((button) => {
     button.addEventListener("click", () => {
+      if (!canEditSettings()) {
+        denyAccess();
+        render();
+        return;
+      }
       settingsTab = "employees";
       view = "settings";
       render();
@@ -4439,6 +4687,7 @@ function bindViewEvents() {
 
   document.querySelectorAll("[data-confirm-payout]").forEach((button) => {
     button.addEventListener("click", () => {
+      if (!canManagePayouts()) return;
       state.payouts = state.payouts.map((payout) =>
         payout.id === button.dataset.confirmPayout
           ? { ...payout, status: "Выплачено", paidAt: localDateTimeValue() }
@@ -4451,6 +4700,7 @@ function bindViewEvents() {
 
   document.querySelectorAll("[data-cancel-payout]").forEach((button) => {
     button.addEventListener("click", () => {
+      if (!canManagePayouts()) return;
       state.payouts = state.payouts.map((payout) => payout.id === button.dataset.cancelPayout ? { ...payout, status: "Отменено" } : payout);
       saveState();
       render();
@@ -4459,6 +4709,7 @@ function bindViewEvents() {
 
   document.querySelector("#payoutForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
+    if (!canManagePayouts()) return;
     const data = Object.fromEntries(new FormData(event.target));
     const validation = validateEmployeePayout(data.employeeId, data.amount);
     if (!validation.ok) {
@@ -4600,6 +4851,8 @@ function bindViewEvents() {
 
   document.querySelectorAll("[data-edit-booking]").forEach((button) => {
     button.addEventListener("click", () => {
+      const booking = state.bookings.find((item) => item.id === button.dataset.editBooking);
+      if (!canEditBooking(booking)) return;
       editingBookingId = button.dataset.editBooking;
       bookingModalOpen = true;
       render();
@@ -4610,6 +4863,11 @@ function bindViewEvents() {
     card.addEventListener("click", (event) => {
       if (card.classList.contains("booking-card") && event.target.closest("button")) return;
       const booking = state.bookings.find((item) => item.id === card.dataset.openBooking);
+      if (!canViewBooking(booking)) {
+        denyAccess();
+        render();
+        return;
+      }
       selectedBookingId = card.dataset.openBooking;
       selectedStudioBlockId = null;
       if (booking) {
@@ -4631,6 +4889,11 @@ function bindViewEvents() {
 
   document.querySelectorAll("[data-open-payment]").forEach((button) => {
     button.addEventListener("click", () => {
+      if (!canViewPayment()) {
+        denyAccess();
+        render();
+        return;
+      }
       editingPaymentId = button.dataset.openPayment;
       view = "payments";
       render();
@@ -4641,6 +4904,8 @@ function bindViewEvents() {
     button.addEventListener("click", () => {
       const bookingId = button.dataset.bookingStatus;
       const status = button.dataset.status;
+      const booking = state.bookings.find((item) => item.id === bookingId);
+      if (!canChangeBookingStatus(booking)) return;
       updateBookingStatus(bookingId, status);
       saveState();
       render();
@@ -4649,6 +4914,8 @@ function bindViewEvents() {
 
   document.querySelectorAll("[data-delete-booking]").forEach((button) => {
     button.addEventListener("click", () => {
+      const booking = state.bookings.find((item) => item.id === button.dataset.deleteBooking);
+      if (!canEditBooking(booking)) return;
       if (!deleteBookingSafely(button.dataset.deleteBooking)) return;
       saveState();
       render();
@@ -4676,8 +4943,8 @@ function bindViewEvents() {
       name: data.name.trim(),
       login: data.login.trim(),
       password: data.password,
-      role: data.role === "Администратор" || data.role === "Владелец" ? "admin" : "staff",
-      position: data.position || data.role || "Другое",
+      role: accessRoles.some((role) => role.id === data.role) ? data.role : "staff",
+      position: data.position || "Другое",
       percent: Number(data.percent || 0),
       fixedRate: Number(data.fixedRate || 0),
       color: data.color || "#ff6633",
@@ -4693,6 +4960,11 @@ function bindViewEvents() {
     button.addEventListener("click", () => {
       const row = document.querySelector(`[data-user-row="${button.dataset.saveUser}"]`);
       const data = Object.fromEntries(new FormData(row));
+      const previous = state.users.find((user) => user.id === button.dataset.saveUser);
+      if (previous?.role === "owner" && data.role !== "owner" && !state.users.some((user) => user.id !== previous.id && user.role === "owner")) {
+        alert("Нельзя убрать единственного владельца. Сначала назначьте другого владельца.");
+        return;
+      }
       state.users = state.users.map((user) =>
         user.id === button.dataset.saveUser
           ? {
@@ -4718,6 +4990,10 @@ function bindViewEvents() {
     button.addEventListener("click", () => {
       const user = state.users.find((item) => item.id === button.dataset.removeUser);
       if (!user) return;
+      if (user.role === "owner") {
+        alert("Владельца нельзя удалить. Сначала назначьте другого владельца.");
+        return;
+      }
       if (state.bookings.some((booking) => booking.employeeId === user.id || booking.employee === user.name) || state.payments.some((payment) => [payment.employee, payment.soundEngineer, payment.performer].includes(user.name))) {
         alert("Сотрудник уже используется в записях или платежах. Его можно отключить, но не удалить.");
         return;
@@ -4733,6 +5009,11 @@ document.addEventListener("keydown", (event) => {
   const key = event.key.toLowerCase();
   if ((event.ctrlKey || event.metaKey) && key === "n") {
     event.preventDefault();
+    if (!canCreateBooking()) {
+      denyAccess();
+      render();
+      return;
+    }
     editingBookingId = null;
     bookingSlotDraft = null;
     bookingModalOpen = true;

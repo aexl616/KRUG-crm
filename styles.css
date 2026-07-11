@@ -174,6 +174,26 @@ textarea:disabled,
   background: linear-gradient(145deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
 }
 
+.restricted-access-badge {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 7px;
+  padding: 3px 7px;
+  border: 1px solid rgba(255, 193, 82, 0.35);
+  border-radius: 999px;
+  color: #ffd58a;
+  background: rgba(255, 174, 51, 0.08);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.owner-return {
+  color: var(--accent);
+  border: 1px solid rgba(255, 102, 51, 0.28);
+  background: rgba(255, 102, 51, 0.07);
+}
+
 .logout {
   margin-top: 10px;
   width: 100%;
@@ -272,6 +292,18 @@ textarea:disabled,
   background: rgba(255, 255, 255, 0.04);
 }
 
+.topbar-profile strong {
+  display: grid;
+  gap: 1px;
+  text-align: left;
+}
+
+.topbar-profile small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
 .topbar-icon {
   position: relative;
   width: 42px;
@@ -300,6 +332,11 @@ textarea:disabled,
   border-color: rgba(255, 102, 51, 0.45);
   color: var(--accent);
   background: rgba(255, 102, 51, 0.1);
+}
+
+.topbar-owner-return {
+  color: var(--accent);
+  font-weight: 900;
 }
 
 .topbar-profile {
@@ -333,6 +370,24 @@ textarea:disabled,
   color: var(--text);
   background: transparent;
   text-align: left;
+}
+
+.access-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 174, 51, 0.35);
+  border-radius: 8px;
+  color: #ffd58a;
+  background: rgba(255, 174, 51, 0.08);
+  animation: cardIn 180ms ease both;
+}
+
+.access-notice .icon-btn {
+  flex: 0 0 auto;
 }
 
 .search-result:hover,
@@ -2159,6 +2214,21 @@ th {
   background: rgba(255, 102, 51, 0.09);
 }
 
+.access-test-panel {
+  max-width: 760px;
+}
+
+.access-honesty {
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid rgba(255, 174, 51, 0.28);
+  border-radius: 8px;
+  color: var(--muted);
+  background: rgba(255, 174, 51, 0.055);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .settings-grid {
   display: grid;
   grid-template-columns: minmax(280px, 0.85fr) minmax(0, 1.45fr);
@@ -3499,7 +3569,7 @@ button.list-item:hover {
 
   .topbar-tools {
     display: grid;
-    grid-template-columns: 1fr auto auto;
+    grid-template-columns: 1fr repeat(3, auto);
   }
 
   .topbar-profile {
