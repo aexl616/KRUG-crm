@@ -10,6 +10,8 @@ const accessRoles = [
   { id: "engineer", label: "Звукорежиссёр" },
   { id: "staff", label: "Сотрудник" }
 ];
+const clientStatuses = ["Новый", "Активный", "Постоянный", "Спящий", "Проблемный", "VIP", "Архив"];
+const clientTagPresets = ["постоянный", "новый", "VIP", "проблемный", "рэпер", "музыкант", "нужен фоллоу-ап", "рассрочка", "любит вечер", "часто отменяет"];
 
 const defaultServiceGroups = [
   { id: "recording", name: "Запись", order: 1 },
@@ -214,6 +216,9 @@ let calendarEmployeeFilter = state.calendarSettings?.employee || "";
 let calendarStatusFilter = state.calendarSettings?.status || "";
 let calendarServiceFilter = state.calendarSettings?.service || "";
 let clientFilter = "";
+let clientStatusFilter = "";
+let clientTagFilter = "";
+let clientSegmentFilter = "all";
 let bookingDateFilter = "";
 let bookingStatusFilter = "";
 let bookingServiceFilter = "";
@@ -387,7 +392,21 @@ function normalizeState(nextState) {
     amount: numberOrZero(expense.amount),
     comment: expense.comment || ""
   }));
-  const clientMap = new Map((nextState.clients || []).map((client) => [client.id || client.name, client]));
+  const clientMap = new Map((nextState.clients || []).map((client) => {
+    const id = client.id || crypto.randomUUID();
+    return [id, {
+      ...client,
+      id,
+      name: client.name || "Клиент",
+      phone: client.phone || "",
+      telegram: client.telegram || "",
+      tags: Array.isArray(client.tags) ? [...new Set(client.tags.map((tag) => String(tag).trim()).filter(Boolean))] : [],
+      status: clientStatuses.includes(client.status) ? client.status : "Новый",
+      notes: client.notes || client.comment || "",
+      notesUpdatedAt: client.notesUpdatedAt || "",
+      comment: client.comment || ""
+    }];
+  }));
   [...payments, ...bookings].forEach((item) => {
     const name = String(item.clientName || item.client || "").trim();
     if (!name) return;
@@ -403,6 +422,10 @@ function normalizeState(nextState) {
       name,
       phone: item.phone || previous.phone || "",
       telegram: item.telegram || previous.telegram || "",
+      tags: previous.tags || [],
+      status: clientStatuses.includes(previous.status) ? previous.status : "Новый",
+      notes: previous.notes || previous.comment || "",
+      notesUpdatedAt: previous.notesUpdatedAt || "",
       comment: previous.comment || ""
     };
     if (previousKey) clientMap.delete(previousKey);
@@ -448,7 +471,10 @@ function normalizeState(nextState) {
     services: [...services],
     clients: [...clientMap.values()],
     payments,
-    bookings,
+    bookings: bookings.map((booking) => {
+      const client = [...clientMap.values()].find((item) => clientMatchesRecord(item, booking));
+      return { ...booking, clientId: booking.clientId || client?.id || "" };
+    }),
     studioBlocks,
     calendarSettings: {
       mode: nextState.calendarSettings?.mode === "day" ? "day" : "week",
@@ -536,10 +562,37 @@ function canCreateBooking() {
   return ["owner", "admin", "engineer"].includes(currentRole());
 }
 
+function normalizedPhone(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function normalizedTelegram(value) {
+  return String(value || "").trim().replace(/^@/, "").toLowerCase();
+}
+
+function clientMatchesRecord(client, record) {
+  if (!client || !record) return false;
+  if (client.id && record.clientId && client.id === record.clientId) return true;
+  const clientPhone = normalizedPhone(client.phone);
+  const recordPhone = normalizedPhone(record.phone);
+  if (clientPhone && recordPhone && clientPhone === recordPhone) return true;
+  const clientTelegram = normalizedTelegram(client.telegram);
+  const recordTelegram = normalizedTelegram(record.telegram);
+  if (clientTelegram && recordTelegram && clientTelegram === recordTelegram) return true;
+  const clientName = String(client.name || "").trim().toLowerCase();
+  const recordName = String(record.clientName || record.client || record.name || "").trim().toLowerCase();
+  return Boolean(clientName && recordName && clientName === recordName && (!clientPhone && !clientTelegram || !recordPhone && !recordTelegram));
+}
+
+function findClient(value) {
+  if (value && typeof value === "object") return value;
+  return (state.clients || []).find((client) => client.id === value || client.name === value) || null;
+}
+
 function canViewClient(client) {
   if (isManagerRole()) return true;
-  const name = typeof client === "string" ? client : client?.name;
-  return (state.bookings || []).some((booking) => canViewBooking(booking) && (booking.client === name || booking.clientName === name));
+  const resolved = findClient(client) || (typeof client === "string" ? { name: client } : client);
+  return (state.bookings || []).some((booking) => canViewBooking(booking) && clientMatchesRecord(resolved, booking));
 }
 
 function canViewPayment() {
@@ -3055,22 +3108,28 @@ function filteredPayments() {
 }
 
 function renderClients() {
-  const clientNames = [...new Set([
-    ...state.clients.filter(canViewClient).map((item) => item.name),
-    ...(isManagerRole() ? state.payments : []).map((item) => item.client),
-    ...accessibleBookings().map((item) => item.client)
-  ].map((name) => String(name || "").trim()).filter(Boolean))];
-  const clients = clientNames
-    .map((name) => [name, clientStats(name).total])
-    .sort((a, b) => sortClients(a[0], b[0], a[1], b[1]))
-    .filter(([name]) => !clientFilter || name.toLowerCase().includes(clientFilter.toLowerCase()));
+  const query = clientFilter.trim().toLowerCase();
+  const availableClients = (state.clients || []).filter(canViewClient);
+  const tags = [...new Set(availableClients.flatMap((client) => client.tags || []))].sort((a, b) => a.localeCompare(b));
+  const clients = availableClients
+    .map((client) => ({ client, stats: clientStats(client) }))
+    .filter(({ client }) => !query || [client.name, client.phone, client.telegram, client.status, ...(client.tags || [])].some((value) => String(value || "").toLowerCase().includes(query)))
+    .filter(({ client }) => !clientStatusFilter || client.status === clientStatusFilter)
+    .filter(({ client }) => !clientTagFilter || (client.tags || []).includes(clientTagFilter))
+    .filter(({ stats }) => clientSegmentFilter === "all" || clientSegmentFilter === "future" && stats.nextBooking || clientSegmentFilter === "sleeping" && stats.daysSinceLast >= 60 || clientSegmentFilter === "regular" && stats.completedBookings >= 3)
+    .sort((a, b) => sortClients(a.client.name, b.client.name, a.stats.totalRevenue, b.stats.totalRevenue));
   if (selectedClientName && canViewClient(selectedClientName)) return renderClientDetail(selectedClientName);
   if (selectedClientName) selectedClientName = null;
 
   return `
     <section class="card section">
-      <div class="toolbar">
-        <input id="searchPayments" placeholder="Найти клиента" value="${clientFilter}" />
+      <div class="toolbar client-list-filters">
+        <input id="searchPayments" placeholder="Имя, телефон, Telegram, тег или статус" value="${clientFilter}" />
+        <select id="clientStatusFilter"><option value="">Все статусы</option>${clientStatuses.map((status) => `<option ${clientStatusFilter === status ? "selected" : ""}>${status}</option>`).join("")}</select>
+        <select id="clientTagFilter"><option value="">Все теги</option>${tags.map((tag) => `<option ${clientTagFilter === tag ? "selected" : ""}>${tag}</option>`).join("")}</select>
+        <select id="clientSegmentFilter">
+          ${[["all", "Все клиенты"], ["future", "Есть будущая запись"], ["sleeping", "Спящие"], ["regular", "Постоянные"]].map(([value, label]) => `<option value="${value}" ${clientSegmentFilter === value ? "selected" : ""}>${label}</option>`).join("")}
+        </select>
         <select id="clientSort">
           <option value="last" ${clientSortMode === "last" ? "selected" : ""}>Сначала последние</option>
           <option value="total" ${clientSortMode === "total" ? "selected" : ""}>По сумме</option>
@@ -3080,7 +3139,7 @@ function renderClients() {
       </div>
       <div class="client-card-grid">
         ${clients
-          .map(([name, total]) => renderClientCard(name, total))
+          .map(({ client, stats }) => renderClientCard(client, stats))
           .join("") || (canCreateBooking() ? renderEmptyState("Пока нет клиентов", "Клиенты появятся автоматически из записей и платежей.", "Создать запись", 'type="button" data-action="openBookingModal"') : renderEmptyState("Связанных клиентов нет", "Здесь появятся клиенты из назначенных на вас записей."))}
       </div>
     </section>
@@ -3096,87 +3155,97 @@ function sortClients(nameA, nameB, totalA, totalB) {
   return String(statsB.lastDate || "").localeCompare(String(statsA.lastDate || ""));
 }
 
-function renderClientCard(name, total) {
-  const stats = clientStats(name);
-  const client = state.clients.find((item) => item.name === name) || {};
-  const lastLabel = stats.lastDate ? formatDate(stats.lastDate) : "пока нет";
+function renderClientCard(client, stats = clientStats(client)) {
+  const lastLabel = stats.lastBookingDate ? formatDate(stats.lastBookingDate) : "пока нет";
+  const nextLabel = stats.nextBookingDate ? formatDate(stats.nextBookingDate) : "не запланирован";
   return `
-    <button class="client-card" data-client="${encodeURIComponent(name)}">
-      <span class="avatar client-avatar">${initials(name)}</span>
+    <button class="client-card" data-client="${encodeURIComponent(client.id || client.name)}">
+      <span class="avatar client-avatar">${initials(client.name)}</span>
       <div>
-        <h3>${name}</h3>
+        <div class="client-card-head"><h3>${client.name}</h3><span class="client-status status-${String(client.status || "Новый").toLowerCase()}">${client.status || "Новый"}</span></div>
         <span class="muted">${client.phone || "телефон не указан"} · ${client.telegram || "telegram не указан"}</span>
+        ${(client.tags || []).length ? `<div class="client-tags">${client.tags.slice(0, 4).map((tag) => `<span>${tag}</span>`).join("")}</div>` : ""}
         <div class="client-card-stats">
-          <span>Посещений: <strong>${stats.visits}</strong></span>
-          <span>Сумма: <strong>${money(total)}</strong></span>
+          <span>Записей: <strong>${stats.totalBookings}</strong></span>
+          ${canViewPayment() ? `<span>Принёс: <strong>${money(stats.totalRevenue)}</strong></span><span>Средний чек: <strong>${money(stats.averageCheck)}</strong></span>` : ""}
           <span>Последнее: <strong>${lastLabel}</strong></span>
+          <span>Следующее: <strong>${nextLabel}</strong></span>
         </div>
       </div>
     </button>
   `;
 }
 
-function renderClientDetail(name) {
-  const stats = clientStats(name);
-  const history = stats.payments.sort((a, b) => b.date.localeCompare(a.date));
-  const bookingHistory = stats.bookings.sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`));
-  const total = stats.total;
-  const client = state.clients.find((item) => item.name === name) || {};
+function renderClientDetail(clientValue) {
+  const client = findClient(clientValue) || {};
+  if (!client.id || !canViewClient(client)) return renderClients();
+  const stats = clientStats(client);
+  const history = [...stats.payments].sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+  const bookingHistory = [...stats.bookings].sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`));
+  const insights = clientInsights(stats);
 
   if (!history.length && !bookingHistory.length) {
-    selectedClientName = null;
-    return renderClients();
+    // Keep manually created clients visible even before their first booking.
   }
 
   return `
-    <section class="card section">
+    <section class="client-intelligence-page">
+      <section class="card section">
       <div class="toolbar client-toolbar">
         <button class="btn secondary" type="button" data-action="backToClients">Назад</button>
-        <input id="searchPayments" placeholder="Найти клиента" value="${clientFilter}" />
+        <div class="client-quick-actions">
+          ${canCreateBooking() ? `<button class="btn" type="button" data-new-booking-client="${client.id}">Новая запись</button>` : ""}
+          <button class="btn secondary" type="button" data-view="calendar">Календарь</button>
+          ${client.phone ? `<a class="btn secondary" href="tel:${client.phone}">Позвонить</a>` : ""}
+          ${normalizedTelegram(client.telegram) ? `<a class="btn secondary" href="https://t.me/${normalizedTelegram(client.telegram)}" target="_blank" rel="noreferrer">Telegram</a>` : ""}
+        </div>
       </div>
       <div class="client-profile">
         <div>
-          <h2>${name}</h2>
-          <p class="muted">Последний визит: ${stats.lastDate ? formatDate(stats.lastDate) : "пока нет"}. Общая сумма оплат: ${money(total)}.</p>
+          <div class="client-title-row"><span class="avatar client-avatar large">${initials(client.name)}</span><div><h2>${client.name}</h2><span class="client-status">${client.status}</span></div></div>
           <p class="muted">${client.phone || "телефон не указан"} · ${client.telegram || "telegram не указан"}</p>
+          <div class="client-tags">${(client.tags || []).map((tag) => `<span>${tag}</span>`).join("") || '<span class="muted">тегов пока нет</span>'}</div>
         </div>
         <div class="client-profile-stats">
-          <article><span>Оплаты</span><strong>${money(total)}</strong></article>
-          <article><span>Посещений</span><strong>${stats.visits}</strong></article>
-          <article><span>Записей</span><strong>${bookingHistory.length}</strong></article>
+          <article><span>Всего записей</span><strong>${stats.totalBookings}</strong></article>
+          <article><span>Завершено</span><strong>${stats.completedBookings}</strong></article>
+          <article><span>Отменено</span><strong>${stats.cancelledBookings}</strong></article>
+          <article><span>Последний визит</span><strong>${stats.lastBookingDate ? formatDate(stats.lastBookingDate) : "нет"}</strong></article>
+          <article><span>Следующий визит</span><strong>${stats.nextBookingDate ? formatDate(stats.nextBookingDate) : "нет"}</strong></article>
+          <article><span>Любимая услуга</span><strong>${stats.favoriteService || "нет данных"}</strong></article>
+          <article><span>Чаще работает с</span><strong>${stats.favoriteEmployee || "нет данных"}</strong></article>
+          ${canViewPayment() ? `<article><span>Принёс денег</span><strong>${money(stats.totalRevenue)}</strong></article><article><span>Средний чек</span><strong>${money(stats.averageCheck)}</strong></article>` : ""}
         </div>
       </div>
-      <h3>История записей клиента</h3>
-      <div class="booking-list client-booking-history">
-        ${bookingHistory.map(renderBookingCard).join("") || '<p class="muted">Записей пока нет</p>'}
+      </section>
+      <div class="grid two-col client-intelligence-layout">
+        <section class="card section">
+          <div class="section-head"><h3>Client Intelligence</h3><span class="select-chip">${suggestedClientStatus(stats)}</span></div>
+          <div class="client-insights">${insights.map((insight) => `<div><span>i</span><p>${insight}</p></div>`).join("") || renderEmptyState("Пока мало данных", "Инсайты появятся после нескольких записей.")}</div>
+        </section>
+        <section class="card section">
+          <h3>Заметки</h3>
+          ${isManagerRole() ? `<form id="clientIntelligenceForm" class="form-grid"><input type="hidden" name="clientId" value="${client.id}" /><div class="field"><label>Статус</label><select name="status">${clientStatuses.map((status) => `<option ${client.status === status ? "selected" : ""}>${status}</option>`).join("")}</select><span class="field-note">Подсказка по данным: ${suggestedClientStatus(stats)}</span></div><div class="field"><label>Добавить тег</label><input name="tag" placeholder="Например: нужен фоллоу-ап" /></div><div class="client-tag-presets full">${clientTagPresets.map((tag) => `<button class="select-chip" type="button" data-add-client-tag="${client.id}" data-tag="${tag}">${tag}</button>`).join("")}</div><div class="field full"><label>Заметки</label><textarea name="notes" rows="5">${client.notes || ""}</textarea>${client.notesUpdatedAt ? `<span class="field-note">Обновлено: ${new Date(client.notesUpdatedAt).toLocaleString("ru-RU")}</span>` : ""}</div><button class="btn" type="submit">Сохранить</button></form>` : `<p>${client.notes || "Заметок пока нет."}</p>`}
+          ${(client.tags || []).length && isManagerRole() ? `<div class="client-edit-tags">${client.tags.map((tag) => `<button type="button" data-remove-client-tag="${client.id}" data-tag="${tag}">${tag}<span>×</span></button>`).join("")}</div>` : ""}
+        </section>
       </div>
-      <h3>История оплат</h3>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-                <th>Дата</th><th>Услуга</th><th>Сумма</th><th>Оплата</th><th>Исполнитель / звукореж</th><th>Комментарий</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${history
-              .map(
-                (item) => `
-                  <tr>
-                    <td>${formatDate(item.date)}</td>
-                    <td><span class="pill">${item.service}</span></td>
-                    <td><strong>${money(item.amount)}</strong></td>
-                    <td>${item.method}</td>
-                    <td>${paymentTeamSummary(item)}</td>
-                    <td>${item.comment || '<span class="muted">нет</span>'}</td>
-                  </tr>
-                `
-              )
-              .join("")}
-          </tbody>
-        </table>
-      </div>
+      ${stats.nextBooking ? `<section class="card section"><div class="section-head"><h3>Ближайшая запись</h3><span class="status-pill status-${stats.nextBooking.status.replaceAll(" ", "-")}">${statusTitle(stats.nextBooking.status)}</span></div>${renderClientBookingHistoryItem(stats.nextBooking)}</section>` : ""}
+      <section class="card section"><div class="section-head"><h3>История записей</h3><span class="muted">Новые сверху</span></div><div class="client-booking-history">${bookingHistory.map(renderClientBookingHistoryItem).join("") || renderEmptyState("Записей пока нет", "История появится после первой записи клиента.")}</div></section>
+      ${canViewPayment() ? `<section class="card section"><div class="section-head"><h3>Финансы клиента</h3><span class="select-chip">${stats.paymentCount} платежей</span></div><div class="client-finance-summary"><article><span>Всего оплатил</span><strong>${money(stats.totalRevenue)}</strong></article><article><span>Средний чек</span><strong>${money(stats.averageCheck)}</strong></article><article><span>Последний платёж</span><strong>${stats.lastPayment ? `${formatDate(stats.lastPayment.date)} · ${money(stats.lastPayment.amount)}` : "нет"}</strong></article><article class="${stats.unpaidBookings.length ? "warning" : ""}"><span>Без платежа</span><strong>${stats.unpaidBookings.length}</strong></article></div>${history.length ? `<div class="list client-payment-history">${history.map((payment) => `<div class="list-item"><span>${formatDate(payment.date)} · ${payment.service}<small>${payment.comment || "без комментария"}</small></span><strong>${money(payment.amount)}</strong></div>`).join("")}</div>` : ""}</section>` : ""}
     </section>
+  `;
+}
+
+function renderClientBookingHistoryItem(booking) {
+  const hasConflict = studioConflictsForBooking(booking).length > 0;
+  return `
+    <button class="client-history-booking ${hasConflict ? "has-conflict" : ""}" type="button" data-open-booking="${booking.id}">
+      <span class="client-history-date"><strong>${formatDate(booking.date)} · ${booking.time}</strong><small>${booking.duration || "1 час"}</small></span>
+      <span><strong>${booking.service || "Услуга не указана"}</strong><small>${booking.employee || "Сотрудник не указан"}</small></span>
+      <span><strong>${money(booking.amount)}</strong><small>${booking.comment || "без комментария"}</small></span>
+      <span class="status-pill status-${booking.status.replaceAll(" ", "-")}">${statusTitle(booking.status)}</span>
+      ${hasConflict ? '<em class="calendar-conflict-badge">Конфликт</em>' : ""}
+    </button>
   `;
 }
 
@@ -3866,13 +3935,16 @@ function bookingFromForm(data) {
   const createdAt = existing?.createdAt || now;
   const serviceName = service.name || data.service || existing?.service || "";
   const employeeName = employee.name || data.employee || existing?.employee || "";
+  const clientName = data.client.trim();
+  const matchedClient = state.clients.find((client) => clientMatchesRecord(client, { clientId: existing?.clientId, client: clientName, phone: data.phone, telegram: data.telegram }));
   return {
     id: data.id || crypto.randomUUID(),
     date: data.date,
     time: data.time,
     duration: fieldLocks.duration ? service.duration : data.duration.trim() || service.duration || "1 час",
-    clientName: data.client.trim(),
-    client: data.client.trim(),
+    clientId: matchedClient?.id || existing?.clientId || "",
+    clientName,
+    client: clientName,
     phone: data.phone.trim(),
     telegram: data.telegram.trim(),
     serviceCategoryId: data.categoryId || service.categoryId || existing?.serviceCategoryId || "",
@@ -3898,18 +3970,19 @@ function upsertClientFromBooking(booking) {
   if (!name) return;
   const phone = String(booking.phone || "").trim();
   const telegram = String(booking.telegram || "").trim();
-  const existing = state.clients.find((client) =>
-    (phone && client.phone === phone) ||
-    (telegram && client.telegram === telegram) ||
-    client.name === name
-  );
+  const existing = state.clients.find((client) => clientMatchesRecord(client, booking));
   const payload = {
     id: existing?.id || crypto.randomUUID(),
     name,
     phone: phone || existing?.phone || "",
     telegram: telegram || existing?.telegram || "",
+    tags: existing?.tags || [],
+    status: clientStatuses.includes(existing?.status) ? existing.status : "Новый",
+    notes: existing?.notes || existing?.comment || "",
+    notesUpdatedAt: existing?.notesUpdatedAt || "",
     comment: existing?.comment || ""
   };
+  booking.clientId = payload.id;
   if (existing) {
     state.clients = state.clients.map((client) => (client.id === existing.id ? payload : client));
   } else {
@@ -3926,6 +3999,10 @@ function upsertClientFromPayment(payment) {
     name,
     phone: existing?.phone || "",
     telegram: existing?.telegram || "",
+    tags: existing?.tags || [],
+    status: clientStatuses.includes(existing?.status) ? existing.status : "Новый",
+    notes: existing?.notes || existing?.comment || "",
+    notesUpdatedAt: existing?.notesUpdatedAt || "",
     comment: existing?.comment || ""
   };
   if (existing) {
@@ -4039,25 +4116,78 @@ function deleteBookingSafely(bookingId) {
   return true;
 }
 
-function clientStats(name) {
-  const bookings = state.bookings.filter((item) => item.client === name && canViewBooking(item));
+function mostFrequentValue(items, getter) {
+  const counts = new Map();
+  items.forEach((item) => {
+    const value = String(getter(item) || "").trim();
+    if (value) counts.set(value, (counts.get(value) || 0) + 1);
+  });
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0]?.[0] || "";
+}
+
+function clientStats(clientValue) {
+  const client = findClient(clientValue) || (typeof clientValue === "string" ? { name: clientValue } : clientValue) || {};
+  const bookings = state.bookings.filter((item) => canViewBooking(item) && clientMatchesRecord(client, item));
   const bookingIds = new Set(bookings.map((booking) => booking.id));
-  const payments = state.payments.filter((item) => item.client === name && (isManagerRole() || (item.bookingId && bookingIds.has(item.bookingId))));
+  const payments = state.payments.filter((item) =>
+    (item.clientId === client.id || String(item.client || "").trim().toLowerCase() === String(client.name || "").trim().toLowerCase()) &&
+    (isManagerRole() || (item.bookingId && bookingIds.has(item.bookingId)))
+  );
   const completedBookings = bookings.filter((item) => item.status === "завершено");
+  const cancelledBookings = bookings.filter((item) => item.status === "отменено");
+  const activeBookings = bookings.filter((item) => ["заявка", "подтверждено", "в процессе"].includes(item.status));
   const standalonePayments = payments.filter((payment) => !payment.bookingId);
   const visits = completedBookings.length + standalonePayments.length;
-  const total = payments.reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  const dates = [
-    ...completedBookings.map((item) => item.date),
-    ...standalonePayments.map((item) => item.date)
-  ].filter(Boolean).sort((a, b) => b.localeCompare(a));
+  const totalRevenue = payments.reduce((sum, item) => sum + numberOrZero(item.amount), 0);
+  const today = todayKey();
+  const pastBookings = bookings.filter((booking) => booking.date && booking.date <= today).sort((a, b) => `${b.date} ${b.time || ""}`.localeCompare(`${a.date} ${a.time || ""}`));
+  const futureBookings = activeBookings.filter((booking) => booking.date >= today).sort((a, b) => `${a.date} ${a.time || ""}`.localeCompare(`${b.date} ${b.time || ""}`));
+  const lastPayment = [...payments].filter((payment) => payment.date).sort((a, b) => b.date.localeCompare(a.date))[0] || null;
+  const unpaidBookings = completedBookings.filter((booking) => !paymentForBooking(booking.id));
+  const lastBookingDate = pastBookings[0]?.date || "";
+  const daysSinceLast = lastBookingDate ? Math.max(0, Math.floor((new Date(`${today}T00:00:00`) - new Date(`${lastBookingDate}T00:00:00`)) / 86400000)) : null;
   return {
+    client,
     payments,
     bookings,
-    total,
+    totalBookings: bookings.length,
+    completedBookings: completedBookings.length,
+    cancelledBookings: cancelledBookings.length,
+    activeBookings: activeBookings.length,
+    totalRevenue,
+    averageCheck: payments.length ? totalRevenue / payments.length : 0,
+    lastBookingDate,
+    nextBookingDate: futureBookings[0]?.date || "",
+    nextBooking: futureBookings[0] || null,
+    favoriteService: mostFrequentValue(bookings, (booking) => booking.serviceName || booking.service),
+    favoriteEmployee: mostFrequentValue(bookings, (booking) => booking.employeeName || booking.employee),
+    noShowOrCancelRate: bookings.length ? cancelledBookings.length / bookings.length : 0,
+    paymentCount: payments.length,
+    lastPayment,
+    unpaidBookings,
+    daysSinceLast,
+    total: totalRevenue,
     visits,
-    lastDate: dates[0] || bookings.sort((a, b) => b.date.localeCompare(a.date))[0]?.date || ""
+    lastDate: lastBookingDate
   };
+}
+
+function suggestedClientStatus(stats) {
+  if (stats.noShowOrCancelRate >= 0.4 && stats.totalBookings >= 3) return "Проблемный";
+  if (stats.daysSinceLast !== null && stats.daysSinceLast >= 60) return "Спящий";
+  if (stats.completedBookings >= 3) return "Постоянный";
+  if (stats.completedBookings > 0 || stats.activeBookings > 0) return "Активный";
+  return "Новый";
+}
+
+function clientInsights(stats) {
+  const insights = [];
+  if (stats.nextBooking) insights.push(`Есть будущая запись: ${formatDate(stats.nextBooking.date)} в ${stats.nextBooking.time}.`);
+  if (stats.daysSinceLast !== null && stats.daysSinceLast >= 60) insights.push(`Клиент давно не приходил — последняя запись ${stats.daysSinceLast} дней назад.`);
+  if (stats.averageCheck >= 5000 && stats.paymentCount >= 2) insights.push("Высокий средний чек — можно предложить пакет услуг.");
+  if (stats.noShowOrCancelRate >= 0.3 && stats.totalBookings >= 3) insights.push("Частые отмены — лучше заранее подтверждать визит или брать предоплату.");
+  if (stats.favoriteService) insights.push(`Чаще всего выбирает: ${stats.favoriteService}.`);
+  return insights.slice(0, 4);
 }
 
 function bindCommonEvents() {
@@ -4472,6 +4602,21 @@ function bindViewEvents() {
     render();
   });
 
+  document.querySelector("#clientStatusFilter")?.addEventListener("change", (event) => {
+    clientStatusFilter = event.target.value;
+    render();
+  });
+
+  document.querySelector("#clientTagFilter")?.addEventListener("change", (event) => {
+    clientTagFilter = event.target.value;
+    render();
+  });
+
+  document.querySelector("#clientSegmentFilter")?.addEventListener("change", (event) => {
+    clientSegmentFilter = event.target.value;
+    render();
+  });
+
   document.querySelector("#bookingDateFilter")?.addEventListener("change", (event) => {
     bookingDateFilter = event.target.value;
     render();
@@ -4874,6 +5019,64 @@ function bindViewEvents() {
   document.querySelectorAll("[data-client]").forEach((button) => {
     button.addEventListener("click", () => {
       selectedClientName = decodeURIComponent(button.dataset.client);
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-new-booking-client]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!canCreateBooking()) return;
+      const client = state.clients.find((item) => item.id === button.dataset.newBookingClient);
+      if (!client || !canViewClient(client)) return;
+      const employee = isEngineer() ? currentUser() : null;
+      editingBookingId = null;
+      bookingSlotDraft = {
+        clientId: client.id,
+        client: client.name,
+        clientName: client.name,
+        phone: client.phone || "",
+        telegram: client.telegram || "",
+        date: todayKey(),
+        time: "12:00",
+        status: "подтверждено",
+        employeeId: employee?.id || "",
+        employee: employee?.name || ""
+      };
+      bookingModalOpen = true;
+      render();
+    });
+  });
+
+  document.querySelector("#clientIntelligenceForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!isManagerRole()) return;
+    const data = Object.fromEntries(new FormData(event.target));
+    const tag = String(data.tag || "").trim();
+    state.clients = state.clients.map((client) => client.id === data.clientId ? {
+      ...client,
+      status: clientStatuses.includes(data.status) ? data.status : client.status || "Новый",
+      tags: tag ? [...new Set([...(client.tags || []), tag])] : client.tags || [],
+      notes: String(data.notes || "").trim(),
+      notesUpdatedAt: new Date().toISOString()
+    } : client);
+    saveState();
+    render();
+  });
+
+  document.querySelectorAll("[data-add-client-tag]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!isManagerRole()) return;
+      state.clients = state.clients.map((client) => client.id === button.dataset.addClientTag ? { ...client, tags: [...new Set([...(client.tags || []), button.dataset.tag])] } : client);
+      saveState();
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-remove-client-tag]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!isManagerRole()) return;
+      state.clients = state.clients.map((client) => client.id === button.dataset.removeClientTag ? { ...client, tags: (client.tags || []).filter((tag) => tag !== button.dataset.tag) } : client);
+      saveState();
       render();
     });
   });

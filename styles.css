@@ -2735,6 +2735,12 @@ button.list-item:hover {
   gap: 12px;
 }
 
+.client-list-filters {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.5fr) repeat(4, minmax(145px, 1fr));
+  align-items: center;
+}
+
 .client-card {
   display: grid;
   grid-template-columns: 46px 1fr;
@@ -2768,6 +2774,51 @@ button.list-item:hover {
   margin-bottom: 4px;
 }
 
+.client-card-head,
+.client-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.client-status {
+  display: inline-flex;
+  width: fit-content;
+  padding: 3px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.04);
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.client-tags,
+.client-edit-tags,
+.client-tag-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.client-tags > span,
+.client-edit-tags button {
+  padding: 3px 7px;
+  border: 1px solid rgba(255, 102, 51, 0.22);
+  border-radius: 999px;
+  color: #ffc0a8;
+  background: rgba(255, 102, 51, 0.07);
+  font-size: 10px;
+}
+
+.client-edit-tags button span {
+  margin-left: 5px;
+  color: var(--danger);
+}
+
 .client-card-stats {
   display: grid;
   gap: 4px;
@@ -2782,6 +2833,18 @@ button.list-item:hover {
 
 .client-toolbar {
   align-items: center;
+  justify-content: space-between;
+}
+
+.client-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.client-intelligence-page {
+  display: grid;
+  gap: 16px;
 }
 
 .client-profile {
@@ -2789,6 +2852,17 @@ button.list-item:hover {
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 16px;
+}
+
+.client-title-row {
+  justify-content: flex-start;
+  margin-bottom: 8px;
+}
+
+.client-avatar.large {
+  width: 52px;
+  height: 52px;
+  flex: 0 0 52px;
 }
 
 .client-profile h2 {
@@ -2799,6 +2873,113 @@ button.list-item:hover {
   display: grid;
   grid-template-columns: repeat(2, minmax(120px, 1fr));
   gap: 10px;
+}
+
+.client-intelligence-layout {
+  align-items: stretch;
+}
+
+.client-insights {
+  display: grid;
+  gap: 8px;
+}
+
+.client-insights > div {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.client-insights > div > span {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--accent);
+  background: rgba(255, 102, 51, 0.1);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.client-insights p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.client-booking-history {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 0;
+}
+
+.client-history-booking {
+  display: grid;
+  grid-template-columns: 1.1fr 1.2fr 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.025);
+  text-align: left;
+}
+
+.client-history-booking:hover {
+  border-color: rgba(255, 102, 51, 0.38);
+  background: rgba(255, 102, 51, 0.06);
+}
+
+.client-history-booking.has-conflict {
+  border-color: rgba(255, 174, 51, 0.4);
+}
+
+.client-history-booking > span:not(.status-pill) {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.client-history-booking small {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.client-finance-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+  margin-bottom: 14px;
+}
+
+.client-finance-summary article {
+  display: grid;
+  gap: 4px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.client-finance-summary span,
+.client-payment-history small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.client-finance-summary .warning {
+  border-color: rgba(255, 174, 51, 0.38);
 }
 
 .client-profile-stats article {
@@ -3230,6 +3411,10 @@ button.list-item:hover {
   .payout-summary-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
+
+  .client-list-filters {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 940px) {
@@ -3421,6 +3606,20 @@ button.list-item:hover {
     grid-template-columns: 1fr 1fr;
   }
 
+  .client-list-filters,
+  .client-finance-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .client-history-booking {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .client-history-booking .status-pill,
+  .client-history-booking .calendar-conflict-badge {
+    justify-self: start;
+  }
+
   .booking-meta {
     grid-template-columns: 1fr;
   }
@@ -3525,6 +3724,20 @@ button.list-item:hover {
 
   .studio-availability-strip {
     grid-template-columns: 1fr;
+  }
+
+  .client-list-filters,
+  .client-finance-summary,
+  .client-history-booking {
+    grid-template-columns: 1fr;
+  }
+
+  .client-toolbar {
+    align-items: stretch;
+  }
+
+  .client-quick-actions .btn {
+    flex: 1 1 140px;
   }
 
   .finance-warning-item > b,
