@@ -2519,6 +2519,26 @@ th {
   min-width: 0;
 }
 
+.payout-filter-user {
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  min-height: 42px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.payout-filter-user span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.payout-filter-user strong {
+  font-size: 13px;
+}
+
 .payout-filters label > span {
   color: var(--muted);
   font-size: 11px;

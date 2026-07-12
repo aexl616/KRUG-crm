@@ -327,6 +327,10 @@ function normalizeState(nextState) {
   }
   if (!users.length) users = structuredClone(defaultState.users);
   const owner = users.find((user) => user.role === "owner") || users[0];
+  const requestedCurrentUserId = nextState.sessionUserId || nextState.access?.currentUserId || "";
+  const normalizedCurrentUserId = requestedCurrentUserId
+    ? users.some((user) => user.id === requestedCurrentUserId) ? requestedCurrentUserId : owner?.id || null
+    : null;
   const payments = (nextState.payments || []).map((payment) => {
     const service = serviceAliases[payment.service] || payment.service;
     const category = classifyService(service);
@@ -435,10 +439,9 @@ function normalizeState(nextState) {
   return {
     ...nextState,
     users,
+    sessionUserId: normalizedCurrentUserId,
     access: {
-      currentUserId: users.some((user) => user.id === nextState.access?.currentUserId)
-        ? nextState.access.currentUserId
-        : users.some((user) => user.id === nextState.sessionUserId) ? nextState.sessionUserId : owner?.id || ""
+      currentUserId: normalizedCurrentUserId || owner?.id || ""
     },
     serviceGroups,
     serviceItems,
@@ -486,6 +489,14 @@ function isAdmin() {
   return ["owner", "admin"].includes(currentRole());
 }
 
+function isEngineer() {
+  return currentRole() === "engineer";
+}
+
+function isStaff() {
+  return currentRole() === "staff";
+}
+
 function isManagerRole() {
   return ["owner", "admin"].includes(currentRole());
 }
@@ -510,6 +521,10 @@ function canViewBooking(booking) {
 }
 
 function canEditBooking(booking) {
+  return isManagerRole() || (isEngineer() && canViewBooking(booking));
+}
+
+function canDeleteBooking(booking) {
   return isManagerRole() && canViewBooking(booking);
 }
 
@@ -539,7 +554,19 @@ function canManagePayouts() {
   return isManagerRole();
 }
 
+function canViewPayoutsSummary() {
+  return isManagerRole();
+}
+
+function canViewFinancialWarnings() {
+  return isManagerRole();
+}
+
 function canEditSettings() {
+  return isManagerRole();
+}
+
+function canManageEmployees() {
   return isManagerRole();
 }
 
@@ -1876,6 +1903,22 @@ function renderTodayMoney(data) {
   return `<div class="today-money-grid">${metrics.map(([label, value]) => `<article><span>${label}</span><strong>${value}</strong></article>`).join("")}</div>`;
 }
 
+function renderRoleQuickActions() {
+  const items = [];
+  if (canCreateBooking()) items.push('<button class="quick-action" data-action="openBookingModal"><span>+</span>Новая запись</button>');
+  items.push('<button class="quick-action" data-view="calendar"><span>○</span>Открыть календарь</button>');
+  if (isEngineer() || isStaff()) {
+    items.push('<button class="quick-action" data-view="bookings"><span>З</span>Мои записи</button>');
+    items.push('<button class="quick-action" data-view="payouts"><span>₽</span>Мои выплаты</button>');
+    if (isEngineer()) items.push('<button class="quick-action" data-view="clients"><span>К</span>Мои клиенты</button>');
+  } else {
+    items.push('<button class="quick-action" data-view="clients"><span>К</span>Клиенты</button>');
+    if (canViewSection("payments")) items.push('<button class="quick-action" data-view="payments"><span>₽</span>Добавить платёж</button>');
+    if (canViewSection("reports")) items.push('<button class="quick-action" data-view="reports"><span>↗</span>Открыть отчёты</button>');
+  }
+  return items.join("");
+}
+
 function renderDashboard() {
   const data = studioTodayData();
   const attention = studioAttentionItems();
@@ -1923,11 +1966,7 @@ function renderDashboard() {
       <section class="card section studio-home-quick">
         <h2>Быстрые действия</h2>
         <div class="quick-actions">
-          ${canCreateBooking() ? '<button class="quick-action" data-action="openBookingModal"><span>+</span>Новая запись</button>' : ""}
-          <button class="quick-action" data-view="calendar"><span>○</span>Открыть календарь</button>
-          ${canViewSection("clients") ? '<button class="quick-action" data-view="clients"><span>К</span>Открыть клиентов</button>' : ""}
-          ${canViewSection("payments") ? '<button class="quick-action" data-view="payments"><span>₽</span>Добавить платёж</button>' : ""}
-          ${canViewSection("reports") ? '<button class="quick-action" data-view="reports"><span>↗</span>Открыть отчёты</button>' : ""}
+          ${renderRoleQuickActions()}
         </div>
       </section>
     </div>
@@ -2480,7 +2519,7 @@ function renderBookingDetailsPanel() {
         ${canChangeBookingStatus(booking) && booking.status === "подтверждено" ? `<button class="btn" data-side-status-booking="${booking.id}" data-status="в процессе">В процесс</button>` : ""}
         ${canChangeBookingStatus(booking) && booking.status === "в процессе" ? `<button class="btn" data-side-status-booking="${booking.id}" data-status="завершено">Завершить</button>` : ""}
         ${isManagerRole() && !["завершено", "отменено"].includes(booking.status) ? `<button class="btn danger" data-side-status-booking="${booking.id}" data-status="отменено">Отменить</button>` : ""}
-        ${canEditBooking(booking) ? `<button class="btn danger" data-side-delete-booking="${booking.id}">Удалить запись</button>` : ""}
+        ${canDeleteBooking(booking) ? `<button class="btn danger" data-side-delete-booking="${booking.id}">Удалить запись</button>` : ""}
       </div>
       <div class="status-history">
         <h3>История статусов</h3>
@@ -2610,8 +2649,8 @@ function renderBookingModal() {
           <div class="actions full modal-actions">
             <button class="btn" type="submit">Сохранить</button>
             ${editingBookingId ? '<button class="btn" type="button" data-action="completeBookingFromModal">Завершить</button>' : ""}
-            ${editingBookingId ? '<button class="btn secondary" type="button" data-action="cancelBookingFromModal">Отменить</button>' : ""}
-            ${editingBookingId ? '<button class="btn danger" type="button" data-action="deleteBookingFromModal">Удалить</button>' : ""}
+            ${editingBookingId && isManagerRole() ? '<button class="btn secondary" type="button" data-action="cancelBookingFromModal">Отменить запись</button>' : ""}
+            ${editingBookingId && canDeleteBooking(booking) ? '<button class="btn danger" type="button" data-action="deleteBookingFromModal">Удалить</button>' : ""}
             <button class="btn secondary" type="button" data-action="closeBookingModal">Закрыть</button>
           </div>
         </form>
@@ -2782,7 +2821,8 @@ function renderBookingCard(booking) {
         ${canStart ? `<button class="btn secondary" data-booking-status="${booking.id}" data-status="в процессе">Начать</button>` : ""}
         ${canComplete ? `<button class="btn" data-booking-status="${booking.id}" data-status="завершено">Завершить</button>` : ""}
         ${canCancel ? `<button class="btn danger" data-booking-status="${booking.id}" data-status="отменено">Отменить</button>` : ""}
-        ${canEditBooking(booking) ? `<button class="icon-btn" title="Редактировать" data-edit-booking="${booking.id}">✎</button><button class="icon-btn" title="Удалить" data-delete-booking="${booking.id}">×</button>` : ""}
+        ${canEditBooking(booking) ? `<button class="icon-btn" title="Редактировать" data-edit-booking="${booking.id}">✎</button>` : ""}
+        ${canDeleteBooking(booking) ? `<button class="icon-btn" title="Удалить" data-delete-booking="${booking.id}">×</button>` : ""}
       </div>
     </article>
   `;
@@ -3239,8 +3279,8 @@ function renderFinance() {
 }
 
 function renderPayouts() {
-  const employeeStats = isManagerRole() ? allEmployeePayoutStats() : [employeePayoutStats(currentUser()?.id || "")].filter((stats) => stats.employee);
-  const warnings = isManagerRole() ? financialWarnings() : [];
+  const employeeStats = canViewPayoutsSummary() ? allEmployeePayoutStats() : [employeePayoutStats(currentUser()?.id || "")].filter((stats) => stats.employee);
+  const warnings = canViewFinancialWarnings() ? financialWarnings() : [];
   const payoutHistory = [...(state.payouts || [])].filter(canViewPayout).sort((a, b) => payoutDateValue(b).localeCompare(payoutDateValue(a)));
   const filteredHistory = payoutHistory.filter(payoutMatchesFilters);
   const summary = payoutSummary(employeeStats, warnings);
@@ -3248,8 +3288,8 @@ function renderPayouts() {
   return `
     <section class="payouts-page">
       <section class="card section payout-summary-section">
-        <div class="section-head"><div><h2>${isManagerRole() ? "Сводка выплат" : "Мои выплаты"}</h2><p class="muted">${isManagerRole() ? "Текущее состояние расчётов с командой." : "Начисления по вашим завершённым записям."}</p></div><span class="select-chip">${summary.payableEmployees} к выплате</span></div>
-        ${renderPayoutSummary(summary)}
+        <div class="section-head"><div><h2>${canViewPayoutsSummary() ? "Сводка выплат" : "Мои выплаты"}</h2><p class="muted">${canViewPayoutsSummary() ? "Текущее состояние расчётов с командой." : "Начисления по вашим завершённым записям."}</p></div><span class="select-chip">${summary.payableEmployees} к выплате</span></div>
+        ${renderPayoutSummary(summary, !canViewPayoutsSummary())}
       </section>
       <section class="card section">
         <div class="section-head">
@@ -3261,7 +3301,7 @@ function renderPayouts() {
           ${employeeStats.map((stats) => renderEmployeePayoutCard(stats, warnings)).join("") || renderEmptyState("Нет сотрудников", "Добавьте сотрудников в настройках, чтобы считать выплаты.")}
         </div>
       </section>
-      ${isManagerRole() ? `<section class="card section">
+      ${canViewFinancialWarnings() ? `<section class="card section">
         <div class="section-head"><h2>Финансовые предупреждения</h2><span class="select-chip">${warnings.length}</span></div>
         ${renderFinancialWarnings(warnings)}
       </section>` : ""}
@@ -3274,24 +3314,23 @@ function renderPayouts() {
   `;
 }
 
-function renderPayoutSummary(summary) {
+function renderPayoutSummary(summary, personal = false) {
   const items = [
     ["Заработано", money(summary.totalEarned), ""],
     ["Выплачено", money(summary.totalPaid), ""],
     ["Запланировано", money(summary.totalPlanned), ""],
     ["Доступно", money(summary.availableToPay), "accent"],
     ["Переплата", money(summary.overpaid), summary.overpaid > 0 ? "warning" : ""],
-    ["Сотрудников к выплате", summary.payableEmployees, ""],
-    ["Предупреждений", summary.warningsCount, summary.warningsCount > 0 ? "warning" : ""]
+    ...(!personal ? [["Сотрудников к выплате", summary.payableEmployees, ""], ["Предупреждений", summary.warningsCount, summary.warningsCount > 0 ? "warning" : ""]] : [])
   ];
   return `<div class="payout-summary-grid">${items.map(([label, value, className]) => `<article class="${className}"><span>${label}</span><strong>${value}</strong></article>`).join("")}</div>`;
 }
 
 function renderPayoutFilters() {
-  const employees = isManagerRole() ? state.users || [] : [currentUser()].filter(Boolean);
+  const employees = canViewPayoutsSummary() ? state.users || [] : [currentUser()].filter(Boolean);
   return `
     <div class="payout-filters">
-      <label><span>Сотрудник</span><select id="payoutEmployeeFilter"><option value="">Все сотрудники</option>${employees.map((employee) => `<option value="${employee.id}" ${payoutEmployeeFilter === employee.id ? "selected" : ""}>${employee.name}</option>`).join("")}</select></label>
+      ${canViewPayoutsSummary() ? `<label><span>Сотрудник</span><select id="payoutEmployeeFilter"><option value="">Все сотрудники</option>${employees.map((employee) => `<option value="${employee.id}" ${payoutEmployeeFilter === employee.id ? "selected" : ""}>${employee.name}</option>`).join("")}</select></label>` : `<div class="payout-filter-user"><span>Сотрудник</span><strong>${currentUser()?.name || "Сотрудник"}</strong></div>`}
       <label><span>Статус</span><select id="payoutStatusFilter">
         <option value="">Все статусы</option>
         ${["Выплачено", "Запланировано", "Отменено", "Без статуса"].map((status) => `<option value="${status}" ${payoutStatusFilter === status ? "selected" : ""}>${status}</option>`).join("")}
@@ -4323,7 +4362,7 @@ function bindViewEvents() {
   document.querySelectorAll("[data-side-delete-booking]").forEach((button) => {
     button.addEventListener("click", () => {
       const booking = state.bookings.find((item) => item.id === button.dataset.sideDeleteBooking);
-      if (!canEditBooking(booking)) return;
+      if (!canDeleteBooking(booking)) return;
       if (!deleteBookingSafely(button.dataset.sideDeleteBooking)) return;
       saveState();
       render();
@@ -4394,6 +4433,8 @@ function bindViewEvents() {
 
   document.querySelector("[data-action='completeBookingFromModal']")?.addEventListener("click", () => {
     if (!editingBookingId) return;
+    const booking = state.bookings.find((item) => item.id === editingBookingId);
+    if (!canChangeBookingStatus(booking)) return;
     completeBooking(editingBookingId);
     bookingModalOpen = false;
     editingBookingId = null;
@@ -4403,6 +4444,7 @@ function bindViewEvents() {
 
   document.querySelector("[data-action='cancelBookingFromModal']")?.addEventListener("click", () => {
     if (!editingBookingId) return;
+    if (!isManagerRole()) return;
     updateBookingStatus(editingBookingId, "отменено");
     bookingModalOpen = false;
     editingBookingId = null;
@@ -4411,7 +4453,8 @@ function bindViewEvents() {
   });
 
   document.querySelector("[data-action='deleteBookingFromModal']")?.addEventListener("click", () => {
-    if (!editingBookingId || !deleteBookingSafely(editingBookingId)) return;
+    const booking = state.bookings.find((item) => item.id === editingBookingId);
+    if (!editingBookingId || !canDeleteBooking(booking) || !deleteBookingSafely(editingBookingId)) return;
     bookingModalOpen = false;
     editingBookingId = null;
     saveState();
@@ -4924,7 +4967,7 @@ function bindViewEvents() {
   document.querySelectorAll("[data-delete-booking]").forEach((button) => {
     button.addEventListener("click", () => {
       const booking = state.bookings.find((item) => item.id === button.dataset.deleteBooking);
-      if (!canEditBooking(booking)) return;
+      if (!canDeleteBooking(booking)) return;
       if (!deleteBookingSafely(button.dataset.deleteBooking)) return;
       saveState();
       render();
@@ -4942,6 +4985,7 @@ function bindViewEvents() {
 
   document.querySelector("#userForm")?.addEventListener("submit", (event) => {
     event.preventDefault();
+    if (!canManageEmployees()) return;
     const data = Object.fromEntries(new FormData(event.target));
     if (state.users.some((user) => user.login === data.login)) {
       alert("Такой логин уже есть");
@@ -4967,6 +5011,7 @@ function bindViewEvents() {
 
   document.querySelectorAll("[data-save-user]").forEach((button) => {
     button.addEventListener("click", () => {
+      if (!canManageEmployees()) return;
       const row = document.querySelector(`[data-user-row="${button.dataset.saveUser}"]`);
       const data = Object.fromEntries(new FormData(row));
       const previous = state.users.find((user) => user.id === button.dataset.saveUser);
@@ -4997,6 +5042,7 @@ function bindViewEvents() {
 
   document.querySelectorAll("[data-remove-user]").forEach((button) => {
     button.addEventListener("click", () => {
+      if (!canManageEmployees()) return;
       const user = state.users.find((item) => item.id === button.dataset.removeUser);
       if (!user) return;
       if (user.role === "owner") {
