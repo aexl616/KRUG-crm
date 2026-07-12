@@ -518,7 +518,7 @@ function canChangeBookingStatus(booking) {
 }
 
 function canCreateBooking() {
-  return isManagerRole();
+  return ["owner", "admin", "engineer"].includes(currentRole());
 }
 
 function canViewClient(client) {
@@ -2092,6 +2092,7 @@ function activeEmployees() {
 }
 
 function bookingEmployeeOptions(selectedName = "") {
+  if (currentRole() === "engineer") return [currentUser()].filter(Boolean);
   const active = activeEmployees();
   const selected = state.users.find((user) => user.name === selectedName);
   return selected && selected.active === false ? [...active, selected] : active;
@@ -2357,7 +2358,8 @@ function renderCalendar() {
             <button type="button" class="${calendarMode === "week" ? "active" : ""}" data-calendar-mode="week">Неделя</button>
             <button type="button" class="${calendarMode === "day" ? "active" : ""}" data-calendar-mode="day">День</button>
           </div>
-          ${canCreateBooking() ? '<button class="btn" data-action="openBookingModal">Добавить запись</button><button class="btn secondary" data-action="openStudioBlockModal">Заблокировать время</button>' : ""}
+          ${canCreateBooking() ? '<button class="btn" data-action="openBookingModal">Добавить запись</button>' : ""}
+          ${isManagerRole() ? '<button class="btn secondary" data-action="openStudioBlockModal">Заблокировать время</button>' : ""}
         </div>
       </div>
       ${renderCalendarFilters()}
@@ -2520,7 +2522,7 @@ function renderBookingModal() {
   const service = serviceById(booking.serviceId) || serviceByName(booking.serviceName || booking.service) || catalogServices()[0] || {};
   const selectedCategoryId = service.categoryId || catalogGroups()[0]?.id || "";
   const visibleServices = catalogServices().filter((item) => item.categoryId === selectedCategoryId && (item.active !== false || item.name === booking.service));
-  const filteredEmployee = state.users.find((user) => user.id === calendarEmployeeFilter);
+  const filteredEmployee = currentRole() === "engineer" ? currentUser() : state.users.find((user) => user.id === calendarEmployeeFilter);
   const defaultEmployee = filteredEmployee?.name || currentUser()?.name || activeEmployees()[0]?.name || "";
   const employeeOptions = bookingEmployeeOptions(booking.employee || defaultEmployee);
   const status = booking.status || "подтверждено";
@@ -2590,7 +2592,8 @@ function renderBookingModal() {
           </div>
           <div class="field">
             <label>Сотрудник</label>
-            <select name="employeeId">${employeeOptions.map((user) => `<option value="${user.id}" ${((booking.employeeId || "") === user.id || (booking.employee || defaultEmployee) === user.name) ? "selected" : ""}>${user.name}${user.active === false ? " · неактивен" : ""}</option>`).join("")}</select>
+            <select name="employeeId" class="${currentRole() === "engineer" ? "catalog-locked" : ""}" aria-readonly="${currentRole() === "engineer"}">${employeeOptions.map((user) => `<option value="${user.id}" ${((booking.employeeId || "") === user.id || (booking.employee || defaultEmployee) === user.name) ? "selected" : ""}>${user.name}${user.active === false ? " · неактивен" : ""}</option>`).join("")}</select>
+            ${currentRole() === "engineer" ? '<span class="field-note locked">Запись будет назначена на вас.</span>' : ""}
           </div>
           <div class="field">
             <label>Статус</label>
@@ -2850,7 +2853,8 @@ function renderBookingForm() {
         </div>
         <div class="field">
           <label>Сотрудник</label>
-          <select name="employeeId">${employeeOptions.map((user) => `<option value="${user.id}" ${((booking.employeeId || "") === user.id || (booking.employee || defaultUser) === user.name) ? "selected" : ""}>${user.name}${user.active === false ? " · неактивен" : ""}</option>`).join("")}</select>
+          <select name="employeeId" class="${currentRole() === "engineer" ? "catalog-locked" : ""}" aria-readonly="${currentRole() === "engineer"}">${employeeOptions.map((user) => `<option value="${user.id}" ${((booking.employeeId || "") === user.id || (booking.employee || defaultUser) === user.name) ? "selected" : ""}>${user.name}${user.active === false ? " · неактивен" : ""}</option>`).join("")}</select>
+          ${currentRole() === "engineer" ? '<span class="field-note locked">Запись будет назначена на вас.</span>' : ""}
         </div>
         <div class="field">
           <label>Статус</label>
@@ -3817,7 +3821,8 @@ function bookingFromForm(data) {
   const existing = state.bookings.find((booking) => booking.id === data.id);
   const service = serviceByName(data.service) || serviceById(data.serviceId) || {};
   const fieldLocks = serviceFieldLocks(service);
-  const employee = state.users.find((user) => user.id === data.employeeId) || state.users.find((user) => user.name === data.employee) || {};
+  const forcedEngineer = currentRole() === "engineer" ? currentUser() : null;
+  const employee = forcedEngineer || state.users.find((user) => user.id === data.employeeId) || state.users.find((user) => user.name === data.employee) || {};
   const now = new Date().toISOString();
   const createdAt = existing?.createdAt || now;
   const serviceName = service.name || data.service || existing?.service || "";
@@ -3836,7 +3841,7 @@ function bookingFromForm(data) {
     serviceName,
     service: serviceName,
     amount: fieldLocks.price ? Number(service.price || 0) : Number(data.amount || 0),
-    employeeId: employee.id || existing?.employeeId || "",
+    employeeId: forcedEngineer?.id || employee.id || existing?.employeeId || "",
     employeeName,
     employee: employeeName,
     comment: data.comment.trim(),
@@ -4202,12 +4207,14 @@ function bindViewEvents() {
   document.querySelectorAll("[data-calendar-slot]").forEach((slot) => {
     slot.addEventListener("click", () => {
       if (!canCreateBooking()) {
-        accessNotice = "Создание записей доступно владельцу и администратору.";
+        accessNotice = "Создание записей недоступно для текущей роли.";
         render();
         return;
       }
       const [date, time] = slot.dataset.calendarSlot.split("|");
-      const employee = state.users.find((user) => user.id === calendarEmployeeFilter);
+      const employee = currentRole() === "engineer"
+        ? currentUser()
+        : state.users.find((user) => user.id === calendarEmployeeFilter);
       editingBookingId = null;
       selectedStudioBlockId = null;
       calendarDate = date;
@@ -4803,6 +4810,8 @@ function bindViewEvents() {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.target));
     const booking = bookingFromForm(data);
+    const existingBooking = state.bookings.find((item) => item.id === data.id);
+    if (existingBooking ? !canEditBooking(existingBooking) : !canCreateBooking()) return;
     const studioConflicts = studioConflictsForBooking(booking, booking.id);
     if (studioConflicts.length && !confirm("В это время студия уже занята. Сохранить запись с конфликтом?")) return;
     if (data.id) {
