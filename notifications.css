@@ -1,0 +1,19 @@
+.notification-popover { position:fixed; inset:16px 16px 16px auto; width:min(520px,calc(100vw - 32px)); max-height:none; z-index:150; overflow:auto; overscroll-behavior:contain; padding:20px; background:#1b1d20; border:1px solid #484c52; border-radius:16px; box-shadow:0 0 0 100vmax #0009; color:#eee; }
+.nc-head,.nc-item-head { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+.nc-head { flex-wrap:wrap; }.nc-head > div,.nc-type,.nc-settings fieldset { min-width:0; }
+.nc-head h2 { margin:0; }.nc-head small,.nc-item small,.nc-item-head span { color:#aeb6bf; font-size:11px; }
+.nc-toolbar,.nc-actions { display:flex; flex-wrap:wrap; gap:8px; margin:14px 0; }
+.nc-toolbar .btn,.nc-actions .btn { font-size:12px; min-height:44px; }
+.nc-toolbar [aria-pressed=true] { border-color:#ff8b5f; color:#ffac87; }
+.nc-type { display:grid; gap:6px; font-size:12px; }.nc-type select { width:100%; }
+.nc-settings { margin:16px 0; border-block:1px solid #383c42; padding:8px 0; }
+.nc-settings label { display:flex; gap:10px; align-items:center; min-height:44px; font-size:13px; }
+.nc-settings input { width:18px; height:18px; min-height:18px; flex-shrink:0; accent-color:#ff8b5f; }
+.nc-settings fieldset { border:1px solid #383c42; border-radius:8px; margin-top:12px; }
+.nc-settings p { font-size:12px; }.nc-item { padding:16px; margin-bottom:10px; border:1px solid #373c42; border-left:3px solid #ff8b5f; border-radius:10px; background:#24272b; overflow-wrap:anywhere; }
+.nc-item.is-read { background:#1c1f22; border-left-color:#59616a; }.nc-item[data-severity=warning] { border-left-color:#e5a84f; }.nc-item[data-severity=critical] { border-left-color:#ef7373; }.nc-item[data-severity=success] { border-left-color:#73ba92; }
+.nc-item strong { font-size:14px; }.nc-item p,.nc-empty { font-size:13px; color:#c0c6cd; }.nc-item-head span { flex-shrink:0; }.nc-actions { margin-bottom:0; }
+body:has(.notification-popover) { overflow:hidden; }
+dialog.notification-popover { display:block; margin:0; height:auto; color:#eee; max-width:none; box-shadow:none; }
+dialog.notification-popover::backdrop { background:#0009; }
+@media(max-width:600px) { .notification-popover { inset:auto 8px 8px; width:auto; max-height:calc(100dvh - 16px); padding:16px; border-radius:16px; }.nc-head h2 { font-size:20px; }.nc-toolbar .btn { flex:1 1 auto; padding:8px; }.nc-item { padding:12px; } }

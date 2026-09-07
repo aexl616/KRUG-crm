@@ -73,7 +73,7 @@
     menu?.addEventListener('click',e=>{if(e.target===menu){const r=menu.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)menu.close();}});
     const search=document.querySelector('#globalSearch');if(search){search.placeholder='Найти клиента, запись или оплату';search.setAttribute('aria-label','Поиск по CRM');}
     const profile=document.querySelector('.topbar-profile');if(profile){profile.innerHTML='<span aria-hidden="true">⌘</span><strong>Быстрый переход<small>Ctrl + K</small></strong>';profile.title='Найти раздел или действие';profile.setAttribute('aria-label','Быстрый переход: поиск разделов и действий');}
-    document.querySelector('[data-action="toggleNotifications"]')?.setAttribute('aria-label','Уведомления студии');
+    document.querySelector('[data-action="toggleNotifications"]')?.setAttribute('aria-label', typeof unreadNotificationsCount === 'function' ? `Уведомления: ${unreadNotificationsCount()} непрочитанных` : 'Уведомления студии');
     const words={'Client Intelligence':'Что важно знать о клиенте','Принёс денег':'Всего оплатил','Профиль администратора':'Мой профиль','Звукореж':'Звукорежиссёр','Фикс. ставка':'Фиксированная ставка, ₽','Процент':'Доля сотрудника, %','Выплаты вне копилок':'Начисления сотрудникам','Топ клиентов':'Клиенты по сумме оплат'};
     document.querySelectorAll('h2,h3,.field > label,.client-profile-stats span').forEach(el=>{const key=el.textContent.trim();if(words[key])el.textContent=words[key];});
     document.querySelectorAll('[data-payout-filter-employee]').forEach(b=>{if(b.textContent.trim()==='История')b.textContent='История выплат';});
