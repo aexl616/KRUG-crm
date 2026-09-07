@@ -1,0 +1,126 @@
+/* KRUG / A quieter workspace with explicit, readable actions. */
+:root { --bg:#111213; --panel:#1b1c1e; --text:#f2f1ee; --muted:#aaaeb3; --line:#303235; --shadow:none; --radius:14px; }
+body { background:#111213; line-height:1.5; }
+button,input,select,textarea { font-size:14px; }
+button { transition:background .15s ease,color .15s ease; }
+.card,.list-item,.booking-card,.client-card,.employee-card,.catalog-group-card,.timeline-row,.calendar-booking,.quick-action,.service-edit-row { animation:none; box-shadow:none; }
+.card { background:#1b1c1e; border:1px solid #303235; border-radius:14px; }
+.card:hover,.list-item:hover,.service-edit-row:hover,.catalog-group-card:hover { transform:none; }
+.app-shell { grid-template-columns:260px minmax(0,1fr); gap:0; padding:0; }
+.content { background:transparent; border:0; padding:32px 40px; min-width:0; border-radius:0; }
+.content > *,.grid > *,.settings-grid > *,.budget-page > *,.budget-main-grid > * { min-width:0; }
+.sidebar.ux-sidebar { display:flex; flex-direction:column; top:0; height:100dvh; border:0; border-right:1px solid var(--line); border-radius:0; padding:26px 18px 16px; background:#17181a; backdrop-filter:none; }
+.ux-sidebar .brand { margin:0 8px 28px; gap:12px; }
+.ux-sidebar .brand strong { font-size:24px; letter-spacing:.08em; }
+.ux-sidebar .brand span { font-size:10px; }
+.ux-create { width:100%; min-height:46px; }
+.ux-sidebar .nav { flex:1; overflow:auto; min-height:0; display:block; margin:20px -4px 0; padding:0 4px; }
+.ux-nav-group { margin-bottom:16px; }
+.ux-nav-group > p { color:#858b94; font-size:10px; letter-spacing:.09em; text-transform:uppercase; margin:14px 10px 6px; }
+.nav button,.ux-menu nav button { display:flex; gap:12px; width:100%; padding:9px 10px; min-height:44px; text-align:left; color:#c3c7cc; background:transparent; border-radius:8px; font-weight:550; }
+.nav button small,.ux-menu nav button small { display:none; font-size:11px; font-weight:400; color:var(--muted); }
+.nav button.active,.ux-menu nav button.active { color:#ffa37f; background:#34231d; }
+.nav button:hover,.ux-menu nav button:hover { background:#26282b; }
+.ux-icon { display:inline-flex; flex-shrink:0; width:22px; justify-content:center; align-items:center; font-size:19px; line-height:1; }
+.ux-sidebar-footer { border-top:1px solid var(--line); padding:14px 8px 0; display:grid; grid-template-columns:1fr auto; gap:4px; font-size:13px; }
+.ux-sidebar-footer > span { color:var(--muted);font-size:11px; }
+.ux-sidebar-footer > div { grid-column:1/-1; display:flex; gap:8px; }
+.ux-sidebar-footer .logout { padding:5px 0; min-height:32px; background:transparent; text-align:left; }
+.topbar { margin-bottom:12px; gap:20px; }
+.topbar h1 { font-size:30px; letter-spacing:-.04em; line-height:1.2; }
+.topbar p { font-size:13px; margin-top:8px; }
+.topbar-tools { min-width:0; gap:8px; }
+.global-search { min-width:0; width:clamp(180px,25vw,340px); }
+.topbar-profile { min-height:44px; }
+.topbar-profile > span { background:transparent; }
+.topbar-profile strong { font-size:11px; }
+.topbar-profile small { font-size:10px; }
+.ux-page-actions { display:flex; justify-content:space-between; align-items:center; gap:12px; padding-bottom:22px; }
+.ux-page-actions > div { display:flex; gap:8px; }
+.ux-breadcrumb { color:#868d95; font-size:12px; }
+.ux-breadcrumb > span { margin:0 9px; color:#5e6268; }
+.ux-page-actions .btn { min-height:36px; padding:7px 12px; font-size:12px; }
+.ux-mobile-create { display:none; }
+.ux-help { background:#22272b; border:1px solid #41484d; border-radius:12px; padding:20px 24px; margin-bottom:20px; }
+.ux-help[hidden] { display:none; }
+.ux-help h2 { font-size:18px; }
+.ux-help p,.ux-help li { font-size:14px; color:#c4c9ce; }
+.ux-context { padding:12px 16px; margin:0 0 20px; border-left:2px solid #ff8b5f; color:#b4bac2; background:#191b1d; font-size:13px; max-width:100%; }
+.ux-start { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:26px 28px; background:linear-gradient(110deg,#2e241e,#201f1e); border:1px solid #514032; border-radius:14px; margin-bottom:20px; }
+.ux-eyebrow { color:#daaa86; font-size:10px; letter-spacing:.13em; }
+.ux-start h2 { font-size:27px; letter-spacing:-.035em; margin:9px 0; }
+.ux-start p { max-width:460px; color:#b7b1aa; font-size:13px; margin:0; }
+.ux-start-actions { display:flex; flex-direction:column; gap:8px; flex-shrink:0; }
+.studio-today-hero { padding:16px 22px; margin-bottom:16px; }
+.studio-today-hero h2 { font-size:18px; }
+.studio-today-hero p { margin:0; }
+.studio-today-pulse { min-width:120px; padding:8px; }
+.studio-today-pulse strong { font-size:24px; }
+.section { padding:22px; }
+h2 { font-size:19px; letter-spacing:-.02em; }
+.today-metrics { grid-template-columns:repeat(4,minmax(0,1fr)); }
+.today-summary-section { margin-bottom:16px; }
+.studio-availability-strip { margin-bottom:16px; }
+.btn { min-height:44px; padding:10px 16px; border-radius:9px; box-shadow:none; font-weight:650; }
+.btn.secondary { background:#292c30; color:#ebedf0; border:1px solid #3b3f44; }
+.btn.danger { background:#341f22; color:#ffb0b0; border:1px solid #704147; }
+input,select,textarea { min-width:0; max-width:100%; min-height:44px; background:#141517; border:1px solid #3b3e43; border-radius:8px; }
+select { color-scheme:dark; }
+.field label,.ux-field-label { color:#b7bdc5; font-size:12px; }
+.ux-filter { display:flex; flex-direction:column; gap:6px; flex:1 1 140px; min-width:0; color:#b7bdc5; font-size:11px; }
+.ux-filter select { width:100%; min-width:0; flex:none; }
+.mini-confirm.ux-text-action,.mini-cancel.ux-text-action { width:auto; height:auto; }
+.ux-field-label { display:flex; flex-direction:column; gap:6px; min-width:0; }
+.ux-field-label input,.ux-field-label select { width:100%; }
+.ux-required { color:#ff986e; }
+.ux-form-intro { margin:0 0 4px; color:#b6bec7; font-size:12px; }
+.field-note { font-size:12px; }
+.settings-grid { grid-template-columns:minmax(230px,.7fr) minmax(0,1.4fr); }
+.settings-tabs { gap:8px; padding-bottom:18px; border-bottom:1px solid var(--line); }
+.settings-tabs button { min-height:44px; font-size:12px; }
+.service-edit-row { grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.settings-row { grid-template-columns:minmax(0,1fr) minmax(70px,.5fr); gap:10px; }
+.service-edit-row > .mini-check { min-height:44px; align-self:end; }
+.ux-text-action { width:auto; min-width:0; height:auto; min-height:40px; padding:8px 12px; font-size:12px; border:1px solid #42464c; border-radius:8px; }
+.row-actions { flex-wrap:wrap; }
+.row-actions .ux-text-action { white-space:nowrap; }
+details { min-width:0; }
+summary { cursor:pointer; color:#dce0e5; padding:12px 4px; font-weight:600; font-size:14px; }
+summary:focus-visible { outline:2px solid var(--accent); }
+details[open] > summary { margin-bottom:12px; }
+.ux-add-form { padding:0 12px; background:#242629; border:1px solid #3b3e42; border-radius:10px; margin-bottom:16px; }
+.ux-add-form[open] { padding-bottom:16px; }
+.ux-add-form summary { color:#ffab84; }
+.catalog-group-card { padding:4px 14px; background:#1b1d20; }
+.catalog-group-card details[open] { padding-bottom:14px; }
+.table-wrap { min-width:0; max-width:100%; overflow:auto; }
+.ux-table-hint { font-size:11px; color:#b9bec6; margin:0 0 8px; }
+.ux-notice { color:#ceb394; background:#28231e; padding:14px; border-radius:8px; }
+.calendar-toolbar .actions { flex-wrap:wrap; }
+.modal { border-radius:16px; background:#202225; max-height:calc(100dvh - 32px); }
+.modal-head { align-items:flex-start; }
+.modal .modal-actions { position:sticky; bottom:-1px; background:#202225; border-top:1px solid #41454a; padding:12px 0 0; z-index:2; }
+.modal-head .icon-btn { min-width:40px; min-height:40px; }
+.ux-menu { border:1px solid #41454b; border-radius:18px; background:#1b1d20; color:var(--text); width:min(520px,calc(100% - 24px)); max-height:85dvh; padding:20px; }
+.ux-menu::backdrop { background:rgba(0,0,0,.75); backdrop-filter:blur(4px); }
+.ux-menu-head { display:flex; justify-content:space-between; align-items:center; gap:12px; }
+.ux-menu nav button small { display:block; }
+@media(max-width:1200px){.content{padding:24px}.topbar{align-items:flex-start;flex-direction:column}.topbar-tools{width:100%}.global-search{flex:1;width:auto}.ux-start{flex-wrap:wrap}.ux-start-actions{flex-direction:row}.settings-grid{grid-template-columns:minmax(0,1fr)} }
+@media(max-width:940px){
+ .app-shell{display:block}.sidebar.ux-sidebar{display:none}.content{padding:22px 22px calc(100px + env(safe-area-inset-bottom));overflow-x:visible}
+ .ux-mobile-create{display:inline-flex}.ux-breadcrumb{display:none}.ux-page-actions{justify-content:flex-end}
+ .mobile-tabs{display:flex;gap:0;left:0;right:0;bottom:0;border-radius:0;border:0;border-top:1px solid #373b40;padding:6px 6px calc(6px + env(safe-area-inset-bottom));background:#191b1e;overflow:visible;box-shadow:none}
+ .mobile-tabs button{flex:1;min-width:0;min-height:58px;padding:6px 2px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;font-size:10px;line-height:1.1;border-radius:10px}
+ .mobile-tabs button.active{color:#ffac87;background:#32251f;font-weight:650}.mobile-tabs .ux-icon{font-size:20px}
+ .settings-grid,.budget-main-grid,.two-col{grid-template-columns:minmax(0,1fr)}
+ .service-edit-row{grid-template-columns:repeat(2,minmax(0,1fr))}.settings-row{grid-template-columns:minmax(0,1fr) minmax(70px,.5fr)}
+ .ux-menu{margin:auto auto 12px}.ux-menu nav button{min-height:56px}
+}
+@media(max-width:520px){
+ .content{padding:20px 14px calc(100px + env(safe-area-inset-bottom))}.topbar h1{font-size:28px}.topbar-tools{display:flex}.global-search{width:0;flex:1}.topbar-profile{padding:6px;min-width:40px}.topbar-profile strong{display:none}
+ .ux-start{padding:22px 18px;gap:18px}.ux-start h2{font-size:24px}.ux-start-actions{flex-direction:column;width:100%}.ux-start-actions .btn{width:100%}
+ .ux-eyebrow{font-size:9px}.section{padding:16px}.ux-context{font-size:12px}.today-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.studio-today-hero{flex-direction:row;align-items:center}.studio-today-pulse{width:auto;min-width:96px}
+ .settings-tabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.settings-tabs button{font-size:11px;padding:8px;white-space:normal}.service-edit-row{grid-template-columns:minmax(0,1fr)}
+ .calendar-toolbar .actions>.btn{flex:1 1 120px}.calendar-toolbar{padding:16px}.ux-help{padding:16px}.ux-help ol{padding-left:20px}.modal{padding:16px;width:calc(100% - 20px)}
+ .ux-page-actions>div{width:100%}.ux-page-actions .btn{flex:1;font-size:11px}.ux-menu{padding:16px}.topbar p{max-width:100%}.ux-text-action{min-height:44px}
+}

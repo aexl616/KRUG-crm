@@ -2268,7 +2268,7 @@ th {
 
 .service-edit-row {
   display: grid;
-  grid-template-columns: minmax(150px, 1fr) minmax(120px, 0.8fr) 90px 100px 72px 90px 34px 34px;
+  grid-template-columns: minmax(150px, 1.3fr) minmax(120px, 1fr) minmax(82px, 0.7fr) minmax(92px, 0.8fr);
   align-items: center;
 }
 
@@ -2712,6 +2712,11 @@ th {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.035);
+}
+
+.list-item.settings-row,
+.list-item.service-edit-row {
+  display: grid;
 }
 
 button.list-item {
@@ -3426,8 +3431,8 @@ button.list-item:hover {
 
   .app-shell {
     display: block;
-    padding-bottom: 72px;
     padding: 0;
+    min-width: 0;
   }
 
   .sidebar {
@@ -3436,9 +3441,38 @@ button.list-item:hover {
 
   .content {
     min-height: 100vh;
-    padding: 18px;
+    min-width: 0;
+    padding: 18px 18px 86px;
     border: 0;
     border-radius: 0;
+    overflow-x: clip;
+  }
+
+  .content > *,
+  .grid,
+  .grid > *,
+  .two-col > *,
+  .form-grid > *,
+  .section,
+  .table-wrap,
+  .budget-page,
+  .budget-page > *,
+  .budget-wallets,
+  .budget-wallets > *,
+  .budget-main-grid,
+  .budget-main-grid > *,
+  .budget-rule-grid,
+  .budget-rule-grid > *,
+  .settings-shell,
+  .settings-shell > *,
+  .settings-grid,
+  .settings-grid > * {
+    min-width: 0;
+  }
+
+  .table-wrap {
+    width: 100%;
+    max-width: 100%;
   }
 
   .topbar {
@@ -3454,7 +3488,7 @@ button.list-item:hover {
   .budget-stats,
   .two-col,
   .form-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .dashboard-layout {
@@ -3510,7 +3544,7 @@ button.list-item:hover {
   .budget-main-grid,
   .budget-rule-grid,
   .settings-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .budget-rule-card,
@@ -3576,18 +3610,27 @@ button.list-item:hover {
     left: 10px;
     right: 10px;
     bottom: 10px;
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(70px, 1fr));
+    display: flex;
     gap: 4px;
     padding: 6px;
     border: 1px solid var(--line);
     border-radius: 8px;
     background: rgba(16, 17, 20, 0.96);
     box-shadow: var(--shadow);
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+
+  .mobile-tabs::-webkit-scrollbar {
+    display: none;
   }
 
   .mobile-tabs button {
-    min-height: 46px;
+    flex: 0 0 auto;
+    min-width: 78px;
+    min-height: 44px;
+    padding: 6px 10px;
     border-radius: 8px;
     color: var(--muted);
     background: transparent;
@@ -3649,9 +3692,12 @@ button.list-item:hover {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .service-edit-row,
+  .service-edit-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .settings-row {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) 72px 34px 34px;
   }
 
   .timeline-row {
@@ -3710,7 +3756,7 @@ button.list-item:hover {
 
 @media (max-width: 520px) {
   .content {
-    padding: 14px;
+    padding: 14px 14px 82px;
   }
 
   .finance-warning-item {
@@ -3860,7 +3906,8 @@ button.list-item:hover {
   }
 
   .mobile-tabs button {
+    min-width: 74px;
     font-size: 10px;
-    padding: 4px 2px;
+    padding: 4px 8px;
   }
 }

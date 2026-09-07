@@ -859,6 +859,18 @@ function render() {
 
   bindCommonEvents();
   bindViewEvents();
+  keepActiveMobileTabVisible();
+}
+
+function keepActiveMobileTabVisible() {
+  if (!window.matchMedia("(max-width: 940px)").matches) return;
+  const activeTab = document.querySelector(".mobile-tabs button.active");
+  const tabs = activeTab?.closest(".mobile-tabs");
+  if (!activeTab || !tabs) return;
+
+  requestAnimationFrame(() => {
+    tabs.scrollLeft = activeTab.offsetLeft - (tabs.clientWidth - activeTab.offsetWidth) / 2;
+  });
 }
 
 function renderLogin() {
@@ -947,7 +959,7 @@ function navButtons() {
 }
 
 function renderMobileTabs() {
-  return `<nav class="mobile-tabs">${navButtons()}</nav>`;
+  return `<nav class="mobile-tabs" aria-label="Основная навигация">${navButtons()}</nav>`;
 }
 
 function renderTopbar() {
