@@ -386,6 +386,7 @@ function normalizeState(nextState) {
     };
   });
   const expenses = (nextState.expenses || []).map((expense) => ({
+    ...expense,
     id: expense.id || crypto.randomUUID(),
     date: expense.date || new Date().toISOString().slice(0, 10),
     title: expense.title || "Расход",
@@ -532,6 +533,7 @@ function isRestrictedRole() {
 }
 
 function canViewSection(sectionId) {
+  if (sectionId === 'expenses') return isManagerRole();
   const sections = {
     owner: ["dashboard", "calendar", "bookings", "clients", "finance", "payments", "payouts", "budget", "reports", "settings"],
     admin: ["dashboard", "calendar", "bookings", "clients", "payments", "payouts", "reports", "settings"],
@@ -842,6 +844,7 @@ function render() {
         ${view === "dashboard" ? renderDashboard() : ""}
         ${view === "bookings" ? renderBookings() : ""}
         ${view === "finance" ? renderFinance() : ""}
+        ${view === "expenses" ? renderExpenses() : ""}
         ${view === "payments" ? renderPayments() : ""}
         ${view === "payouts" ? renderPayouts() : ""}
         ${view === "clients" ? renderClients() : ""}
@@ -1144,6 +1147,7 @@ function payoutTotalsFromBudget(budget = calculateBudget()) {
 }
 
 function employeePayoutStats(employeeId) {
+  if (typeof financeEmployeePayoutStats === 'function') return financeEmployeePayoutStats(employeeId);
   const employee = (state.users || []).find((user) => user.id === employeeId);
   const emptyStats = {
     employee: employee || null,
@@ -1874,7 +1878,8 @@ function studioTodayData() {
   const bookings = todaysBookings();
   const activeStatuses = ["заявка", "подтверждено", "в процессе"];
   const counts = Object.fromEntries(bookingStatuses.map((status) => [status, bookings.filter((booking) => booking.status === status).length]));
-  const actualIncome = state.payments.filter((payment) => payment.date === today).reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
+  const finance = typeof financeStats === 'function' && isManagerRole() ? financeStats('today') : null;
+  const actualIncome = finance ? finance.cashIn : state.payments.filter((payment) => payment.date === today).reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
   const expectedIncome = bookings.filter((booking) => activeStatuses.includes(booking.status)).reduce((sum, booking) => sum + Number(booking.amount || 0), 0);
   const completed = bookings.filter((booking) => booking.status === "завершено");
   const completedAmount = completed.reduce((sum, booking) => sum + Number(booking.amount || 0), 0);
@@ -1886,7 +1891,7 @@ function studioTodayData() {
     actualIncome,
     expectedIncome,
     completedCount: completed.length,
-    averageCheck: completed.length ? completedAmount / completed.length : 0,
+    averageCheck: finance ? finance.averageCheck : completed.length ? completedAmount / completed.length : 0,
     employeePayoutAvailable: isManagerRole() ? totalEmployeePayoutAvailable() : employeePayoutStats(currentUser()?.id || "").availableToPay,
     studioBlocks,
     availability: currentStudioAvailability(today),
@@ -3321,42 +3326,7 @@ function renderBudget() {
 }
 
 function renderFinance() {
-  const income = state.payments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0);
-  const expenses = (state.expenses || []).reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
-  const paidPayouts = (state.payouts || []).filter((payout) => payout.status === "Выплачено").reduce((sum, payout) => sum + Number(payout.amount || 0), 0);
-  const budget = calculateBudget();
-  const profit = income - expenses - paidPayouts;
-
-  return `
-    <div class="grid stats dashboard-stats">
-      ${renderMetricCard("Доходы", income, "Все платежи", 0, "за всё время")}
-      ${renderMetricCard("Расходы", expenses, "Ручные расходы", 0, "учтено")}
-      ${renderMetricCard("Прибыль", profit, "Доходы минус расходы и выплаты", 0, "итог")}
-      ${renderMetricCard("Выплаты", paidPayouts, "Выплачено", 0, "команде")}
-    </div>
-    <div class="grid two-col" style="margin-top:16px">
-      <section class="card section">
-        <h2>Добавить расход</h2>
-        <form id="expenseForm" class="form-grid">
-          <div class="field"><label>Дата</label><input name="date" type="date" required value="${new Date().toISOString().slice(0, 10)}" /></div>
-          <div class="field"><label>Название</label><input name="title" required placeholder="Аренда, расходники, реклама" /></div>
-          <div class="field"><label>Сумма</label><input name="amount" type="number" min="1" step="1" required /></div>
-          <div class="field full"><label>Комментарий</label><textarea name="comment"></textarea></div>
-          <button class="btn" type="submit">Сохранить расход</button>
-        </form>
-      </section>
-      <section class="card section">
-        <h2>Бюджет / копилки</h2>
-        ${renderBudgetProgress(budgetWallets.map((wallet) => [wallet, budget.wallets[wallet]]))}
-      </section>
-      <section class="card section wide-card">
-        <h2>Последние расходы</h2>
-        <div class="list">
-          ${(state.expenses || []).slice(-8).reverse().map((expense) => `<div class="list-item"><span>${formatDate(expense.date)} · ${expense.title}<br><span class="muted">${expense.comment || ""}</span></span><strong>${money(expense.amount)}</strong></div>`).join("") || renderEmptyState("Пока нет расходов", "Добавь первый расход, чтобы видеть чистую прибыль точнее.")}
-        </div>
-      </section>
-    </div>
-  `;
+  return typeof renderFinanceDashboard === "function" ? renderFinanceDashboard() : "";
 }
 
 function renderPayouts() {
@@ -3464,7 +3434,7 @@ function renderFinancialWarnings(warnings) {
           <div>
             <span class="finance-warning-level">${warning.level === "critical" ? "Критично" : warning.level === "info" ? "Информация" : "Предупреждение"}</span>
             <strong>${warning.type}</strong>
-            <small><b>${warning.action === "booking" ? "Запись" : warning.action === "payment" ? "Платёж" : warning.action === "payout" ? "Выплата" : warning.action === "employee" ? "Сотрудник" : "Данные"}</b> · ${warning.description}${warning.date ? ` · ${formatDate(String(warning.date).slice(0, 10))}` : ""}</small>
+            <small><b>${warning.action === "booking" ? "Запись" : warning.action === "payment" ? "Платёж" : warning.action === "payout" ? "Выплата" : warning.action === "employee" ? "Сотрудник" : "Данные"}</b> · ${typeof financeEscape === 'function' ? financeEscape(warning.description) : warning.description}${warning.date ? ` · ${formatDate(String(warning.date).slice(0, 10))}` : ""}</small>
           </div>
           ${warning.amount !== null ? `<b>${money(warning.amount)}</b>` : ""}
           ${warning.action === "booking" ? `<button class="btn secondary" type="button" data-open-booking="${warning.targetId}">Открыть</button>` : ""}
@@ -4947,20 +4917,6 @@ function bindViewEvents() {
     render();
   });
 
-  document.querySelector("#expenseForm")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const data = Object.fromEntries(new FormData(event.target));
-    state.expenses = state.expenses || [];
-    state.expenses.push({
-      id: crypto.randomUUID(),
-      date: data.date,
-      title: data.title.trim(),
-      amount: Number(data.amount || 0),
-      comment: data.comment.trim()
-    });
-    saveState();
-    render();
-  });
 
   document.querySelector("#paymentForm")?.addEventListener("submit", (event) => {
     event.preventDefault();

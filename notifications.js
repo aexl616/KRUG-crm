@@ -1,5 +1,5 @@
 /* Patch 0.9.2: local activity feed. No network delivery or background push. */
-const notificationCategories = { booking: 'Записи', service: 'Услуги', client: 'Клиенты', employee: 'Сотрудники', finance: 'Выплаты / платежи', studioBlock: 'Технические блоки' };
+const notificationCategories = { booking: 'Записи', service: 'Услуги', client: 'Клиенты', employee: 'Сотрудники', finance: 'Финансы: оплаты, расходы, выплаты', studioBlock: 'Технические блоки' };
 let notificationFilter = 'unread';
 let notificationTypeFilter = '';
 let notificationSystemError = '';
@@ -20,7 +20,7 @@ function notificationPreferences(userId = currentUser()?.id) {
 }
 
 function notificationCategory(n) {
-  return ['payment', 'payout', 'financialWarning'].includes(n.entityType) ? 'finance' : n.entityType;
+  return ['payment', 'payout', 'expense', 'financialWarning'].includes(n.entityType) ? 'finance' : n.entityType;
 }
 
 function canViewNotification(n) {
@@ -34,6 +34,7 @@ function canViewNotification(n) {
     case 'service': return canEditSettings();
     case 'employee': return canManageEmployees() || (n.entityId === user.id && n.type === 'employee_self_updated');
     case 'payment': return canViewPayment();
+    case 'expense': return typeof canManageExpenses === 'function' && canManageExpenses();
     case 'payout': return entity ? canViewPayout(entity) : isManagerRole();
     case 'financialWarning': return canViewFinancialWarnings();
     case 'studioBlock': return canViewSection('calendar');
@@ -42,7 +43,7 @@ function canViewNotification(n) {
 }
 
 function notificationEntity(n) {
-  const collections = { booking: 'bookings', client: 'clients', service: 'serviceItems', employee: 'users', payment: 'payments', payout: 'payouts', studioBlock: 'studioBlocks' };
+  const collections = { booking: 'bookings', client: 'clients', service: 'serviceItems', employee: 'users', payment: 'payments', payout: 'payouts', expense: 'expenses', studioBlock: 'studioBlocks' };
   return (state[collections[n.entityType]] || []).find(e => e.id === n.entityId);
 }
 
@@ -106,6 +107,7 @@ function trimNotifications() {
 }
 
 const notificationFields = {
+  expenses: {date:'Дата',category:'Категория',title:'Название',amount:'Сумма',employeeId:'Сотрудник',comment:'Комментарий',recurring:'Ежемесячно'},
   bookings: { date: 'Дата', time: 'Время', duration: 'Длительность', service: 'Услуга', serviceId: 'Услуга', employeeId: 'Сотрудник', status: 'Статус', client: 'Клиент', amount: 'Сумма' },
   serviceItems: { name: 'Название', categoryId: 'Категория', price: 'Цена', duration: 'Длительность', active: 'Доступность', order: 'Порядок' },
   serviceGroups: { name: 'Название', order: 'Порядок' },
@@ -127,7 +129,7 @@ function notificationFieldValue(key, value) {
 }
 
 function collectNotificationChanges() {
-  const specs = { bookings: ['booking', 'Запись'], serviceItems: ['service', 'Услуга'], serviceGroups: ['service', 'Категория услуг'], users: ['employee', 'Сотрудник'], clients: ['client', 'Клиент'], payments: ['payment', 'Оплата'], payouts: ['payout', 'Выплата'], studioBlocks: ['studioBlock', 'Технический блок'] };
+  const specs = { expenses: ['expense', 'Расход'], bookings: ['booking', 'Запись'], serviceItems: ['service', 'Услуга'], serviceGroups: ['service', 'Категория услуг'], users: ['employee', 'Сотрудник'], clients: ['client', 'Клиент'], payments: ['payment', 'Оплата'], payouts: ['payout', 'Выплата'], studioBlocks: ['studioBlock', 'Технический блок'] };
   for (const [collection, [entityType, label]] of Object.entries(specs)) {
     const before = new Map(notificationSnapshot[collection].map(e => [e.id, e]));
     const after = new Map((state[collection] || []).map(e => [e.id, e]));
@@ -141,7 +143,7 @@ function collectNotificationChanges() {
         if (derived) continue;
       }
       let type = `${entityType === 'studioBlock' ? 'studio_block' : entityType}_${!old ? 'created' : !next ? 'deleted' : 'updated'}`;
-      const titles = { booking: ['Создана запись', 'Запись изменена', 'Запись удалена'], service: ['Добавлена услуга', 'Услуга изменена', 'Услуга удалена'], employee: ['Добавлен сотрудник', 'Сотрудник изменён', 'Сотрудник удалён'], client: ['Добавлен клиент', 'Клиент изменён', 'Клиент удалён'], payment: ['Добавлена оплата', 'Оплата изменена', 'Оплата удалена'], payout: ['Учтена выплата', 'Выплата изменена', 'Выплата удалена'], studioBlock: ['Создан технический блок', 'Технический блок изменён', 'Технический блок удалён'] };
+      const titles = { expense: ['Добавлен расход', 'Расход изменён', 'Расход удалён'], booking: ['Создана запись', 'Запись изменена', 'Запись удалена'], service: ['Добавлена услуга', 'Услуга изменена', 'Услуга удалена'], employee: ['Добавлен сотрудник', 'Сотрудник изменён', 'Сотрудник удалён'], client: ['Добавлен клиент', 'Клиент изменён', 'Клиент удалён'], payment: ['Добавлена оплата', 'Оплата изменена', 'Оплата удалена'], payout: ['Учтена выплата', 'Выплата изменена', 'Выплата удалена'], studioBlock: ['Создан технический блок', 'Технический блок изменён', 'Технический блок удалён'] };
       let title = titles[entityType][!old ? 0 : !next ? 2 : 1];
       if (collection === 'serviceGroups') title = `${label}: ${!old ? 'добавление' : !next ? 'удаление' : 'изменение'}`;
       if (entityType === 'booking') {
@@ -241,7 +243,8 @@ function openNotificationTarget(n) {
     case 'employee': if (!canManageEmployees()) return false; view = 'settings'; settingsTab = 'employees'; break;
     case 'payment': view = 'payments'; editingPaymentId = entity.id; break;
     case 'payout': view = 'payouts'; payoutEmployeeFilter = entity.employeeId; highlightedPayoutId = entity.id; break;
-    case 'financialWarning': view = 'payouts'; payoutProblemsOnly = true; break;
+    case 'expense': view = 'expenses'; expenseEditingId = entity.id; expenseFormOpen = true; break;
+    case 'financialWarning': view = canViewFinance() ? 'finance' : 'payouts'; payoutProblemsOnly = true; break;
     default: return false;
   }
   if (view === 'calendar') { calendarEmployeeFilter = ''; calendarStatusFilter = ''; calendarServiceFilter = ''; }

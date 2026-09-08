@@ -1,0 +1,59 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const path=require('node:path');
+const {webcrypto}=require('node:crypto');
+const F=require('../finance-core.js');
+const now=new Date(2026,8,15,12);
+let passed=0;
+function test(name,fn){fn();passed++;console.log('PASS',name);}
+const fixture=()=>({users:[{id:'u1',name:'Первый',role:'owner'},{id:'u2',name:'Второй',role:'engineer'}],bookings:[
+ {id:'old',date:'2026-08-20',time:'12:00',status:'завершено',amount:1000,employeeId:'u1',client:'А',service:'Запись'},
+ {id:'b1',date:'2026-09-01',time:'12:00',status:'завершено',amount:1000,employeeId:'u1',client:'А',service:'Запись'},
+ {id:'b2',date:'2026-09-02',time:'12:00',status:'завершено',amount:500,employeeId:'u2',client:'Б',service:'Сведение'},
+ {id:'future',date:'2026-09-20',time:'12:00',status:'подтверждено',amount:2000,employeeId:'u2',client:'В',service:'Запись'},
+ {id:'cancel',date:'2026-09-20',time:'12:00',status:'отменено',amount:9999,employeeId:'u2'}],payments:[
+ {id:'p0',date:'2026-08-20',amount:1000,bookingId:'old'}, {id:'pre',date:'2026-08-25',amount:500,bookingId:'b1'},
+ {id:'p1',date:'2026-09-01',amount:200,bookingId:'b1'}, {id:'p2',date:'2026-09-02',amount:600,bookingId:'b2'}, {id:'manual',date:'2026-09-03',amount:400}],
+ expenses:[{id:'rent',date:'2026-08-05',category:'Аренда',title:'Аренда',amount:200,recurring:true},{id:'e',date:'2026-09-03',category:'Коммунальные',title:'Свет',amount:100}],
+ payouts:[{id:'out0',employeeId:'u1',amount:100,paidAt:'2026-08-26',status:'Выплачено'},{id:'out1',employeeId:'u1',amount:300,paidAt:'2026-09-05',status:'Выплачено'},{id:'plan',employeeId:'u1',amount:200,paidAt:'2026-09-22',status:'Запланировано'}],financePlan:{monthlyRevenueTarget:2000,monthlyExpenseLimit:500}});
+test('period today',()=>assert.deepEqual(F.periodRange('today',now),{start:'2026-09-15',end:'2026-09-15',label:'Сегодня'}));
+test('Monday-based week',()=>assert.deepEqual(F.periodRange('week',now),{start:'2026-09-14',end:'2026-09-20',label:'Неделя'}));
+test('previous month crosses year',()=>assert.equal(F.periodRange('lastMonth',new Date(2026,0,1)).start,'2025-12-01'));
+test('leap February',()=>assert.equal(F.periodRange('lastMonth',new Date(2024,2,15)).end,'2024-02-29'));
+test('invalid dates and ranges rejected',()=>{assert.equal(F.validDate('2026-02-30'),false);assert.throws(()=>F.periodRange({start:'2026-09-20',end:'2026-09-01'},now));});
+test('revenue is not cash',()=>{const s=F.stats(fixture(),'month',now);assert.equal(s.revenue,1500);assert.equal(s.cashIn,1200);assert.equal(s.completedBookings,2);assert.equal(s.averageCheck,750);});
+test('prior-period prepayment settles current booking',()=>{const s=F.stats(fixture(),'month',now);assert.equal(s.unpaidRevenue,300);assert.equal(s.receivedForCompleted,1200);});
+test('multiple linked payments counted once each',()=>{const d=fixture();d.bookings[1].paymentId='p1';assert.equal(F.stats(d,'month',now).unpaidRevenue,300);});
+test('legacy paymentId links work',()=>{const d=fixture();delete d.payments[2].bookingId;d.bookings[1].paymentId='p1';assert.equal(F.stats(d,'month',now).unpaidRevenue,300);});
+test('overpayment cannot cancel another booking debt',()=>{const s=F.stats(fixture(),'month',now);assert.equal(s.warnings.find(w=>w.code==='overpayment').amount,100);assert.equal(s.unpaidRevenue,300);});
+test('unlinked payment is cash but not revenue',()=>assert.ok(F.stats(fixture(),'month',now).warnings.some(w=>w.code==='unlinked_payment')));
+test('net cash and carried opening balance',()=>{const s=F.stats(fixture(),'month',now);assert.equal(s.netCash,800);assert.equal(s.openingCash,1200);assert.equal(s.cashBalanceAsOf,2000);});
+test('planned payout not deducted twice from debt',()=>{const s=F.stats(fixture(),'month',now);assert.equal(s.employeeEarned,1500);assert.equal(s.employeeOutstanding,2100);assert.equal(s.plannedPayouts,200);assert.equal(s.obligationsReserve,2100);assert.equal(s.freeCashAfterObligations,-100);});
+test('cancelled payout ignored and legacy paid status recognized',()=>{const d=fixture();d.payouts.push({employeeId:'u1',amount:50,paidAt:'2026-09-01'},{employeeId:'u1',amount:9000,paidAt:'2026-09-01',status:'Отменено'});assert.equal(F.stats(d,'month',now).payoutsPaid,350);});
+test('forecast confirmed bookings, recurring expense, obligations and plan',()=>{const s=F.stats(fixture(),'month',now);assert.equal(s.forecastRevenue,3500);assert.equal(s.forecastExpenses,300);assert.equal(s.forecastPayouts,4400);assert.equal(s.forecastFreeCash,0);});
+test('recurring actual payment suppresses projection',()=>{const d=fixture();d.expenses.push({...d.expenses[0],id:'rent2',date:'2026-09-05'});assert.equal(F.stats(d,'month',now).forecastExpenses,300);assert.equal(F.stats(d,'month',now).projectedExpenses.length,0);});
+test('duplicate recurring warned but actual data not discarded',()=>{const d=fixture();d.expenses.push({...d.expenses[0],id:'r1',date:'2026-09-05'},{...d.expenses[0],id:'r2',date:'2026-09-06'});const s=F.stats(d,'month',now);assert.equal(s.expenses,500);assert.ok(s.warnings.some(w=>w.code==='duplicate_recurring'));});
+test('future booking prepayment not counted twice in forecast',()=>{const d=fixture();d.payments.push({id:'fp',date:'2026-09-10',amount:700,bookingId:'future'});assert.equal(F.stats(d,'month',now).forecastFutureCash,1300);assert.equal(F.stats(d,'month',now).forecastFreeCash,0);});
+test('next-month payout plan reserves cash but does not inflate current-month forecast',()=>{const d=fixture();d.payouts.push({id:'later',employeeId:'u1',amount:9000,paidAt:'2026-10-10',status:'Запланировано'});const s=F.stats(d,'month',now);assert.equal(s.forecastPayouts,4400);assert.equal(s.plannedPayouts,9200);assert.equal(s.obligationsReserve,9700);});
+test('monthly plan progress',()=>{const p=F.stats(fixture(),'month',now).plan;assert.equal(p.revenuePercent,75);assert.equal(p.revenueRemaining,500);assert.equal(p.expenseRemaining,400);});
+test('warnings and risk for missing data',()=>{const d=fixture();d.bookings.push({id:'bad',date:'2026-09-01',amount:100,status:'завершено'});d.expenses.push({id:'bad-e',date:'2026-09-02',amount:0});const s=F.stats(d,'month',now);for(const code of ['unpaid_booking','booking_without_employee','invalid_expense','negative_free_cash'])assert.ok(s.warnings.some(w=>w.code===code));assert.equal(s.health,'Риск');});
+test('limits and excessive planned payouts',()=>{const d=fixture();d.financePlan.monthlyExpenseLimit=50;d.payouts[2].amount=9000;const s=F.stats(d,'month',now);for(const code of ['expense_limit','planned_over_cash','payout_over_earned'])assert.ok(s.warnings.some(w=>w.code===code));});
+test('all period choices calculate without mutation',()=>{const d=fixture(),before=JSON.stringify(d);for(const p of Object.keys(F.periods))assert.ok(Number.isFinite(F.stats(d,p,now).freeCashAfterObligations));assert.equal(JSON.stringify(d),before);});
+test('historical payments after cutoff do not erase old debt',()=>{const d=fixture();d.payments[0].date='2026-09-02';assert.equal(F.stats(d,'lastMonth',now).unpaidRevenue,1000);});
+test('migration preserves financial entities and notification data',()=>{const d=fixture();d.notifications=[{id:'keep'}];delete d.financePlan;d.expenses[0].custom='preserve';const m=F.migrate(d,now);assert.equal(m.expenses[0].category,'Аренда');assert.equal(m.expenses[0].custom,'preserve');assert.deepEqual(m.bookings,d.bookings);assert.deepEqual(m.notifications,d.notifications);assert.equal(m.financePlan.monthlyExpenseLimit,0);assert.deepEqual(F.migrate({},now).expenses,[]);assert.deepEqual(F.migrate(m,now),m);});
+test('money rounding and non-finite imported amounts',()=>{assert.equal(F.sum([{amount:.1},{amount:.2}]),.3);const d=fixture();d.payments.push({amount:Infinity,date:'2026-09-01'});assert.ok(Number.isFinite(F.stats(d,'month',now).cashIn));});
+const root=path.resolve(__dirname,'..');const storage=new Map();const document={querySelector:()=>null,querySelectorAll:()=>[],addEventListener(){}};
+const ctx=vm.createContext({console,crypto:webcrypto,structuredClone,Date,document,window:{isSecureContext:true,addEventListener(){},matchMedia:()=>({matches:false})},localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v)},setInterval(){},setTimeout(){},confirm:()=>true,alert(){}});
+function run(code){return vm.runInContext(code,ctx);}
+run(fs.readFileSync(path.join(root,'app.js'),'utf8').replace(/render\(\);\s*$/,''));run('render=()=>{};');
+for(const name of ['finance-core.js','finance.js','notifications.js'])run(fs.readFileSync(path.join(root,name),'utf8'));
+run("state.sessionUserId='u1';");
+test('expense CRUD and owner notification dedup',()=>{run("saveExpense({date:todayKey(),category:'Аренда',title:'Тест Finance',amount:100,recurring:true});");assert.equal(run('state.expenses.length'),1);assert.equal(run("state.notifications.filter(n=>n.type==='expense_created').length"),1);run("saveExpense({...state.expenses[0],amount:120},state.expenses[0].id);saveState();saveState();");assert.equal(run("state.notifications.filter(n=>n.type==='expense_updated').length"),1);assert.equal(run("deleteExpense(state.expenses[0].id)"),true);assert.equal(run('state.expenses.length'),0);});
+test('invalid expense rejected',()=>assert.equal(run("saveExpense({date:'2026-02-30',category:'Аренда',title:'x',amount:-1}).ok"),false));
+test('engineer blocked from finance and expenses including direct mutation',()=>{run("state.sessionUserId='u2';");assert.equal(run("canViewSection('finance')"),false);assert.equal(run("canViewSection('expenses')"),false);assert.equal(run("saveExpense({date:todayKey(),category:'Аренда',title:'x',amount:1}).ok"),false);assert.equal(run("notificationsForCurrentUser().filter(n=>n.entityType==='expense').length"),0);assert.ok(run('renderFinance()').includes('Нет доступа'));});
+test('admin has operational expense access but no owner overview or plan mutation',()=>{run("state.users.push({id:'admin-test',role:'admin',name:'Админ',active:true});state.sessionUserId='admin-test';");assert.equal(run("canViewSection('expenses')"),true);assert.equal(run("canViewSection('finance')"),false);assert.equal(run('saveFinancePlan({monthlyRevenueTarget:100,monthlyExpenseLimit:100})'),false);assert.ok(run('canViewSection("payouts")'));});
+test('staff limited to own payouts',()=>{run("state.users.push({id:'staff-test',role:'staff',name:'Staff',active:true});state.sessionUserId='staff-test';");assert.equal(run('canManageExpenses()'),false);assert.equal(run('canViewPayout({employeeId:"u2"})'),false);assert.equal(run('canViewPayout({employeeId:"staff-test"})'),true);});
+test('legacy normalization retains new expense fields after reload',()=>{run("state.sessionUserId='u1';saveExpense({date:todayKey(),category:'Реклама',title:'Reload',amount:100,employeeId:'u2',recurring:true});state=normalizeState(state);");assert.equal(run('state.expenses[0].category'),'Реклама');assert.equal(run('state.expenses[0].recurring'),true);assert.equal(run('state.expenses[0].employeeId'),'u2');});
+test('plan limit and negative cash notifications do not spam',()=>{run("state.payments=[];saveFinancePlan({monthlyRevenueTarget:1000,monthlyExpenseLimit:50});");const n=run('state.notifications.length');run('financeStats();financialWarnings();saveState();saveState();');assert.equal(run('state.notifications.length'),n);assert.ok(run("state.notifications.some(n=>n.type==='financial_warning' && n.title==='Превышен лимит расходов месяца')"));assert.ok(run("state.notifications.some(n=>n.type==='financial_warning' && n.title==='Отрицательный свободный остаток')"));});
+console.log(`${passed} finance tests passed`);
