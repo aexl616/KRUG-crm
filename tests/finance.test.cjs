@@ -46,6 +46,7 @@ test('money rounding and non-finite imported amounts',()=>{assert.equal(F.sum([{
 const root=path.resolve(__dirname,'..');const storage=new Map();const document={querySelector:()=>null,querySelectorAll:()=>[],addEventListener(){}};
 const ctx=vm.createContext({console,crypto:webcrypto,structuredClone,Date,document,window:{isSecureContext:true,addEventListener(){},matchMedia:()=>({matches:false})},localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v)},setInterval(){},setTimeout(){},confirm:()=>true,alert(){}});
 function run(code){return vm.runInContext(code,ctx);}
+run(fs.readFileSync(path.join(root,'hourly-core.js'),'utf8'));
 run(fs.readFileSync(path.join(root,'app.js'),'utf8').replace(/render\(\);\s*$/,''));run('render=()=>{};');
 for(const name of ['finance-core.js','finance.js','notifications.js'])run(fs.readFileSync(path.join(root,name),'utf8'));
 run("state.sessionUserId='u1';");

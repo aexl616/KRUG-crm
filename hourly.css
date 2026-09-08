@@ -1,0 +1,7 @@
+.hourly-service-row { display:block;min-width:0; }
+.hourly-tier-grid { display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:16px 0; }
+.hourly-tier-grid label { display:grid;gap:6px;font-size:12px;min-width:0; }
+.hourly-tier-grid small { color:#a8adb5; }
+.hourly-tier-grid input { width:100%;min-width:0; }
+@media(max-width:900px) { .hourly-tier-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:480px) { .hourly-tier-grid { grid-template-columns:minmax(0,1fr); } }

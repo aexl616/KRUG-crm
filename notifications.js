@@ -109,7 +109,7 @@ function trimNotifications() {
 const notificationFields = {
   expenses: {date:'Дата',category:'Категория',title:'Название',amount:'Сумма',employeeId:'Сотрудник',comment:'Комментарий',recurring:'Ежемесячно'},
   bookings: { date: 'Дата', time: 'Время', duration: 'Длительность', service: 'Услуга', serviceId: 'Услуга', employeeId: 'Сотрудник', status: 'Статус', client: 'Клиент', amount: 'Сумма' },
-  serviceItems: { name: 'Название', categoryId: 'Категория', price: 'Цена', duration: 'Длительность', active: 'Доступность', order: 'Порядок' },
+  serviceItems: { name: 'Название', categoryId: 'Категория', price: 'Цена', priceTiers: 'Тарифы', duration: 'Длительность', active: 'Доступность', order: 'Порядок' },
   serviceGroups: { name: 'Название', order: 'Порядок' },
   users: { name: 'Имя', role: 'Роль', position: 'Должность', active: 'Активность', phone: 'Телефон', telegram: 'Telegram', percent: 'Доля', fixedRate: 'Ставка' },
   clients: { name: 'Имя', phone: 'Телефон', telegram: 'Telegram', status: 'Статус', notes: 'Заметки', tags: 'Теги' },
@@ -121,6 +121,7 @@ function notificationTakeSnapshot() {
   return structuredClone(Object.fromEntries(Object.keys(notificationFields).map(k => [k, state[k] || []])));
 }
 function notificationFieldValue(key, value) {
+  if (key === 'priceTiers') return (value || []).map(t => `${t.hours} ч: ${t.totalPrice} ₽`).join(', ');
   if (key === 'employeeId') return state.users.find(u => u.id === value)?.name || 'Не назначен';
   if (key === 'serviceId') return state.serviceItems.find(s => s.id === value)?.name || 'Услуга';
   if (key === 'categoryId') return state.serviceGroups.find(s => s.id === value)?.name || 'Категория';

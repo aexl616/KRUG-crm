@@ -11,6 +11,7 @@ function boot(saved) {
     document: { querySelector: () => null, querySelectorAll: () => [], addEventListener: (name, cb) => { (listeners[name] ||= []).push(cb); }, hidden: false },
     window: { isSecureContext: true, addEventListener() {}, matchMedia: () => ({matches:false}) },
     localStorage: { getItem: key => storage.get(key) || null, setItem: (key, val) => storage.set(key, val) }, confirm: () => true, alert() {} });
+  vm.runInContext(fs.readFileSync(path.join(root, 'hourly-core.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(path.join(root, 'app.js'), 'utf8').replace(/render\(\);\s*$/, ''), context);
   vm.runInContext('render = () => {};', context);
   vm.runInContext(fs.readFileSync(path.join(root, 'notifications.js'), 'utf8'), context);
