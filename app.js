@@ -439,7 +439,6 @@ function normalizeLegacyState(nextState) {
     const previous = previousEntry?.[1] || {};
     const nextClient = {
       ...previous,
-      ...previous,
       id: previous.id || crypto.randomUUID(),
       name,
       phone: item.phone || previous.phone || "",
@@ -995,7 +994,7 @@ function navButtons() {
     ["clients", "Клиенты"],
     ["finance", "Финансы"],
     ["payments", "Платежи"],
-    ...(isOwner() ? [["payouts", "Правила выплат"]] : []),
+    ["payouts", "Выплаты"],
     ["budget", "Бюджет"],
     ["reports", "Отчёты"],
     ["settings", "Настройки"]
@@ -3733,8 +3732,7 @@ function renderSettings() {
   const tabs = [
     ["services", "Каталог услуг"],
     ["employees", "Сотрудники"],
-    ["payouts", "Выплаты"],
-    ...(isOwner() ? [["budget", "Бюджет / копилки"]] : []),
+    ...(isOwner() ? [["payouts", "Правила выплат"], ["budget", "Правила распределения"]] : []),
     ["general", "Общие настройки"],
     ["profile", "Профиль"],
     ["access", "Текущий пользователь"]

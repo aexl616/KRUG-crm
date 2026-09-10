@@ -9,7 +9,7 @@
     ['finance','Обзор финансов','Доходы, расходы и результат','Деньги','↗'],
     ['payments','Оплаты клиентов','Поступления за услуги студии','Деньги','↓'],
     ['expenses','Расходы','Затраты студии и регулярные расходы','Деньги','−'],
-    ['payouts','Выплаты команде','Начисления и выплаты сотрудникам','Деньги','↑'],
+    ['payouts','Выплаты','Начисления и выплаты сотрудникам','Деньги','↑'],
     ['budget','Распределение дохода','Доли студии, копилки и правила','Деньги','◫'],
     ['reports','Отчёты','Результаты по дням, услугам и клиентам','Аналитика и управление','▥'],
     ['settings','Настройки','Услуги, команда и профиль','Аналитика и управление','⚙']
@@ -54,7 +54,7 @@
   const oldDashboard = renderDashboard;
   renderDashboard = () => oldDashboard();
   const oldSettings = renderSettings;
-  renderSettings = () => oldSettings().replace('>Выплаты</button>','>Правила выплат</button>').replace('>Бюджет / копилки</button>','>Правила распределения</button>').replace('>Текущий пользователь</button>','>Проверка ролей</button>');
+  renderSettings = () => oldSettings().replace('>Текущий пользователь</button>','>Проверка ролей</button>');
   const oldPlaceholder = renderSettingsPlaceholder;
   renderSettingsPlaceholder = (title,text) => `${oldPlaceholder(title,({payouts:'Начисления и историю расчётов с сотрудниками можно посмотреть в разделе «Выплаты команде».',budget:'Текущие доли и правила можно посмотреть в разделе «Распределение дохода».',general:'Настройка рабочего времени и уведомлений пока недоступна.'})[settingsTab]||text)}<p class="ux-notice">Этот раздел пока справочный: редактируемых параметров здесь нет.</p>${settingsTab==='payouts'&&canViewSection('payouts')?'<button class="btn secondary" data-view="payouts">Перейти к выплатам команде →</button>':''}${settingsTab==='budget'&&canViewSection('budget')?'<button class="btn secondary" data-view="budget">Посмотреть распределение дохода →</button>':''}`;
   const oldCommands=renderCommandPalette;
