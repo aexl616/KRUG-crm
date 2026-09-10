@@ -12,7 +12,7 @@ function setup() {
 test('all supplied price tiers are exact; unspecified 2h is unavailable', async () => {
   const { B, API } = setup();
   const expected = [[1200,2400,3300,4250,5200,6150,7100,8050],[1000,null,2800,3600,4400,5200,6000,6800],[1800,3600,4800,6000,7200,8400,9600,10800],[1000,null,2800,3600,4400,5100,5800,6500]];
-  (await API.getServices()).forEach((service, i) => expected[i].forEach((price, j) => {
+  (await Promise.all(['recording','morning','recording-mix','rental'].map(API.getService))).forEach((service, i) => expected[i].forEach((price, j) => {
     if (price === null) assert.throws(() => B.priceFor(service, j + 1));
     else assert.equal(B.priceFor(service, j + 1), price);
   }));
@@ -40,7 +40,7 @@ test('creation recalculates price, persists, prevents duplicate and overlap, fil
   const startTime = (await API.getAvailableSlots(date, 3))[0];
   const draft = { serviceId: 'recording', durationHours: 3, date, startTime, price: 1, requestId: 'request-one', client: { name: 'Тест Клиент', phone: '+7 999 123-45-67', telegram: '@test_client' } };
   const row = await API.createBooking(draft);
-  assert.equal(row.price, 3300);
+  assert.equal(row.price, B.quoteFor(await API.getService('recording'), 3, startTime).totalPrice);
   assert.equal(row.status, 'request');
   assert.equal((await API.createBooking(draft)).id, row.id);
   assert.equal((await API.getMyBookings()).length, 1);
@@ -99,4 +99,40 @@ test('API accepts an application without Telegram and keeps request status', asy
   const row = await API.createBooking({ serviceId: 'recording', durationHours: 1, date, startTime: (await API.getAvailableSlots(date, 1))[0], client: { name: 'Анна', phone: '8 (999) 123-45-67' } });
   assert.equal(row.client.telegram, '');
   assert.equal(row.status, 'request');
+});
+test('automatic morning pricing uses the complete interval and preserves other prices', async () => {
+  const { B, API } = setup();
+  const recording = await API.getService('recording');
+  assert.ok(!(await API.getServices()).some(s => s.id === 'morning'));
+  for (const [start, duration, expected, period] of [
+    ['09:00',3,2800,'morning'], ['12:00',3,2800,'morning'],
+    ['13:00',3,3300,'regular'], ['08:00',3,3300,'regular'],
+    ['12:01',3,3300,'regular'], ['09:00',6,5200,'morning'],
+    ['09:00',7,7100,'regular'], ['09:00',2,2400,'regular']
+  ]) {
+    const quote = B.quoteFor(recording, duration, start);
+    assert.equal(quote.totalPrice, expected, `${start} / ${duration}`);
+    assert.equal(quote.pricingPeriod, period);
+  }
+  assert.equal(B.quoteFor(recording,3,null).totalPrice,3300);
+  assert.equal(B.quoteFor(await API.getService('recording-mix'),3,'09:00').totalPrice,4800);
+  assert.equal(B.quoteFor(await API.getService('rental'),3,'09:00').totalPrice,2800);
+  assert.equal(B.quoteFor({pricingType:'fixed',price:5000},2,'09:00').totalPrice,5000);
+});
+test('saved morning price snapshot ignores input price and survives retries and catalog mutation', async () => {
+  const { B, API, storage } = setup();
+  let date = B.addDays(B.today(),1);
+  while (!(await API.getAvailableSlots(date,3,'recording')).includes('09:00')) date = B.addDays(date,1);
+  const draft = { serviceId:'recording',durationHours:3,date,startTime:'09:00',price:1,priceSnapshot:{totalPrice:1},requestId:'morning-test',client:{name:'Анна',phone:'79991234567'} };
+  const saved = await API.createBooking(draft);
+  assert.equal(saved.price,2800);
+  assert.equal(saved.priceSnapshot.totalPrice,2800);
+  assert.equal(saved.priceSnapshot.regularPrice,3300);
+  assert.equal(saved.priceSnapshot.pricingPeriod,'morning');
+  assert.equal(saved.priceSnapshot.endTime,'12:00');
+  const service = await API.getService('recording');
+  service.morningPricing.priceTiers[0].totalPrice = 1;
+  assert.equal((await API.getMyBookings())[0].price,2800);
+  assert.equal((await API.createBooking(draft)).id,saved.id);
+  assert.equal(JSON.parse(storage.get('krug_mini_app_bookings_v1'))[0].priceSnapshot.totalPrice,2800);
 });

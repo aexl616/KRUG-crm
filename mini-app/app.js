@@ -33,7 +33,17 @@
     if (bookingDraft.serviceId !== id) { B.changeService(bookingDraft, service); dateLimit = 8; flowMessage = ''; }
   }
   function footer(label, enabled = true) {
-    return `<div class="dock"><div class="dock-summary"><span>${escape(current()?.name || 'Выбери свой звук')}${bookingDraft.durationHours ? ` · ${hours(bookingDraft.durationHours)}` : ''}</span><strong>${bookingDraft.price === null ? 'КРУГ' : money(bookingDraft.price)}</strong></div>${button(`${label} <span aria-hidden="true">↗</span>`, 'next', 'primary', !enabled)}</div>`;
+    return `<div class="dock"><div class="dock-summary"><span>${escape(current()?.name || 'Выбери свой звук')}${bookingDraft.durationHours ? ` · ${hours(bookingDraft.durationHours)}` : ''}${pricingHint() ? `<br>${pricingHint()}` : ''}</span><strong>${bookingDraft.price === null ? 'КРУГ' : money(bookingDraft.price)}</strong></div>${button(`${label} <span aria-hidden="true">↗</span>`, 'next', 'primary', !enabled)}</div>`;
+  }
+  function refreshPrice() {
+    if (current() && bookingDraft.durationHours) bookingDraft.price = B.quoteFor(current(), bookingDraft.durationHours, bookingDraft.startTime).totalPrice;
+  }
+  function pricingHint() {
+    const service = current();
+    if (!service?.morningPricing || !bookingDraft.durationHours) return '';
+    if (!service.morningPricing.priceTiers.some(t => t.durationHours === bookingDraft.durationHours)) return 'Для этой длительности действует обычная цена';
+    if (!bookingDraft.startTime) return 'Цена уточнится после выбора времени';
+    return B.quoteFor(service, bookingDraft.durationHours, bookingDraft.startTime).pricingPeriod === 'morning' ? 'Утренняя цена' : 'Обычная цена';
   }
   function summary(booking, serviceName) {
     return `<div class="summary"><strong>${escape(serviceName || booking.serviceName)}</strong><div class="session-date">${dateLabel(booking.date)}</div><div class="session-time">${booking.startTime}–${B.endTime(booking.startTime, booking.durationHours)} <small>МСК</small></div><p class="muted">${hours(booking.durationHours)}</p><div class="summary-total"><span>Итого</span><strong>${money(booking.price)}</strong></div></div>`;
@@ -51,6 +61,7 @@
   }
   async function render() {
     const version = ++renderId;
+    refreshPrice();
     notice.hidden = true;
     TG.showBack(screen !== 'home');
     let html = '';
@@ -76,6 +87,7 @@
         const availableDates = availability.filter(day => day.slots.length);
         if (bookingDraft.date && !availableDates.some(day => day.date === bookingDraft.date)) {
           bookingDraft.date = null; bookingDraft.startTime = null;
+          refreshPrice();
           flowMessage = 'На выбранную длительность нет времени в этот день. Выбери другую дату.';
         }
         const selectedIndex = availableDates.findIndex(day => day.date === bookingDraft.date);
@@ -91,6 +103,7 @@
         const slots = await API.getAvailableSlots(bookingDraft.date, bookingDraft.durationHours, bookingDraft.serviceId);
         if (version !== renderId) return;
         if (!slots.includes(bookingDraft.startTime)) bookingDraft.startTime = null;
+        refreshPrice();
         html += slots.length ? `<div class="time-grid">${slots.map(time => `<button class="time-card ${bookingDraft.startTime === time ? 'selected' : ''}" data-time="${time}" aria-pressed="${bookingDraft.startTime === time}">${time}</button>`).join('')}</div>${bookingDraft.startTime ? `<p class="chosen-interval" role="status">${bookingDraft.startTime}–${B.endTime(bookingDraft.startTime, bookingDraft.durationHours)}</p>` : ''}<p class="muted">Это время свободно на всю выбранную длительность.</p>` : `<div class="empty"><p>На этот день свободного времени уже нет.</p>${button('Выбрать другую дату', 'back', 'secondary')}</div>`;
         html += footer('Проверить запись', !!bookingDraft.startTime);
       } else {

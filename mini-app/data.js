@@ -10,6 +10,12 @@ window.KrugData = (() => {
     { id: 'recording-mix', name: 'Запись + сведение', description: 'Запись звука и сведение в одном формате.', pricingType: 'hourly', priceTiers: tiers([1800,3600,4800,6000,7200,8400,9600,10800]), active: true },
     { id: 'rental', name: 'Аренда', description: 'Студия для твоей самостоятельной работы', pricingType: 'hourly', priceTiers: tiers([1000,null,2800,3600,4400,5100,5800,6500]), active: true }
   ];
+  // Retain the legacy service for existing records; expose only one recording choice.
+  services.find(s => s.id === 'recording').morningPricing = {
+    startMinute: 9 * 60, endMinute: 15 * 60,
+    priceTiers: structuredClone(services.find(s => s.id === 'morning').priceTiers)
+  };
+  services.find(s => s.id === 'recording').description = 'Запись звука в студии. Если вся сессия проходит с 09:00 до 15:00, утренняя цена применяется автоматически.';
   function readBookings() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -21,7 +27,7 @@ window.KrugData = (() => {
       throw new Error('Не удалось открыть твои записи. Попробуй ещё раз. Сохранённые заявки не изменены.');
     }
   }
-  const getServices = async () => structuredClone(services.filter(s => s.active));
+  const getServices = async () => structuredClone(services.filter(s => s.active && s.id !== 'morning'));
   async function getService(id) {
     const service = services.find(s => s.id === id && s.active);
     if (!service) throw new Error('Эта услуга сейчас недоступна. Выбери другую.');
@@ -54,12 +60,13 @@ window.KrugData = (() => {
       if (existing) return structuredClone(existing);
       const service = await getService(data.serviceId);
       const durationHours = B.durationFor(service, data.durationHours);
-      const price = B.priceFor(service, durationHours);
+      const priceSnapshot = { ...B.quoteFor(service, durationHours, data.startTime), serviceId: service.id, date: data.date };
+      const price = priceSnapshot.totalPrice;
       const client = { name: String(data.client?.name || '').trim(), phone: String(data.client?.phone || '').trim(), telegram: String(data.client?.telegram || '').trim() };
       const fields = B.validateClient(client);
       if (Object.keys(fields).length) throw Object.assign(new Error('Проверь выделенные поля.'), { fields });
       if (!(await getAvailableSlots(data.date, durationHours, service.id)).includes(data.startTime)) throw Object.assign(new Error('Это время уже заняли. Выбери другое время.'), { code: 'SLOT_UNAVAILABLE' });
-      const booking = { id: crypto.randomUUID(), requestId: data.requestId || crypto.randomUUID(), clientId: CLIENT_ID, serviceId: service.id, serviceName: service.name, durationHours, date: data.date, startTime: data.startTime, price, client, comment: String(data.comment || '').trim().slice(0, 1000), status: 'request', createdAt: new Date().toISOString() };
+      const booking = { id: crypto.randomUUID(), requestId: data.requestId || crypto.randomUUID(), clientId: CLIENT_ID, serviceId: service.id, serviceName: service.name, durationHours, date: data.date, startTime: data.startTime, price, priceSnapshot, client, comment: String(data.comment || '').trim().slice(0, 1000), status: 'request', createdAt: new Date().toISOString() };
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify([...rows, booking])); }
       catch { throw new Error('Не удалось сохранить заявку на устройстве. Попробуй ещё раз.'); }
       return structuredClone(booking);

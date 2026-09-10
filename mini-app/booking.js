@@ -23,6 +23,14 @@ window.KrugBooking = (() => {
   function durationFor(service, hours) {
     return service.pricingType === 'fixed' ? service.defaultDurationHours : hours;
   }
+  function quoteFor(service, hours, startTime) {
+    const regularPrice = priceFor(service, hours);
+    const start = startTime ? toMinutes(startTime) : NaN;
+    const rule = service.morningPricing;
+    const eligible = !!rule && start >= rule.startMinute && start + hours * 60 <= rule.endMinute;
+    const tier = eligible ? rule.priceTiers.find(t => t.durationHours === hours) : null;
+    return { totalPrice: tier ? tier.totalPrice : regularPrice, pricingPeriod: tier ? 'morning' : 'regular', regularPrice, durationHours: hours, startTime: startTime || null, endTime: startTime ? endTime(startTime, hours) : null, version: 1 };
+  }
   function availableSlots(availability, durationHours, now = new Date()) {
     if (!Number.isFinite(durationHours) || durationHours <= 0 || durationHours > 8 || availability.closed) return [];
     const slots = [];
@@ -61,5 +69,5 @@ window.KrugBooking = (() => {
     if (previousDate && (await getSlots(previousDate, hours, service.id)).length) draft.date = previousDate;
     return !!previousDate && !draft.date;
   }
-  return { today, addDays, toMinutes, toTime, endTime, priceFor, durationFor, availableSlots, newDraft, validateClient, changeService, changeDuration };
+  return { today, addDays, toMinutes, toTime, endTime, priceFor, quoteFor, durationFor, availableSlots, newDraft, validateClient, changeService, changeDuration };
 })();
