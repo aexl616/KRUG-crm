@@ -15,13 +15,13 @@ window.KrugBooking = (() => {
   const toTime = minutes => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
   const endTime = (start, hours) => toTime(toMinutes(start) + hours * 60);
   function priceFor(service, hours) {
-    if (service.pricingType === 'fixed') return service.price;
+    if (['fixed', 'minimum'].includes(service.pricingType)) return service.price;
     const tier = service.priceTiers.find(t => t.durationHours === hours);
     if (!tier) throw new Error('Эта длительность недоступна. Выбери другую.');
     return tier.totalPrice;
   }
   function durationFor(service, hours) {
-    return service.pricingType === 'fixed' ? service.defaultDurationHours : hours;
+    return ['fixed', 'minimum'].includes(service.pricingType) ? service.defaultDurationHours : hours;
   }
   function quoteFor(service, hours, startTime) {
     const regularPrice = priceFor(service, hours);
@@ -68,7 +68,7 @@ window.KrugBooking = (() => {
   }
   function changeService(draft, service) {
     if (draft.serviceId === service.id) return;
-    Object.assign(draft, { serviceId: service.id, durationHours: service.pricingType === 'fixed' ? service.defaultDurationHours : null, date: null, startTime: null, price: service.pricingType === 'fixed' ? priceFor(service) : null });
+    Object.assign(draft, { serviceId: service.id, durationHours: ['fixed', 'minimum'].includes(service.pricingType) ? service.defaultDurationHours : null, date: null, startTime: null, price: ['fixed', 'minimum'].includes(service.pricingType) ? priceFor(service) : null });
   }
   async function changeDuration(draft, service, hours, getSlots) {
     if (draft.durationHours === hours) return false;

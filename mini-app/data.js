@@ -10,6 +10,13 @@ window.KrugData = (() => {
     { id: 'recording-mix', name: 'Запись + сведение', description: 'Запись звука и сведение в одном формате.', pricingType: 'hourly', priceTiers: tiers([1800,3600,4800,6000,7200,8400,9600,10800]), active: true },
     { id: 'rental', name: 'Аренда', description: 'Студия для твоей самостоятельной работы', pricingType: 'hourly', priceTiers: tiers([1000,null,2800,3600,4400,5100,5800,6500]), active: true }
   ];
+  for (const service of services) Object.assign(service, { publicVisible: service.id !== 'morning', publicCategory: 'primary', publicName: service.name, publicDescription: service.description, price: null, duration: null, defaultDuration: null });
+  // Values from CRM migrationServiceCatalog; minimum prices remain estimates.
+  services.push(...[
+    ['studio-mixing', 'Сведение на студии', 4000, 2, 'minimum'],
+    ['studio-beatmaking', 'Написание бита на студии', 5000, 1, 'minimum'],
+    ['studio-mix-master', 'Сведение + мастер на студии', 3000, null, 'fixed']
+  ].map(([id,name,price,duration,pricingType]) => ({id,name,publicName:name,description:'Работа в студии КРУГ.',publicDescription:'Работа в студии КРУГ.',price,pricingType,duration,defaultDuration:duration,defaultDurationHours:duration,active:true,publicVisible:true,publicCategory:'other'})));
   // Retain the legacy service for existing records; expose only one recording choice.
   services.find(s => s.id === 'recording').morningPricing = {
     startMinute: 9 * 60, endMinute: 15 * 60,
@@ -27,7 +34,7 @@ window.KrugData = (() => {
       throw new Error('Не удалось открыть твои записи. Попробуй ещё раз. Сохранённые заявки не изменены.');
     }
   }
-  const getServices = async () => structuredClone(services.filter(s => s.active && s.id !== 'morning'));
+  const getServices = async () => structuredClone(services.filter(s => s.active && s.publicVisible));
   async function getService(id) {
     const service = services.find(s => s.id === id && s.active);
     if (!service) throw new Error('Эта услуга сейчас недоступна. Выбери другую.');
@@ -60,7 +67,8 @@ window.KrugData = (() => {
       if (existing) return structuredClone(existing);
       const service = await getService(data.serviceId);
       const durationHours = B.durationFor(service, data.durationHours);
-      const priceSnapshot = { ...B.quoteFor(service, durationHours, data.startTime), serviceId: service.id, date: data.date };
+      if (!Number.isFinite(durationHours) || durationHours <= 0) throw new Error('Длительность уточняется. Онлайн-запись пока недоступна.');
+      const priceSnapshot = { ...B.quoteFor(service, durationHours, data.startTime), serviceId: service.id, date: data.date, pricingType: service.pricingType, isEstimate: service.pricingType === 'minimum' };
       const price = priceSnapshot.totalPrice;
       const client = { name: String(data.client?.name || '').trim(), phone: String(data.client?.phone || '').trim(), telegram: String(data.client?.telegram || '').trim() };
       const fields = B.validateClient(client);

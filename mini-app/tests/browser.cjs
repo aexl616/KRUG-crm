@@ -37,12 +37,10 @@ const server = http.createServer((req, res) => {
         await page.screenshot({ path: path.join(output, `krug-mini-${width}-${name}.png`), fullPage: true });
       };
       await page.goto(url);
-      await page.getByRole('button', { name: 'Записаться', exact: false }).first().waitFor();
+      await page.locator('[data-service-quick="recording"]').waitFor();
       await check('home');
-      await page.locator('[data-action="start"]').click();
-      await page.locator('[data-service="recording"]').click();
+      await page.locator('[data-service-quick="recording"]').click();
       await check('service');
-      await page.locator('[data-action="next"]').click();
       await page.locator('[data-duration="3"]').click();
       assert.match(await page.locator('.price-panel').innerText(), /3\s600/);
       await check('duration');
@@ -87,10 +85,9 @@ const server = http.createServer((req, res) => {
     const priceContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const pricePage = await priceContext.newPage();
     await pricePage.goto(url);
-    await pricePage.locator('[data-action="start"]').click();
+    await pricePage.locator('[data-service-quick="recording"]').click();
     assert.equal(await pricePage.locator('[data-service="morning"]').count(), 0);
-    await pricePage.locator('[data-service="recording"]').click();
-    await pricePage.locator('[data-action="next"]').click();
+
     await pricePage.locator('[data-duration="3"]').click();
     await pricePage.locator('[data-action="next"]').click();
     await pricePage.locator('[data-date]').first().waitFor();
@@ -158,8 +155,8 @@ const server = http.createServer((req, res) => {
     assert.equal(await edge.locator('[data-date].selected:disabled').count(), 0);
     await edge.locator('[data-action="back"]').click();
     await edge.locator('[data-action="back"]').click();
-    await edge.locator('[data-service="rental"]').click();
-    await edge.locator('[data-action="next"]').click();
+    edge.once('dialog', dialog => dialog.accept());
+    await edge.locator('[data-service-quick="rental"]').click();
     assert.equal(await edge.locator('[data-duration][aria-pressed="true"]').count(), 0);
     assert.match(await edge.locator('.price-panel').innerText(), /—/);
     await edge.locator('[data-duration="3"]').click();
@@ -201,21 +198,13 @@ const server = http.createServer((req, res) => {
       const record = name => () => window.__telegramCalls.push(name);
       window.Telegram = { WebApp: { ready: record('ready'), expand: record('expand'), close: record('close'), setHeaderColor: record('header'), setBackgroundColor: record('background'), initDataUnsafe: { user: { first_name: 'Тест', username: 'tg_test' } }, BackButton: { onClick: handler => { window.__back = handler; }, show: record('show'), hide: record('hide') }, safeAreaInset: { top: 12, bottom: 15 } } };
     });
-    await page.route('**/data.js', async route => {
-      const response = await route.fetch();
-      const source = await response.text();
-      await route.fulfill({ response, body: source + '\nconst originalServices = KrugData.getServices; KrugData.getServices = async () => [...await originalServices(), {id:"fixed-test", name:"Тест fixed", pricingType:"fixed", price:5000, defaultDurationHours:2, active:true}];' });
-    });
     await page.goto(url);
-    await page.locator('[data-action="start"]').click();
-    await page.locator('[data-service="fixed-test"]').click();
-    // Exercise UI fixed routing using a mock availability response.
-    await page.evaluate(() => { const original = KrugData.getAvailableSlots; KrugData.getAvailableSlots = (date, duration, serviceId) => original(date, duration, serviceId === 'fixed-test' ? undefined : serviceId); });
-    await page.locator('[data-action="next"]').click();
+    await page.locator('[data-service-quick="other"]').click();
+    await page.locator('[data-service-quick="studio-mixing"]').click();
     await page.getByRole('heading', { name: 'В какой день?' }).waitFor();
     assert.equal(await page.locator('[data-duration]').count(), 0);
     await page.evaluate(() => window.__back());
-    await page.getByRole('heading', { name: 'Выбери услугу' }).waitFor();
+    await page.getByRole('heading', { name: 'Прочие услуги', exact:true }).waitFor();
     const calls = await page.evaluate(() => { KrugTelegram.closeApp(); return window.__telegramCalls; });
     for (const call of ['ready', 'expand', 'show', 'hide', 'close']) assert.ok(calls.includes(call));
     console.log('PASS fixed duration skip and Telegram adapter stub');
@@ -265,9 +254,7 @@ const server = http.createServer((req, res) => {
         return content.bottom <= nav.top && nav.bottom <= innerHeight && [...document.querySelectorAll('#main-navigation button')].every(b=>b.getBoundingClientRect().height>=44);
       }));
       await p.locator('#main-navigation [data-action="home"]').click();
-      await p.locator('[data-action="start"]').click();
-      await p.locator('[data-service="recording"]').click();
-      await p.locator('[data-action="next"]').click();
+      await p.locator('[data-service-quick="recording"]').click();
       await p.locator('[data-duration="3"]').click();
       assert.equal(await p.locator('#main-navigation').isVisible(),false);
       await p.locator('.brand').click();
@@ -283,6 +270,39 @@ const server = http.createServer((req, res) => {
       await p.getByText('История пока пуста',{exact:true}).waitFor();
       await p.locator('#main-navigation [data-action="home"]').click();
       await p.locator('.home-bonus').waitFor();
+      assert.equal(await p.locator('[data-service-quick]').count(),4);
+      assert.deepEqual(await p.locator('.quick-card strong').allTextContents(),['Запись','Запись + сведение','Аренда','Прочие услуги']);
+      p.once('dialog', async d => { assert.match(d.message(),/Начать новую запись/); await d.dismiss(); });
+      await p.locator('[data-service-quick="rental"]').click();
+      await p.locator('[data-action="start"]').click();
+      assert.equal(await p.locator('[data-duration="3"]').getAttribute('aria-pressed'),'true');
+      await p.locator('[data-action="back"]').click();
+      for (const id of ['recording','recording-mix','rental']) {
+        p.once('dialog',d=>d.accept());
+        await p.locator('[data-service-quick="'+id+'"]').click();
+        await p.getByRole('heading',{name:'Сколько времени?'}).waitFor();
+        assert.equal(await p.locator('[data-service]').count(),0);
+        await p.locator('[data-action="back"]').click();
+        await p.locator('.home-services').waitFor();
+      }
+      await p.locator('[data-service-quick="other"]').click();
+      assert.deepEqual(await p.locator('.service-copy strong').allTextContents(),['Сведение на студии','Написание бита на студии','Сведение + мастер на студии']);
+      for (const id of ['studio-mixing','studio-beatmaking']) {
+        p.once('dialog',d=>d.accept());
+        await p.locator('[data-service-quick="'+id+'"]').click();
+        await p.getByRole('heading',{name:'В какой день?'}).waitFor();
+        assert.equal(await p.locator('[data-duration]').count(),0);
+        await p.locator('[data-action="back"]').click();
+        await p.getByRole('heading',{name:'Прочие услуги',exact:true}).waitFor();
+      }
+      p.once('dialog',d=>d.accept());
+      await p.locator('[data-service-quick="studio-mix-master"]').click();
+      await p.getByText('Длительность уточняется',{exact:true}).waitFor();
+      assert.equal(await p.locator('[data-date], [data-time]').count(),0);
+      assert.ok(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+      await p.screenshot({path:path.join(output,'krug-other-'+width+'.png')});
+      await p.locator('[data-action="other"]').click();
+      await p.getByRole('heading',{name:'Прочие услуги',exact:true}).waitFor();
       await ctx.close();
       console.log('PASS account navigation, loyalty, draft resume and touch layout '+width);
     }

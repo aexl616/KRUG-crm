@@ -157,3 +157,25 @@ test('every duration 1–8 sums morning and ordinary hours, with snapshot segmen
   assert.deepEqual(Array.from(saved.priceSnapshot.segments,s => s.totalPrice),[1000,2400]);
   assert.equal((await API.getMyBookings())[0].price,3400);
 });
+
+test('public studio catalog preserves CRM minimum prices and rejects unknown duration', async () => {
+  const {API,B}=setup();
+  const catalog=await API.getServices();
+  assert.deepEqual(Array.from(catalog.filter(s=>s.publicCategory==='primary'),s=>s.id),['recording','recording-mix','rental']);
+  assert.deepEqual(Array.from(catalog.filter(s=>s.publicCategory==='other'),s=>s.id),['studio-mixing','studio-beatmaking','studio-mix-master']);
+  for(const [id,price,duration] of [['studio-mixing',4000,2],['studio-beatmaking',5000,1]]) {
+    const service=await API.getService(id);
+    assert.equal(service.pricingType,'minimum');
+    assert.equal(service.defaultDuration,duration);
+    let date=B.addDays(B.today(),1);
+    while(!(await API.getAvailableSlots(date,duration,id)).length) date=B.addDays(date,1);
+    const booking=await API.createBooking({serviceId:id,date,startTime:(await API.getAvailableSlots(date,duration,id))[0],client:{name:'Тест',phone:'79991234567'}});
+    assert.equal(booking.price,price);
+    assert.equal(booking.durationHours,duration);
+    assert.equal(booking.priceSnapshot.isEstimate,true);
+  }
+  const unknown=await API.getService('studio-mix-master');
+  assert.equal(unknown.price,3000);
+  assert.equal(unknown.defaultDuration,null);
+  await assert.rejects(API.createBooking({serviceId:unknown.id,durationHours:1}),/Длительность уточняется/);
+});
