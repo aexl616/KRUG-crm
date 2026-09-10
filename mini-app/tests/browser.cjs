@@ -28,6 +28,11 @@ const server = http.createServer((req, res) => {
       page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
       const check = async name => {
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: overflow on ${name}`);
+        assert.ok(await page.evaluate(() => {
+          const content = document.querySelector('.screen-content')?.getBoundingClientRect();
+          const dock = document.querySelector('.dock')?.getBoundingClientRect();
+          return !dock || content.bottom <= dock.top + 1 && dock.bottom <= innerHeight;
+        }), `${width}: dock covers content on ${name}`);
         await page.screenshot({ path: path.join(output, `krug-mini-${width}-${name}.png`), fullPage: true });
       };
       await page.goto(url);
@@ -41,6 +46,7 @@ const server = http.createServer((req, res) => {
       assert.match(await page.locator('.price-panel').innerText(), /3\s300/);
       await check('duration');
       await page.locator('[data-action="next"]').click();
+      assert.ok(await page.locator('[data-date]').count() <= 8);
       await page.locator('[data-date]:not([disabled])').first().click();
       const selectedDate = await page.locator('[data-date][aria-pressed="true"]').getAttribute('data-date');
       await check('date');
@@ -49,17 +55,17 @@ const server = http.createServer((req, res) => {
       const selectedTime = await page.locator('[data-time][aria-pressed="true"]').getAttribute('data-time');
       await check('time');
       await page.locator('[data-action="next"]').click();
-      await page.getByLabel('Имя клиента').fill('Тест Клиент');
+      await page.getByLabel('Как тебя зовут?').fill('Тест Клиент');
       await page.getByLabel('Телефон').fill('+7 999 123-45-67');
-      await page.getByLabel('Telegram', { exact: true }).fill('@test_client');
+      await page.getByLabel('Telegram · необязательно', { exact: true }).fill('@test_client');
       await page.getByLabel('Комментарий').fill('Тестовая сессия');
       await page.locator('[data-action="back"]').click();
       assert.equal(await page.locator('[data-time][aria-pressed="true"]').getAttribute('data-time'), selectedTime);
       await page.locator('[data-action="next"]').click();
-      assert.equal(await page.getByLabel('Имя клиента').inputValue(), 'Тест Клиент');
+      assert.equal(await page.getByLabel('Как тебя зовут?').inputValue(), 'Тест Клиент');
       await check('confirmation');
-      await page.getByRole('button', { name: 'Подтвердить запись' }).click();
-      await page.getByRole('heading', { name: 'Запись отправлена' }).waitFor();
+      await page.getByRole('button', { name: 'Отправить заявку' }).click();
+      await page.getByRole('heading', { name: 'Демо-заявка создана' }).waitFor();
       await check('success');
       await page.locator('[data-action="bookings"]').click();
       assert.equal(await page.locator('.booking-card').count(), 1);
@@ -76,6 +82,78 @@ const server = http.createServer((req, res) => {
       console.log(`PASS ${width}×${height}: 8 screens, back, contacts, submit, reload, shared occupancy, no overflow/errors`);
       await context.close();
     }
+    const edgeContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const edge = await edgeContext.newPage();
+    await edge.goto(url);
+    await edge.locator('[data-service-quick="recording"]').click();
+    await edge.locator('[data-duration="3"]').click();
+    await edge.locator('[data-action="next"]').click();
+    await edge.locator('[data-date]').first().waitFor();
+    const constrainedDate = await edge.evaluate(async () => {
+      for (const button of document.querySelectorAll('[data-date]')) {
+        const date = button.dataset.date;
+        if (date <= KrugBooking.today()) continue;
+        const longSlots = await KrugData.getAvailableSlots(date, 8, 'recording');
+        // Reserve one hour inside the sole 8h interval in this isolated context.
+        if (longSlots.length) await KrugData.createBooking({ serviceId: 'recording', durationHours: 1, date, startTime: longSlots[0], client: { name: 'Тест занятости', phone: '79991234567' } });
+        if (!(await KrugData.getAvailableSlots(date, 8, 'recording')).length && (await KrugData.getAvailableSlots(date, 3, 'recording')).length) return date;
+      }
+    });
+    assert.ok(constrainedDate);
+    await edge.locator(`[data-date="${constrainedDate}"]`).click();
+    await edge.locator('[data-action="next"]').click();
+    await edge.locator('[data-time]').first().click();
+    await edge.locator('[data-action="back"]').click();
+    await edge.locator('[data-action="back"]').click();
+    await edge.locator('[data-duration="1"]').click();
+    await edge.locator('[data-action="next"]').click();
+    assert.equal(await edge.locator('[data-date][aria-pressed="true"]').getAttribute('data-date'), constrainedDate);
+    await edge.locator('[data-action="next"]').click();
+    assert.equal(await edge.locator('[data-time][aria-pressed="true"]').count(), 0);
+    await edge.locator('[data-action="back"]').click();
+    await edge.locator('[data-action="back"]').click();
+    await edge.locator('[data-duration="8"]').click();
+    assert.match(await edge.locator('.flow-message').innerText(), /Для новой длительности/);
+    await edge.locator('[data-action="next"]').click();
+    assert.equal(await edge.locator('[data-date][aria-pressed="true"]').count(), 0);
+    assert.equal(await edge.locator('[data-date].selected:disabled').count(), 0);
+    await edge.locator('[data-action="back"]').click();
+    await edge.locator('[data-action="back"]').click();
+    await edge.locator('[data-service="rental"]').click();
+    await edge.locator('[data-action="next"]').click();
+    assert.equal(await edge.locator('[data-duration][aria-pressed="true"]').count(), 0);
+    assert.match(await edge.locator('.price-panel').innerText(), /—/);
+    await edge.locator('[data-duration="3"]').click();
+    await edge.locator('[data-action="next"]').click();
+    assert.equal(await edge.locator('[data-date][aria-pressed="true"]').count(), 0);
+    const countBefore = await edge.locator('[data-date]').count();
+    await edge.locator('[data-action="more-dates"]').click();
+    assert.ok(await edge.locator('[data-date]').count() > countBefore);
+    await edge.locator('[data-date]').first().click();
+    await edge.locator('[data-action="next"]').click();
+    assert.equal(await edge.locator('[data-time][aria-pressed="true"]').count(), 0);
+    await edge.locator('[data-time]').first().click();
+    await edge.locator('[data-action="next"]').click();
+    await edge.getByRole('button', { name: 'Отправить заявку' }).click();
+    assert.equal(await edge.locator('#contact-name').getAttribute('aria-invalid'), 'true');
+    assert.equal(await edge.locator('#contact-phone').getAttribute('aria-invalid'), 'true');
+    assert.equal(await edge.locator('#contact-telegram').getAttribute('aria-invalid'), 'false');
+    await edge.locator('#contact-name').fill('Анна');
+    await edge.locator('#contact-phone').fill('123');
+    await edge.getByRole('button', { name: 'Отправить заявку' }).click();
+    assert.equal(await edge.locator('#contact-name').inputValue(), 'Анна');
+    assert.match(await edge.locator('#error-phone').innerText(), /Введи телефон/);
+    await edge.setViewportSize({ width: 360, height: 450 });
+    await edge.locator('#contact-phone').fill('8 (999) 123-45-67');
+    const submitBox = await edge.getByRole('button', { name: 'Отправить заявку' }).boundingBox();
+    assert.ok(submitBox.y + submitBox.height <= 450);
+    await edge.screenshot({ path: path.join(output, 'krug-mini-keyboard-height.png') });
+    await edge.getByRole('button', { name: 'Отправить заявку' }).click();
+    await edge.getByRole('heading', { name: 'Демо-заявка создана' }).waitFor();
+    await edge.locator('[data-action="bookings"]').click();
+    assert.equal(await edge.locator('.booking-card button').count(), 0);
+    await edgeContext.close();
+    console.log('PASS back-flow, duration/date revalidation, service reset, date expansion, inline validation, optional Telegram, 450px viewport');
     // Fixed service is a test fixture only, not an invented public catalog item.
     const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const page = await context.newPage();
@@ -98,10 +176,33 @@ const server = http.createServer((req, res) => {
     await page.getByRole('heading', { name: 'В какой день?' }).waitFor();
     assert.equal(await page.locator('[data-duration]').count(), 0);
     await page.evaluate(() => window.__back());
-    await page.getByRole('heading', { name: 'Что планируешь?' }).waitFor();
+    await page.getByRole('heading', { name: 'Выбери услугу' }).waitFor();
     const calls = await page.evaluate(() => { KrugTelegram.closeApp(); return window.__telegramCalls; });
     for (const call of ['ready', 'expand', 'show', 'hide', 'close']) assert.ok(calls.includes(call));
     console.log('PASS fixed duration skip and Telegram adapter stub');
     await context.close();
+    for (const username of ['tg_test', undefined]) {
+      const tgContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
+      const tgPage = await tgContext.newPage();
+      await tgPage.addInitScript(username => { window.Telegram = { WebApp: { initDataUnsafe: { user: { first_name: 'Анна', username } } } }; }, username);
+      if (!username) await tgPage.route('**/config.js', route => route.fulfill({ contentType: 'text/javascript', body: 'window.KrugConfig = { DEMO_MODE: false };' }));
+      await tgPage.goto(url);
+      await tgPage.locator('[data-service-quick="recording"]').click();
+      await tgPage.locator('[data-duration="1"]').click();
+      await tgPage.locator('[data-action="next"]').click();
+      await tgPage.locator('[data-date]').first().click();
+      await tgPage.locator('[data-action="next"]').click();
+      await tgPage.locator('[data-time]').first().click();
+      await tgPage.locator('[data-action="next"]').click();
+      assert.equal(await tgPage.locator('#contact-telegram').count(), 0);
+      assert.match(await tgPage.locator('.telegram-contact').innerText(), /Свяжемся с тобой в Telegram/);
+      assert.equal(await tgPage.locator('#contact-name').inputValue(), 'Анна');
+      await tgPage.locator('#contact-phone').fill('+7 999 123-45-67');
+      await tgPage.getByRole('button', { name: 'Отправить заявку' }).click();
+      await tgPage.getByRole('heading', { name: username ? 'Демо-заявка создана' : 'Заявка отправлена' }).waitFor();
+      if (!username) assert.equal(await tgPage.locator('#demo-indicator').isVisible(), false);
+      await tgContext.close();
+    }
+    console.log('PASS Telegram with/without username, optional contact submission and production wording flag');
   } finally { await browser.close(); server.close(); }
 })().catch(error => { console.error(error); server.close(); process.exitCode = 1; });

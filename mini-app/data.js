@@ -5,9 +5,9 @@ window.KrugData = (() => {
   const CLIENT_ID = 'krug-mock-client';
   const tiers = values => values.flatMap((price, i) => price === null ? [] : [{ durationHours: i + 1, totalPrice: price }]);
   const services = [
-    { id: 'recording', name: 'Запись', description: 'Твой звук начинается здесь', pricingType: 'hourly', priceTiers: tiers([1200,2400,3300,4250,5200,6150,7100,8050]), active: true },
-    { id: 'morning', name: 'Запись утром', description: 'Ранний старт. Начало до 12:00', pricingType: 'hourly', priceTiers: tiers([1000,null,2800,3600,4400,5200,6000,6800]), latestStartHour: 11, active: true },
-    { id: 'recording-mix', name: 'Запись + сведение', description: 'От первого дубля до цельного звучания', pricingType: 'hourly', priceTiers: tiers([1800,3600,4800,6000,7200,8400,9600,10800]), active: true },
+    { id: 'recording', name: 'Запись', description: 'Запись звука в студии. Запись со сведением — отдельная услуга.', pricingType: 'hourly', priceTiers: tiers([1200,2400,3300,4250,5200,6150,7100,8050]), active: true },
+    { id: 'morning', name: 'Запись утром', description: 'Запись по отдельной утренней цене. Начало только до 12:00.', pricingType: 'hourly', priceTiers: tiers([1000,null,2800,3600,4400,5200,6000,6800]), latestStartHour: 11, active: true },
+    { id: 'recording-mix', name: 'Запись + сведение', description: 'Запись звука и сведение в одном формате.', pricingType: 'hourly', priceTiers: tiers([1800,3600,4800,6000,7200,8400,9600,10800]), active: true },
     { id: 'rental', name: 'Аренда', description: 'Студия для твоей самостоятельной работы', pricingType: 'hourly', priceTiers: tiers([1000,null,2800,3600,4400,5100,5800,6500]), active: true }
   ];
   function readBookings() {
@@ -18,13 +18,13 @@ window.KrugData = (() => {
       if (!Array.isArray(rows) || rows.some(b => !b || typeof b.id !== 'string' || typeof b.clientId !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(b.date) || !/^\d{2}:\d{2}$/.test(b.startTime) || !Number.isFinite(b.durationHours) || b.durationHours <= 0)) throw new Error();
       return rows;
     } catch {
-      throw new Error('Не удалось прочитать сохранённые записи. Проверьте доступ к хранилищу браузера. Данные не перезаписаны.');
+      throw new Error('Не удалось открыть твои записи. Попробуй ещё раз. Сохранённые заявки не изменены.');
     }
   }
   const getServices = async () => structuredClone(services.filter(s => s.active));
   async function getService(id) {
     const service = services.find(s => s.id === id && s.active);
-    if (!service) throw new Error('Услуга больше недоступна. Выберите другую.');
+    if (!service) throw new Error('Эта услуга сейчас недоступна. Выбери другую.');
     return structuredClone(service);
   }
   async function getAvailability(date) {
@@ -56,11 +56,12 @@ window.KrugData = (() => {
       const durationHours = B.durationFor(service, data.durationHours);
       const price = B.priceFor(service, durationHours);
       const client = { name: String(data.client?.name || '').trim(), phone: String(data.client?.phone || '').trim(), telegram: String(data.client?.telegram || '').trim() };
-      if (client.name.length < 2 || client.name.length > 80 || !/^[+\d\s()\-]{7,30}$/.test(client.phone) || client.phone.replace(/\D/g, '').length < 7 || !/^@?[A-Za-z][A-Za-z0-9_]{4,31}$/.test(client.telegram)) throw new Error('Проверьте имя, телефон и Telegram (например, @your_name).');
-      if (!(await getAvailableSlots(data.date, durationHours, service.id)).includes(data.startTime)) throw new Error('Это время уже недоступно. Вернитесь к выбору времени.');
+      const fields = B.validateClient(client);
+      if (Object.keys(fields).length) throw Object.assign(new Error('Проверь выделенные поля.'), { fields });
+      if (!(await getAvailableSlots(data.date, durationHours, service.id)).includes(data.startTime)) throw Object.assign(new Error('Это время уже заняли. Выбери другое время.'), { code: 'SLOT_UNAVAILABLE' });
       const booking = { id: crypto.randomUUID(), requestId: data.requestId || crypto.randomUUID(), clientId: CLIENT_ID, serviceId: service.id, serviceName: service.name, durationHours, date: data.date, startTime: data.startTime, price, client, comment: String(data.comment || '').trim().slice(0, 1000), status: 'request', createdAt: new Date().toISOString() };
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify([...rows, booking])); }
-      catch { throw new Error('Не удалось сохранить запись. Разрешите хранение данных в браузере и попробуйте снова.'); }
+      catch { throw new Error('Не удалось сохранить заявку на устройстве. Попробуй ещё раз.'); }
       return structuredClone(booking);
     };
     return navigator.locks?.request ? navigator.locks.request('krug-mini-booking', save) : save();

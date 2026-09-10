@@ -44,14 +44,14 @@ test('creation recalculates price, persists, prevents duplicate and overlap, fil
   assert.equal(row.status, 'request');
   assert.equal((await API.createBooking(draft)).id, row.id);
   assert.equal((await API.getMyBookings()).length, 1);
-  await assert.rejects(API.createBooking({ ...draft, requestId: 'request-two', serviceId: 'rental' }), /недоступно/);
+  await assert.rejects(API.createBooking({ ...draft, requestId: 'request-two', serviceId: 'rental' }), { code: 'SLOT_UNAVAILABLE' });
   assert.ok(!(await API.getAvailableSlots(date, 1)).includes(startTime));
   const key = 'krug_mini_app_bookings_v1';
   const rows = JSON.parse(storage.get(key));
   storage.set(key, JSON.stringify([...rows, { ...row, id: 'other', clientId: 'other-client' }]));
   assert.equal((await API.getMyBookings()).length, 1);
   storage.set(key, 'broken-json');
-  await assert.rejects(API.createBooking({ ...draft, requestId: 'third' }), /не перезаписаны/);
+  await assert.rejects(API.createBooking({ ...draft, requestId: 'third' }), /не изменены/);
   assert.equal(storage.get(key), 'broken-json');
 });
 test('morning restriction and storage write failure are explicit', async () => {
@@ -62,4 +62,41 @@ test('morning restriction and storage write failure are explicit', async () => {
   assert.ok(slots.every(s => Number(s.slice(0, 2)) <= 11));
   context.localStorage.setItem = () => { throw new Error('quota'); };
   await assert.rejects(API.createBooking({ serviceId: 'morning', durationHours: 1, date, startTime: slots[0], client: { name: 'Тест', phone: '79999999999', telegram: '@tester' } }), /Не удалось сохранить/);
+});
+test('service clears dependencies; duration retains only a still available date', async () => {
+  const { B, API } = setup();
+  const service = await API.getService('recording');
+  const draft = B.newDraft();
+  B.changeService(draft, service);
+  Object.assign(draft, { durationHours: 3, date: '2030-01-01', startTime: '10:00', price: 3300 });
+  assert.equal(await B.changeDuration(draft, service, 4, async () => ['15:00']), false);
+  assert.equal(draft.date, '2030-01-01');
+  assert.equal(draft.startTime, null);
+  assert.equal(draft.price, 4250);
+  assert.equal(await B.changeDuration(draft, service, 8, async () => []), true);
+  assert.equal(draft.date, null);
+  assert.equal(draft.price, 8050);
+  draft.date = '2030-01-01'; draft.startTime = '15:00';
+  B.changeService(draft, await API.getService('rental'));
+  for (const key of ['durationHours','date','startTime','price']) assert.equal(draft[key], null);
+  assert.equal(draft.serviceId, 'rental');
+  draft.date = '2030-01-01';
+  await assert.rejects(B.changeDuration(draft, await API.getService('rental'), 3, async () => { throw new Error('offline'); }));
+  assert.equal(draft.date, null);
+});
+test('optional Telegram, ordinary phone formats and field-specific errors', () => {
+  const { B } = setup();
+  for (const phone of ['+7 (999) 123-45-67', '8 999 123 45 67', '+1.202.555.0199', '+7 999 123–45–67']) {
+    assert.equal(Object.keys(B.validateClient({ name: 'Анна', phone, telegram: '' })).length, 0);
+  }
+  const errors = B.validateClient({ name: '', phone: 'abc', telegram: 'https://invalid' });
+  assert.deepEqual(Object.keys(errors), ['name','phone','telegram']);
+});
+test('API accepts an application without Telegram and keeps request status', async () => {
+  const { B, API } = setup();
+  let date = B.addDays(B.today(), 1);
+  while (!(await API.getAvailableSlots(date, 1)).length) date = B.addDays(date, 1);
+  const row = await API.createBooking({ serviceId: 'recording', durationHours: 1, date, startTime: (await API.getAvailableSlots(date, 1))[0], client: { name: 'Анна', phone: '8 (999) 123-45-67' } });
+  assert.equal(row.client.telegram, '');
+  assert.equal(row.status, 'request');
 });
