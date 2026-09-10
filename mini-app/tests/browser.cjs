@@ -157,6 +157,7 @@ const server = http.createServer((req, res) => {
     await edge.locator('[data-action="back"]').click();
     edge.once('dialog', dialog => dialog.accept());
     await edge.locator('[data-service-quick="rental"]').click();
+    await edge.locator('[data-rental="rental"]').click();
     assert.equal(await edge.locator('[data-duration][aria-pressed="true"]').count(), 0);
     assert.match(await edge.locator('.price-panel').innerText(), /—/);
     await edge.locator('[data-duration="3"]').click();
@@ -201,10 +202,12 @@ const server = http.createServer((req, res) => {
     await page.goto(url);
     await page.locator('[data-service-quick="other"]').click();
     await page.locator('[data-service-quick="studio-mixing"]').click();
+    await page.locator('[data-duration="2"]').click();
+    await page.locator('[data-action="next"]').click();
     await page.getByRole('heading', { name: 'В какой день?' }).waitFor();
     assert.equal(await page.locator('[data-duration]').count(), 0);
     await page.evaluate(() => window.__back());
-    await page.getByRole('heading', { name: 'Прочие услуги', exact:true }).waitFor();
+    await page.getByRole('heading', { name: 'Сколько времени?', exact:true }).waitFor();
     const calls = await page.evaluate(() => { KrugTelegram.closeApp(); return window.__telegramCalls; });
     for (const call of ['ready', 'expand', 'show', 'hide', 'close']) assert.ok(calls.includes(call));
     console.log('PASS fixed duration skip and Telegram adapter stub');
@@ -280,9 +283,11 @@ const server = http.createServer((req, res) => {
       for (const id of ['recording','recording-mix','rental']) {
         p.once('dialog',d=>d.accept());
         await p.locator('[data-service-quick="'+id+'"]').click();
+        if(id==='rental') await p.locator('[data-rental="rental"]').click();
         await p.getByRole('heading',{name:'Сколько времени?'}).waitFor();
         assert.equal(await p.locator('[data-service]').count(),0);
         await p.locator('[data-action="back"]').click();
+        if(id==='rental') await p.locator('[data-action="back"]').click();
         await p.locator('.home-services').waitFor();
       }
       await p.locator('[data-service-quick="other"]').click();
@@ -290,22 +295,56 @@ const server = http.createServer((req, res) => {
       for (const id of ['studio-mixing','studio-beatmaking']) {
         p.once('dialog',d=>d.accept());
         await p.locator('[data-service-quick="'+id+'"]').click();
+        await p.locator('[data-duration="2"]').click();
+        await p.locator('[data-action="next"]').click();
         await p.getByRole('heading',{name:'В какой день?'}).waitFor();
         assert.equal(await p.locator('[data-duration]').count(),0);
+        await p.locator('[data-action="back"]').click();
         await p.locator('[data-action="back"]').click();
         await p.getByRole('heading',{name:'Прочие услуги',exact:true}).waitFor();
       }
       p.once('dialog',d=>d.accept());
       await p.locator('[data-service-quick="studio-mix-master"]').click();
-      await p.getByText('Длительность уточняется',{exact:true}).waitFor();
+      await p.getByRole('heading',{name:'Сколько времени?'}).waitFor();
+      assert.equal(await p.locator('[data-duration="1"]').count(),0);
       assert.equal(await p.locator('[data-date], [data-time]').count(),0);
       assert.ok(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
       await p.screenshot({path:path.join(output,'krug-other-'+width+'.png')});
-      await p.locator('[data-action="other"]').click();
+      await p.locator('[data-action="back"]').click();
       await p.getByRole('heading',{name:'Прочие услуги',exact:true}).waitFor();
       await ctx.close();
       console.log('PASS account navigation, loyalty, draft resume and touch layout '+width);
     }
 
+
+    for(const [width,height] of [[360,800],[390,844],[430,932]]) {
+      for(const kind of ['day','night']) {
+        const ctx=await browser.newContext({viewport:{width,height}}), p=await ctx.newPage();
+        // Empty studio fixture lets us verify Day booking without changing real mock occupancy.
+        if(kind==='day') await p.route('**/data.js',async route=>{
+          const response=await route.fetch();let source=await response.text();
+          source=source.replace(/const busy = day % 2[^;]+;/,'const busy = [];');
+          await route.fulfill({response,body:source});
+        });
+        await p.goto(url);await p.locator('[data-service-quick="rental"]').click();
+        await p.getByRole('heading',{name:'Выбери формат аренды'}).waitFor();
+        await p.screenshot({path:path.join(output,'rental-formats-'+width+'.png')});
+        await p.locator('[data-rental="rental-'+kind+'"]').click();
+        await p.locator('[data-date]').first().click();await p.locator('[data-action="next"]').click();
+        await p.getByRole('heading',{name:'Всё верно?'}).waitFor();
+        assert.equal(await p.locator('[data-time]').count(),0);
+        assert.match(await p.locator('.session-time').innerText(),kind==='night'?/22:00–10:00 следующего дня/:/10:00–22:00/);
+        assert.equal((await p.locator('.summary-total strong').innerText()).replace(/\D/g,''),kind==='night'?'7500':'9000');
+        assert.ok(await p.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+        assert.ok(await p.evaluate(()=>document.querySelector('.screen-content').getBoundingClientRect().bottom<=document.querySelector('.dock').getBoundingClientRect().top+1));
+        await p.locator('#contact-name').fill('Тест');await p.locator('#contact-phone').fill('79991234567');
+        await p.getByRole('button',{name:'Отправить заявку'}).click();
+        await p.getByRole('heading',{name:'Демо-заявка создана'}).waitFor();
+        const saved=await p.evaluate(()=>JSON.parse(localStorage.getItem('krug_mini_app_bookings_v1'))[0]);
+        assert.equal(saved.durationHours,12);assert.equal(saved.price,kind==='night'?7500:9000);
+        await ctx.close();
+      }
+      console.log('PASS rental Day/Night confirmation and creation '+width);
+    }
   } finally { await browser.close(); server.close(); }
 })().catch(error => { console.error(error); server.close(); process.exitCode = 1; });

@@ -20,7 +20,7 @@
   let fieldErrors = {};
   let bookingsTab = 'upcoming', draftStarted = false;
   const current = () => services.find(s => s.id === bookingDraft.serviceId);
-  const steps = () => current()?.pricingType !== 'hourly' ? ['Дата', 'Время', 'Подтверждение'] : ['Длительность', 'Дата', 'Время', 'Подтверждение'];
+  const steps = () => current()?.isRentalPackage ? ['Формат','Дата','Подтверждение'] : current()?.id === 'rental' ? ['Формат','Длительность','Дата','Время','Подтверждение'] : ['Длительность','Дата','Время','Подтверждение'];
   const button = (label, action, cls = 'primary', disabled = false) => `<button class="${cls}" data-action="${action}" ${disabled ? 'disabled' : ''}>${label}</button>`;
   const heading = (eyebrow, title, hint = '') => `<p class="eyebrow">${eyebrow}</p><h1>${title}</h1>${hint ? `<p class="muted intro">${hint}</p>` : ''}`;
   function showError(error) { notice.textContent = error.message || 'Не получилось загрузить страницу. Попробуй ещё раз.'; notice.hidden = false; }
@@ -37,14 +37,14 @@
     if (bookingDraft.serviceId !== id) { B.changeService(bookingDraft, service); dateLimit = 8; flowMessage = ''; }
   }
   function footer(label, enabled = true) {
-    return `<div class="dock"><div class="dock-summary"><span>${escape(current()?.name || 'Выбери свой звук')}${bookingDraft.durationHours ? ` · ${hours(bookingDraft.durationHours)}` : ''}${pricingHint() ? `<br>${pricingHint()}` : ''}</span><strong>${bookingDraft.price === null ? 'КРУГ' : money(bookingDraft.price)}</strong></div>${button(`${label} <span aria-hidden="true">↗</span>`, 'next', 'primary', !enabled)}</div>`;
+    return `<div class="dock"><div class="dock-summary"><span>${escape(current()?.name || 'Выбери свой звук')}${bookingDraft.durationHours ? ` · ${hours(bookingDraft.durationHours)}` : ''}${pricingHint() ? `<br>${pricingHint()}` : ''}</span><strong>${bookingDraft.price === null ? 'КРУГ' : (current()?.publicCategory === 'other' ? 'от ' : '') + money(bookingDraft.price)}</strong></div>${button(`${label} <span aria-hidden="true">↗</span>`, 'next', 'primary', !enabled)}</div>`;
   }
   function refreshPrice() {
     if (current() && bookingDraft.durationHours) bookingDraft.price = B.quoteFor(current(), bookingDraft.durationHours, bookingDraft.startTime).totalPrice;
   }
   function pricingHint() {
     const service = current();
-    if (service?.pricingType === 'minimum') return 'Предварительная цена от ' + money(service.price) + '. Итог уточняется в студии.';
+    if (service?.publicCategory === 'other') return 'Предварительная цена от ' + money(service.price) + '. Итог уточняется в студии.';
     if (!service?.morningPricing || !bookingDraft.durationHours) return '';
     if (!bookingDraft.startTime) return 'Цена уточнится после выбора времени';
     const quote = B.quoteFor(service, bookingDraft.durationHours, bookingDraft.startTime);
@@ -56,7 +56,7 @@
     return `<div class="muted">${snapshot.segments.map(segment => `<div>${segment.startTime}–${segment.endTime} · ${segment.durationHours} ч × ${money(segment.hourlyRate)} = ${money(segment.totalPrice)}</div>`).join('')}</div>`;
   }
   function summary(booking, serviceName) {
-    return `<div class="summary"><strong>${escape(serviceName || booking.serviceName)}</strong><div class="session-date">${dateLabel(booking.date)}</div><div class="session-time">${booking.startTime}–${B.endTime(booking.startTime, booking.durationHours)} <small>МСК</small></div><p class="muted">${hours(booking.durationHours)}</p>${priceBreakdown(booking)}<div class="summary-total"><span>${(booking.priceSnapshot?.isEstimate || booking === bookingDraft && current()?.pricingType === 'minimum') ? 'Предварительно, от' : 'Итого'}</span><strong>${money(booking.price)}</strong></div></div>`;
+    return `<div class="summary"><strong>${escape(serviceName || booking.serviceName)}</strong><div class="session-date">${dateLabel(booking.date)}</div><div class="session-time">${booking.startTime}–${B.endTime(booking.startTime, booking.durationHours)} <small>МСК</small></div><p class="muted">${hours(booking.durationHours)}</p>${priceBreakdown(booking)}<div class="summary-total"><span>${(booking.priceSnapshot?.isEstimate || booking === bookingDraft && current()?.publicCategory === 'other') ? 'Предварительно, от' : 'Итого'}</span><strong>${money(booking.price)}</strong></div></div>`;
   }
   function contactField(name, label, options = '') {
     return `<label for="contact-${name}">${label}</label><input id="contact-${name}" name="${name}" ${options} value="${escape(bookingDraft.client[name])}" aria-invalid="${!!fieldErrors[name]}" aria-describedby="error-${name}"><p class="field-error" id="error-${name}" aria-live="polite">${escape(fieldErrors[name] || '')}</p>`;
@@ -70,7 +70,7 @@
     }
   }
   function renderNavigation() {
-    const active = screen === 'success' ? 'bookings' : ['other','details'].includes(screen) ? 'home' : screen;
+    const active = screen === 'success' ? 'bookings' : screen === 'other' ? 'home' : screen;
     const items = [['home', 'Главная', '⌂'], ['flow', 'Записаться', '+'], ['bookings', 'Мои записи', '≡'], ['profile', 'Профиль', '○']];
     // Booking starts or resumes from the primary action on Home.
     navigation.innerHTML = items.filter(([id]) => id !== 'flow').map(([id, label, icon]) => `<button type="button" data-action="${id === 'flow' ? 'resume' : id}" ${active === id ? 'aria-current="page"' : ''}><span aria-hidden="true">${icon}</span>${label}</button>`).join('');
@@ -95,9 +95,7 @@
     renderNavigation();
     let html = '';
     if (screen === 'other') {
-      html = button('← Назад', 'home', 'back') + heading('СТУДИЙНЫЕ УСЛУГИ', 'Прочие услуги', 'Выбери, что будем делать в студии') + '<div class="service-list">' + services.filter(s => s.publicVisible && s.publicCategory === 'other' && ['studio-mixing','studio-beatmaking','studio-mix-master'].includes(s.id)).map(s => `<button class="service-card" data-service-quick="${escape(s.id)}"><span class="service-copy"><strong>${escape(s.publicName)}</strong><small>${s.defaultDurationHours ? hours(s.defaultDurationHours) : 'Длительность уточняется'}</small><b>${s.pricingType === 'minimum' ? 'от ' : ''}${money(s.price)}</b></span></button>`).join('') + '</div>';
-    } else if (screen === 'details') {
-      html = button('← Назад', 'other', 'back') + heading('ПРОЧИЕ УСЛУГИ', current().publicName, 'Длительность уточняется') + `<p>${money(current().price)}</p><p class="muted">В каталоге пока нет длительности этой услуги. Выбрать время можно будет после её уточнения.</p>`;
+      html = button('← Назад', 'home', 'back') + heading('СТУДИЙНЫЕ УСЛУГИ', 'Прочие услуги', 'Выбери, что будем делать в студии') + '<div class="service-list">' + services.filter(s => s.publicVisible && s.publicCategory === 'other' && ['studio-mixing','studio-beatmaking','studio-mix-master'].includes(s.id)).map(s => `<button class="service-card" data-service-quick="${escape(s.id)}"><span class="service-copy"><strong>${escape(s.publicName)}</strong><small>${s.selectDuration ? 'От 2 часов' : hours(s.defaultDurationHours)}</small><b>от ${money(s.price)}</b></span></button>`).join('') + '</div>';
     } else if (screen === 'home') {
       const [bookingResult, loyaltyResult] = await Promise.allSettled([API.getMyBookings(), window.KrugLoyalty.getLoyaltyBalance()]);
       const bookings = bookingResult.status === 'fulfilled' ? bookingResult.value : [];
@@ -113,12 +111,14 @@
     } else if (screen === 'flow') {
       const labels = steps(), label = labels[step];
       html = `<nav class="flow-nav" aria-label="Навигация записи">${button('← Назад', 'back', 'back')}<span>${step + 1} / ${labels.length} · ${label}</span></nav><div class="progress" aria-label="Шаг ${step + 1} из ${labels.length}">${labels.map((_, i) => `<span class="${i <= step ? 'filled' : ''}"></span>`).join('')}</div>`;
-      if (label === 'Длительность') {
+      if (label === 'Формат') {
+        html += heading('АРЕНДА СТУДИИ','Выбери формат аренды') + '<div class="service-list">' + [['rental','Почасовая','Выбрать длительность'],['rental-day','12 часов · День','10:00–22:00 · 9 000 ₽'],['rental-night','12 часов · Ночь','22:00–10:00 следующего дня · 7 500 ₽']].map(([id,name,hint])=>'<button class="service-card" data-rental="'+id+'"><span class="service-copy"><strong>'+name+'</strong><small>'+hint+'</small></span></button>').join('')+'</div>';
+      } else if (label === 'Длительность') {
         html += heading('НЕ ТОРОПИ СВОЙ ЗВУК', 'Сколько времени?', escape(current().name));
-        html += `<div class="duration-grid">${Array.from({ length: 8 }, (_, i) => i + 1).map(n => {
-          const available = current().priceTiers.some(t => t.durationHours === n);
+        html += `<div class="duration-grid">${Array.from({ length: 8 }, (_, i) => i + 1).filter(n => n >= (current().minDurationHours || 1)).map(n => {
+          const available = current().selectDuration || current().priceTiers.some(t => t.durationHours === n);
           return `<button class="duration ${bookingDraft.durationHours === n ? 'selected' : ''}" data-duration="${n}" aria-label="${hours(n)}${available ? '' : ' — недоступно'}" aria-pressed="${bookingDraft.durationHours === n}" ${available ? '' : 'disabled'}>${n}<small>${n === 1 ? 'час' : n < 5 ? 'часа' : 'часов'}</small></button>`;
-        }).join('')}</div>${current().priceTiers.length < 8 ? '<p class="muted">Некоторые варианты длительности недоступны для этой услуги.</p>' : ''}${flowMessage ? `<p class="flow-message" role="status">${escape(flowMessage)}</p>` : ''}<div class="price-panel"><span>${bookingDraft.durationHours ? hours(bookingDraft.durationHours) : 'Выбери длительность'}</span><strong>${bookingDraft.price === null ? '—' : money(bookingDraft.price)}</strong>${bookingDraft.durationHours ? `<small>${money(Math.round(bookingDraft.price / bookingDraft.durationHours))} / час</small>` : ''}</div>${footer('Выбрать дату', !!bookingDraft.durationHours)}`;
+        }).join('')}</div>${current().priceTiers && current().priceTiers.length < 8 ? '<p class="muted">Некоторые варианты длительности недоступны для этой услуги.</p>' : ''}${flowMessage ? `<p class="flow-message" role="status">${escape(flowMessage)}</p>` : ''}<div class="price-panel"><span>${bookingDraft.durationHours ? hours(bookingDraft.durationHours) : 'Выбери длительность'}</span><strong>${bookingDraft.price === null ? '—' : (current()?.publicCategory === 'other' ? 'от ' : '') + money(bookingDraft.price)}</strong>${bookingDraft.durationHours && current().pricingType === 'hourly' ? `<small>${money(Math.round(bookingDraft.price / bookingDraft.durationHours))} / час</small>` : ''}</div>${footer('Выбрать дату', !!bookingDraft.durationHours)}`;
       } else if (label === 'Дата') {
         html += heading('ВСТРЕТИМСЯ В СТУДИИ', 'В какой день?', 'Ближайшие 3 недели · московское время');
         const dates = Array.from({ length: 21 }, (_, i) => B.addDays(B.today(), i));
@@ -137,7 +137,7 @@
           const weekday = new Intl.DateTimeFormat('ru-RU', { weekday: 'short' }).format(new Date(`${date}T12:00:00Z`));
           return `<button class="date-card ${i < 2 ? 'near-date' : ''} ${bookingDraft.date === date ? 'selected' : ''}" data-date="${date}" aria-pressed="${bookingDraft.date === date}" aria-label="${dateLabel(date)}"><small>${i === 0 ? 'Сегодня' : i === 1 ? 'Завтра' : weekday}</small><strong>${Number(date.slice(-2))}</strong><small>${new Intl.DateTimeFormat('ru-RU', { month: 'short' }).format(new Date(`${date}T12:00:00Z`))}</small></button>`;
         });
-        html += `${flowMessage ? `<p class="flow-message" role="status">${escape(flowMessage)}</p>` : ''}<div class="date-grid">${choices.join('')}</div>${availableDates.length > dateLimit ? button('Показать ещё', 'more-dates', 'secondary more-dates') : ''}<p class="muted">${availableDates.length ? 'Только дни, в которых есть время на всю сессию.' : 'В ближайшие 3 недели нет свободного времени на эту длительность. Попробуй выбрать другую.'}</p>${footer('Выбрать время', !!bookingDraft.date)}`;
+        html += `${flowMessage ? `<p class="flow-message" role="status">${escape(flowMessage)}</p>` : ''}<div class="date-grid">${choices.join('')}</div>${availableDates.length > dateLimit ? button('Показать ещё', 'more-dates', 'secondary more-dates') : ''}<p class="muted">${availableDates.length ? 'Только дни, в которых есть время на всю сессию.' : 'В ближайшие 3 недели нет свободного времени на эту длительность. Попробуй выбрать другую.'}</p>${footer(current().isRentalPackage ? 'Проверить запись' : 'Выбрать время', !!bookingDraft.date)}`;
       } else if (label === 'Время') {
         html += heading('ВРЕМЯ ТВОРИТЬ', 'Во сколько?', `${dateLabel(bookingDraft.date)} · ${hours(bookingDraft.durationHours)} · МСК`);
         const slots = await API.getAvailableSlots(bookingDraft.date, bookingDraft.durationHours, bookingDraft.serviceId);
@@ -186,7 +186,7 @@
     if (action === 'other') screen = 'other';
     if (action === 'bookings') screen = 'bookings';
     if (action === 'profile') screen = 'profile';
-    if (action === 'start') { if (!draftStarted) { resetDraft(); step = 0; } screen = current()?.defaultDurationHours === null && current()?.publicCategory === 'other' ? 'details' : 'flow'; }
+    if (action === 'start') { if (!draftStarted) { resetDraft(); step = 0; } screen = 'flow'; }
     if (action === 'list-upcoming' || action === 'list-history') bookingsTab = action === 'list-upcoming' ? 'upcoming' : 'history';
     if (action === 'more-dates') dateLimit += 8;
     if (action === 'back') {
@@ -209,12 +209,16 @@
     transitioning = true;
     try {
       if (target.dataset.action) return await navigate(target.dataset.action);
+      if (target.dataset.rental) {
+        selectService(target.dataset.rental); bookingDraft.date=null; bookingDraft.startTime=null; step=1;
+        await render(); root.querySelector('.screen-content').scrollTop=0; return;
+      }
       if (target.dataset.serviceQuick) {
         const id = target.dataset.serviceQuick;
         if (id === 'other') return await navigate('other');
         if (draftStarted && !window.confirm('Начать новую запись? Текущий выбор будет сброшен.')) return;
         resetDraft(); selectService(id); step = 0;
-        screen = current()?.publicCategory === 'other' && !current().defaultDurationHours ? 'details' : 'flow';
+        screen = 'flow';
         await render(); root.querySelector('.screen-content').scrollTop = 0; root.focus({preventScroll:true}); return;
       }
       if (target.dataset.service) selectService(target.dataset.service);
@@ -227,7 +231,7 @@
         } catch (error) { await render(); throw error; }
         if (durationChanged) dateLimit = 8;
       }
-      if (target.dataset.date) { bookingDraft.date = target.dataset.date; bookingDraft.startTime = null; flowMessage = ''; }
+      if (target.dataset.date) { bookingDraft.date = target.dataset.date; bookingDraft.startTime = current()?.fixedStart || null; flowMessage = ''; }
       if (target.dataset.time) bookingDraft.startTime = target.dataset.time;
       const focusKey = ['service', 'duration', 'date', 'time'].find(key => target.dataset[key]);
       await render();
@@ -258,7 +262,7 @@
     } catch (error) {
       if (error.fields) { displayFieldErrors(error.fields); document.getElementById(`contact-${Object.keys(error.fields)[0]}`)?.focus(); }
       else {
-        if (error.code === 'SLOT_UNAVAILABLE') { bookingDraft.startTime = null; step = steps().indexOf('Время'); await render(); root.querySelector('.screen-content').scrollTop = 0; }
+        if (error.code === 'SLOT_UNAVAILABLE') { bookingDraft.startTime = null; step = steps().indexOf(current()?.isRentalPackage ? 'Дата' : 'Время'); await render(); root.querySelector('.screen-content').scrollTop = 0; }
         showError(error);
       }
     }
@@ -270,6 +274,6 @@
     try { await navigate('back'); } catch (error) { showError(error); }
     finally { transitioning = false; }
   });
-  API.getServices().then(result => { services = result; return render(); }).catch(showError);
+  API.getServices().then(result => { services = [...result, ...result.flatMap(s=>s.packages || [])]; return render(); }).catch(showError);
 })();
 
