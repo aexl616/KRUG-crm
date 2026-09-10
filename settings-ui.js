@@ -1,0 +1,81 @@
+/* Operational settings UI. All writes pass validation and role checks. */
+let settingsFeedback='';
+const settingsEscape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function settingsNotice(){return settingsFeedback?`<p class="settings-feedback" role="status">${settingsEscape(settingsFeedback)}</p>`:'';}
+function settingsInput(name,label,value,type='text',extra=''){return `<label class="field">${label}<input name="${name}" type="${type}" value="${settingsEscape(value)}" ${extra}></label>`;}
+function settingsCheck(name,label,value){return `<label class="settings-check"><input type="checkbox" name="${name}" ${value?'checked':''}>${label}</label>`;}
+function settingsSelect(name,label,value,options){return `<label class="field">${label}<select name="${name}">${options.map(([v,t])=>`<option value="${settingsEscape(v)}" ${String(v)===String(value)?'selected':''}>${settingsEscape(t)}</option>`).join('')}</select></label>`;}
+const payoutModeOptions=[['percent','Процент от стоимости записи'],['fixed_per_hour','Фиксированная ставка за час'],['fixed_per_booking','Фиксированная сумма за запись']];
+function renderPayoutSettings(){
+  if(!isOwner())return '';
+  const p=state.settings.payouts;
+  return `${settingsNotice()}<section class="settings-v2"><h2>Правила выплат</h2><p class="muted">Начисление считается по сохранённой стоимости и длительности записи. Правила уже начисленных записей сохранены отдельно. Изменения применяются к следующим начислениям; выплаченные суммы не меняются.</p>
+  <form data-settings-section="payouts" class="card section"><h3>Общие ограничения</h3><div class="form-grid">
+  ${settingsCheck('completedOnly','Только завершённые записи',p.completedOnly)}${settingsCheck('includeCancelled','Также начислять за отменённые записи',p.includeCancelled)}${settingsCheck('allowPlanned','Разрешить плановые выплаты',p.allowPlanned)}${settingsCheck('allowOverpay','Разрешить выплату сверх заработка',p.allowOverpay)}
+  ${settingsInput('minAmount','Минимальная выплата',p.minAmount,'number','min="0" step="0.01" required')}${settingsSelect('rounding','Округление каждого начисления',p.rounding,[[0,'Без округления'],[10,'До ближайших 10'],[50,'До ближайших 50'],[100,'До ближайших 100']])}${settingsSelect('calculationMode','Способ расчёта для новых сотрудников',p.calculationMode,payoutModeOptions)}
+  </div><p class="muted">Если «только завершённые» выключено, учитываются также заявки и активные записи. Отменённые регулируются отдельным переключателем. Округляется начисление, а не вручную введённая сумма выплаты.</p><button class="btn">Сохранить правила выплат</button></form>
+  <h3>Индивидуальные условия</h3>${state.users.map(e=>`<form class="card section" data-settings-employee="${settingsEscape(e.id)}"><h4>${settingsEscape(e.name)}</h4><div class="form-grid">${settingsSelect('payoutMode','Расчёт заработка',e.payoutMode,payoutModeOptions)}${settingsInput('payoutPercent','Процент, %',e.payoutPercent,'number','min="0" max="100" step="0.01" required')}${settingsInput('payoutHourlyRate','Ставка за час',e.payoutHourlyRate,'number','min="0" step="0.01" required')}${settingsInput('payoutFixedAmount','Сумма за запись',e.payoutFixedAmount,'number','min="0" step="0.01" required')}</div><p class="muted">Используется только параметр выбранного способа. Старый fixedRate перенесён как ставка за запись: единица измерения в прежней модели не была задана.</p><button class="btn">Сохранить условия сотрудника</button></form>`).join('')}</section>`;
+}
+function distributionCategories(){return [...catalogGroups(),...(!catalogGroups().some(g=>g.id==='online')?[{id:'online',name:'Онлайн'}]:[])];}
+function renderDistributionSettings(){
+  if(!isOwner())return '';
+  const d=state.settings.distribution,esc=settingsEscape;
+  return `${settingsNotice()}<section class="settings-v2"><h2>Правила распределения</h2><p class="muted">Распределяется полная сумма новой оплаты. Это целевые копилки, не дополнительная выплата сотруднику и не вычет из Finance. Старые распределения сохраняют суммы и названия на момент события.</p>
+  <form data-settings-section="distribution" class="distribution-editor"><details class="f-details"><summary><strong>Кошельки</strong><small>Названия, доступность и доли по умолчанию</small></summary><div class="section"><p class="muted">Активные проценты должны дать 100%. Чтобы выключить кошелёк, сначала обнулите его доли во всех категориях и перераспределите их.</p>
+  ${d.wallets.map(w=>`<div class="settings-wallet">${settingsInput('wallet-name-'+w.id,'Название',w.name,'text','required')}${settingsInput('wallet-percent-'+w.id,'Доля по умолчанию, %',w.percent,'number','min="0" max="100" step="any" required')}${settingsCheck('wallet-active-'+w.id,'Активен',w.active!==false)}<button type="button" class="btn secondary" data-settings-delete-wallet="${esc(w.id)}">Удалить</button></div>`).join('')}
+  </div></details><details class="f-details"><summary><strong>Распределение по услугам</strong><small>Отдельные доли для каждой категории · сумма 100%</small></summary><div class="section"><h3>Правила по категориям</h3><p class="muted">Каждая строка — ровно 100%. Категории без отдельного правила получают доли по умолчанию.</p><div class="table-wrap"><table><thead><tr><th>Категория</th>${d.wallets.map(w=>`<th>${esc(w.name)}, %</th>`).join('')}<th>Итого</th></tr></thead><tbody>${distributionCategories().map(g=>{const rule=d.rules[g.id]||Object.fromEntries(d.wallets.map(w=>[w.id,w.active===false?0:w.percent]));return `<tr data-distribution-row><th>${esc(g.name)}</th>${d.wallets.map(w=>`<td><input aria-label="${esc(g.name)} — ${esc(w.name)}, %" name="rule-${esc(g.id)}-${esc(w.id)}" type="number" min="0" max="100" step="any" value="${rule[w.id]||0}" required></td>`).join('')}<td><output>${Object.values(rule).reduce((s,p)=>s+Number(p),0).toFixed(2)}%</output></td></tr>`;}).join('')}</tbody></table></div></div></details><button class="btn">Сохранить распределение</button></form>
+  <details class="f-details"><summary>Добавить кошелёк</summary><form data-settings-section="wallet" class="section"><h3>Новый кошелёк</h3>${settingsInput('name','Название','','text','required')}<p class="muted">Добавится с долей 0%. После добавления задайте доли и сохраните распределение.</p><button class="btn">Добавить кошелёк</button></form></details></section>`;
+}
+function renderGeneralSettings(){
+  if(!canEditSettings())return '';
+  const g=generalSettings(),form=(group,title,content)=>`<form class="card section" data-settings-general="${group}"><h3>${title}</h3><div class="form-grid">${content}</div><button class="btn">Сохранить: ${title}</button></form>`;
+  return `${settingsNotice()}<section class="settings-v2"><h2>Общие настройки</h2>
+  ${form('studio','Студия',settingsInput('studioName','Название студии',g.studioName,'text','required')+settingsInput('currency','Код валюты',g.currency,'text','pattern="[A-Z]{3}" required')+settingsInput('timezone','Часовой пояс IANA',g.timezone,'text','required')+'<p class="muted full">Валюта меняет формат отображения, не конвертирует суммы. Часовой пояс задаёт «сегодня», часы студии и момент напоминания; сохранённые даты и время сессий не сдвигаются.</p>')}
+  ${form('calendar','Календарь',settingsSelect('timeFormat','Отображение времени',g.timeFormat,[['24h','24 часа'],['12h','12 часов (AM/PM)']])+settingsSelect('weekStartsOn','Начало недели',g.weekStartsOn,[[1,'Понедельник'],[0,'Воскресенье']])+settingsInput('calendarStartHour','Начало рабочего дня',g.calendarStartHour,'number','min="0" max="23" required')+settingsInput('calendarEndHour','Конец рабочего дня (24 — полночь)',g.calendarEndHour,'number','min="1" max="24" required')+settingsSelect('calendarSlotMinutes','Шаг календаря',g.calendarSlotMinutes,[[15,'15 минут'],[30,'30 минут'],[60,'60 минут']])+`<fieldset class="full"><legend>Рабочие дни</legend>${[[1,'Пн'],[2,'Вт'],[3,'Ср'],[4,'Чт'],[5,'Пт'],[6,'Сб'],[0,'Вс']].map(([d,n])=>settingsCheck('day-'+d,n,g.workingDays.includes(d))).join('')}</fieldset><p class="muted full">В нерабочий день нет свободных окон. Существующие записи остаются видны; записи вне часов доступны отдельным списком.</p>`)}
+  ${form('booking','Записи',settingsInput('defaultBookingDuration','Длительность по умолчанию, минуты',g.defaultBookingDuration,'number','min="15" max="1440" required')+settingsSelect('defaultBookingStatus','Статус новой записи',g.defaultBookingStatus,bookingStatuses.map(s=>[s,statusTitle(s)]))+'<p class="muted full">Длительность применяется только если услуга не задаёт свою. Статус «Завершено» сразу создаёт связанную оплату.</p>')}
+  ${form('notifications','Уведомления',[30,15,5].map(n=>settingsCheck('offset-'+n,'За '+n+' минут',g.reminderOffsets[n])).join('')+'<p class="muted full">Только для новых сотрудников. Персональные настройки существующих пользователей не изменяются.</p>')}
+  ${form('interface','Интерфейс',settingsSelect('defaultStartView','Экран при входе',g.defaultStartView,[['dashboard','Сегодня'],['calendar','Расписание'],['bookings','Записи']])+settingsCheck('showClientFinance','Показывать финансовый блок в карточке клиента',g.showClientFinance)+settingsCheck('confirmDestructiveActions','Подтверждать удаление данных',g.confirmDestructiveActions)+'<p class="muted full">Отключение подтверждений требует отдельного согласия. Права доступа от этого не меняются.</p>')}</section>`;
+}
+function settingsEvent(title,section){if(typeof createNotification==='function')createNotification({type:'settings_updated',entityType:'settings',entityId:section,title,message:'Изменения сохранены: '+title,audienceRoles:['owner'],audienceUserIds:[],action:null});}
+function saveSettingsSection(section,next){
+  if(!canEditSettings()||(section!=='general'&&!isOwner()))return {ok:false,error:'Нет доступа к этим настройкам.'};
+  const error=section==='general'?KrugSettings.validateGeneral(next):section==='payouts'?KrugSettings.validatePayouts(next):section==='distribution'?KrugSettings.validateDistribution(next):'Неизвестный раздел.';
+  if(error)return {ok:false,error};
+  const old=state.settings[section];if(JSON.stringify(old)===JSON.stringify(next))return {ok:true};
+  if(section==='general'&&(['currency','timezone','confirmDestructiveActions'].some(k=>old[k]!==next[k])||next.defaultBookingStatus==='завершено'&&old.defaultBookingStatus!==next.defaultBookingStatus))if(!confirm('Применить критичные настройки? Валюта не конвертирует суммы, часовой пояс меняет напоминания, завершённая запись создаёт оплату.'))return {ok:false,error:'Изменения не применены.'};
+  if(section==='payouts'&&!old.allowOverpay&&next.allowOverpay&&!confirm('Разрешить выплаты сверх заработка? CRM будет учитывать возможную переплату.'))return {ok:false,error:'Изменения не применены.'};
+  const before=structuredClone(state);captureSettingsSnapshots();state.settings[section]=structuredClone(next);
+  settingsEvent({general:'Общие настройки',payouts:'Правила выплат',distribution:'Правила распределения'}[section],section);if(!saveState()){state=before;return {ok:false,error:'Настройки не сохранены. Попробуйте ещё раз.'};}return {ok:true};
+}
+function saveEmployeePayoutSettings(id,data){
+  if(!isOwner())return {ok:false,error:'Условия выплат меняет только владелец.'};
+  const employee=state.users.find(e=>e.id===id);if(!employee)return {ok:false,error:'Сотрудник не найден.'};
+  const params={payoutMode:data.payoutMode,payoutPercent:Number(data.payoutPercent),payoutHourlyRate:Number(data.payoutHourlyRate),payoutFixedAmount:Number(data.payoutFixedAmount)};
+  const error=KrugSettings.validateEmployee(params);if(error)return {ok:false,error};
+  if(Object.keys(params).every(k=>employee[k]===params[k]))return {ok:true};
+  const before=structuredClone(state);captureSettingsSnapshots();Object.assign(employee,params); // capture replaces users: update the current collection by ID.
+  state.users=state.users.map(e=>e.id===id?{...e,...params}:e);
+  settingsEvent('Условия выплат: '+employee.name,'payouts');if(!saveState()){state=before;return {ok:false,error:'Условия не сохранены. Попробуйте ещё раз.'};}return {ok:true};
+}
+function deleteSettingsWallet(id){
+  if(!isOwner())return {ok:false,error:'Нет доступа.'};
+  const d=state.settings.distribution,w=d.wallets.find(w=>w.id===id);if(!w)return {ok:false,error:'Кошелёк не найден.'};
+  if(w.percent>0||Object.values(d.rules).some(r=>Number(r[id])>0)||state.payments.some(p=>p.distributionSnapshot?.allocations?.some(a=>a.walletId===id)||Object.hasOwn(p.distributionSnapshot?.wallets||{},w.name)))return {ok:false,error:'Кошелёк используется в правилах или истории. Обнулите доли и выключите его вместо удаления.'};
+  if(!confirm('Удалить неиспользуемый кошелёк «'+w.name+'»?'))return {ok:false,error:'Удаление отменено.'};
+  return saveSettingsSection('distribution',{...d,wallets:d.wallets.filter(w=>w.id!==id),rules:Object.fromEntries(Object.entries(d.rules).map(([k,r])=>[k,Object.fromEntries(Object.entries(r).filter(([wid])=>wid!==id))]))});
+}
+document.addEventListener('submit',event=>{
+  const form=event.target,section=form.getAttribute('data-settings-section'),group=form.getAttribute('data-settings-general'),employee=form.getAttribute('data-settings-employee');if(!section&&!group&&!employee)return;
+  event.preventDefault();const data=Object.fromEntries(new FormData(form));let result;
+  if(employee)result=saveEmployeePayoutSettings(employee,data);
+  else if(group){const next={...generalSettings()};const fields={studio:['studioName','currency','timezone'],calendar:['timeFormat','weekStartsOn','calendarStartHour','calendarEndHour','calendarSlotMinutes'],booking:['defaultBookingDuration','defaultBookingStatus'],interface:['defaultStartView','showClientFinance','confirmDestructiveActions'],notifications:[]}[group];for(const k of fields)next[k]=typeof next[k]==='boolean'?data[k]==='on':typeof next[k]==='number'?Number(data[k]):String(data[k]||'').trim();if(group==='calendar')next.workingDays=[0,1,2,3,4,5,6].filter(d=>data['day-'+d]==='on');if(group==='notifications')next.reminderOffsets=Object.fromEntries([30,15,5].map(n=>[n,data['offset-'+n]==='on']));result=saveSettingsSection('general',next);}
+  else if(section==='payouts'){const next={...state.settings.payouts};for(const k of Object.keys(KrugSettings.payoutDefaults))next[k]=typeof next[k]==='boolean'?data[k]==='on':typeof next[k]==='number'?Number(data[k]):data[k];result=saveSettingsSection(section,next);}
+  else if(section==='distribution'){const d=state.settings.distribution, wallets=d.wallets.map(w=>({...w,name:String(data['wallet-name-'+w.id]||'').trim(),percent:Number(data['wallet-percent-'+w.id]),active:data['wallet-active-'+w.id]==='on'}));const rules={...d.rules};for(const g of distributionCategories())rules[g.id]=Object.fromEntries(wallets.map(w=>[w.id,Number(data['rule-'+g.id+'-'+w.id])]));result=saveSettingsSection(section,{...d,wallets,rules});}
+  else if(section==='wallet'){const name=String(data.name||'').trim(),d=state.settings.distribution;result=!name||d.wallets.some(w=>w.name===name)?{ok:false,error:'Введите уникальное название.'}:saveSettingsSection('distribution',{...d,wallets:[...d.wallets,{id:crypto.randomUUID(),name,percent:0,active:true}]});}
+  settingsFeedback=result.ok?'Настройки сохранены.':result.error;if(result.ok)render();else{let notice=form.querySelector('[role="alert"]');if(!notice){notice=document.createElement('p');notice.setAttribute('role','alert');form.prepend(notice);}notice.textContent=result.error;}
+});
+document.addEventListener('click',event=>{const button=event.target.closest('[data-settings-delete-wallet]');if(!button)return;const result=deleteSettingsWallet(button.dataset.settingsDeleteWallet);settingsFeedback=result.ok?'Кошелёк удалён.':result.error;render();});
+document.addEventListener('input',event=>{const row=event.target.closest('[data-distribution-row]');if(row){const total=[...row.querySelectorAll('input')].reduce((s,e)=>s+Number(e.value||0),0);row.querySelector('output').textContent=total.toFixed(2)+'%';row.classList.toggle('settings-invalid',Math.abs(total-100)>.00001);}});
+
+
+document.addEventListener("invalid",event=>{let parent=event.target.parentElement;while(parent){if(parent.tagName==="DETAILS")parent.open=true;parent=parent.parentElement;}},true);

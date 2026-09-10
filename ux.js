@@ -42,7 +42,7 @@
   const oldLogin=renderLogin;
   renderLogin=()=>{oldLogin();const intro=document.querySelector('.login-card > .muted');if(intro)intro.textContent='Записи, клиенты и деньги студии — в одном месте. Войдите, чтобы открыть рабочий день.';const hint=document.querySelector('.login-card .hint');if(hint)hint.textContent='Данные хранятся в этом браузере. Используйте CRM только для внутренней работы студии.';const submit=document.querySelector('#loginForm button[type="submit"]');if(submit)submit.textContent='Открыть рабочее пространство';document.querySelectorAll('#loginForm .field').forEach((field,i)=>{const input=field.querySelector('input'),label=field.querySelector('label');input.id=`ux-login-${i}`;label.htmlFor=input.id;});};
   renderSidebar = () => `<aside class="sidebar ux-sidebar">
-    <div class="brand"><img class="brand-mark" src="krug-logo.png" alt="КРУГ"><div><strong>КРУГ</strong><span>Рабочее пространство студии</span></div></div>
+    <div class="brand"><img class="brand-mark" src="krug-logo.png" alt="КРУГ"><div><strong>${escapeSettingsText(generalSettings().studioName)}</strong><span>Рабочее пространство студии</span></div></div>
     ${canCreateBooking()?'<button type="button" class="btn ux-create" data-action="openBookingModal">+ Новая запись</button>':''}
     <nav class="nav" aria-label="Разделы CRM">${grouped()}</nav>
     <div class="ux-sidebar-footer"><strong>${escape(currentUser().name)}</strong><span>${escape(roleLabel())}</span><div>${!isOwner()?'<button type="button" class="logout" data-action="returnOwner">Режим владельца</button>':''}<button type="button" class="logout" data-action="logout">Выйти из CRM</button></div></div>
@@ -52,7 +52,7 @@
   const oldTopbar = renderTopbar;
   renderTopbar = () => `${oldTopbar()}<div class="ux-page-actions"><span class="ux-breadcrumb">Студия <span aria-hidden="true">/</span> ${pageTitle()}</span><div>${canCreateBooking()?'<button type="button" class="btn ux-mobile-create" data-action="openBookingModal">+ Новая запись</button>':''}<button type="button" class="btn secondary" data-ux-help aria-expanded="${helpOpen}">Как здесь работать</button></div></div><section class="ux-help" ${helpOpen?'':'hidden'}><h2>${pageTitle()}: с чего начать</h2><p>${explanations[view]}</p><ol><li>Создайте запись с клиентом и услугой.</li><li>Проведите сессию и обновите её статус.</li><li>Проверьте связанную оплату и расчёты с командой.</li></ol><p class="muted">Завершение записи отражается в учёте автоматически. Проверяйте сумму и фактическое поступление денег.</p></section>`;
   const oldDashboard = renderDashboard;
-  renderDashboard = () => `<section class="ux-start"><div><span class="ux-eyebrow">ВАША СТУДИЯ. ВЕСЬ ДЕНЬ ПОД КОНТРОЛЕМ.</span><h2>Что запланируем сегодня?</h2><p>Найдите свободное время, создайте запись — остальное будет связано с ней.</p></div><div class="ux-start-actions"><button class="btn secondary" type="button" data-view="calendar">Открыть расписание →</button>${canCreateBooking()?'<button class="btn" type="button" data-action="openBookingModal">+ Создать запись</button>':''}</div></section>${oldDashboard()}`;
+  renderDashboard = () => oldDashboard();
   const oldSettings = renderSettings;
   renderSettings = () => oldSettings().replace('>Выплаты</button>','>Правила выплат</button>').replace('>Бюджет / копилки</button>','>Правила распределения</button>').replace('>Текущий пользователь</button>','>Проверка ролей</button>');
   const oldPlaceholder = renderSettingsPlaceholder;
@@ -64,6 +64,11 @@
     const content=document.querySelector('.content');
     if(!content) return;
     document.body.dataset.section=view;
+    if(['expenses','payments','payouts'].includes(view))content.querySelectorAll('table').forEach(table=>{
+      const headings=[...table.querySelectorAll('thead th')].map(th=>th.textContent.trim());
+      table.classList.add('f-mobile-ledger');
+      table.querySelectorAll('tbody tr').forEach(row=>[...row.children].forEach((cell,i)=>{if(cell.colSpan===1)cell.dataset.label=headings[i]||'';}));
+    });
     if(view==='dashboard'){
       const summary=document.querySelector('.today-summary-section');
       document.querySelector('.studio-home')?.after(summary);
@@ -113,13 +118,13 @@
       if(!title&&button.textContent.trim()==='✓')title='Сохранить';
       if(title){button.setAttribute('aria-label',title);if(!action.startsWith('close')){button.textContent=title;button.classList.add('ux-text-action');}}
     });
-    const actionNames={prevCalendarPeriod:'← Предыдущий период',nextCalendarPeriod:'Следующий период →',todayCalendar:'К текущей дате',openStudioBlockModal:'Перерыв / закрыть время',completeBookingFromModal:'Завершить и учесть оплату',cancelBookingFromModal:'Отменить запись',deleteBookingFromModal:'Удалить запись',backToClients:'← К списку клиентов',resetPayoutFilters:'Сбросить фильтры',clearCalendarFilters:'Сбросить фильтры'};
+    const actionNames={prevCalendarPeriod:'← Предыдущий период',nextCalendarPeriod:'Следующий период →',todayCalendar:'К текущей дате',openStudioBlockModal:'Перерыв',completeBookingFromModal:'Завершить и учесть оплату',cancelBookingFromModal:'Отменить запись',deleteBookingFromModal:'Удалить запись',backToClients:'← К списку клиентов',resetPayoutFilters:'Сбросить фильтры',clearCalendarFilters:'Сбросить фильтры'};
     document.querySelectorAll('button[data-action]').forEach(b=>{if(actionNames[b.dataset.action])b.textContent=actionNames[b.dataset.action];});
     document.querySelectorAll('button[type="submit"]').forEach(b=>{const id=b.closest('form')?.getAttribute('id');const map={bookingModalForm:'Сохранить запись',bookingForm:editingBookingId?'Сохранить запись':'Создать запись',paymentForm:editingPaymentId?'Сохранить оплату':'Добавить оплату',payoutForm:'Сохранить выплату',clientIntelligenceForm:'Сохранить заметки'};if(map[id])b.textContent=map[id];});
-    document.querySelectorAll('.table-wrap').forEach(e=>{e.tabIndex=0;e.setAttribute('role','region');e.setAttribute('aria-label','Таблица. Прокрутите вправо, чтобы увидеть все столбцы.');const n=document.createElement('p');n.className='ux-table-hint';n.textContent='↔ Таблицу можно прокрутить вправо';e.before(n);});
+    document.querySelectorAll('.table-wrap').forEach(e=>{e.tabIndex=0;e.setAttribute('role','region');e.setAttribute('aria-label','Список операций');if(e.querySelector('.f-mobile-ledger'))return;const n=document.createElement('p');n.className='ux-table-hint';n.textContent='↔ Таблицу можно прокрутить вправо';e.before(n);});
     document.querySelectorAll('.calendar-slot').forEach(b=>{const [date,time]=b.dataset.calendarSlot.split('|');b.setAttribute('aria-label',`Создать запись: ${date}, ${time}`);});
     document.querySelectorAll('.calendar-booking').forEach(b=>{b.tabIndex=0;b.setAttribute('role','button');b.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();b.click();}});});
-    if(view!=='dashboard'){const p=document.createElement('p');p.className='ux-context';p.textContent=explanations[view];document.querySelector('.ux-help')?.after(p);}
+    if(!['dashboard','finance','budget'].includes(view)){const p=document.createElement('p');p.className='ux-context';p.textContent=explanations[view];document.querySelector('.ux-help')?.after(p);}
     ['bookingModalForm','bookingForm','paymentForm','studioBlockForm','payoutForm'].forEach(id=>{const form=document.getElementById(id);if(form){const p=document.createElement('p');p.className='ux-form-intro full';p.textContent='Поля со звёздочкой обязательны. Проверьте данные и нажмите кнопку сохранения.';form.prepend(p);}});
     const modalForm=document.querySelector('#bookingModalForm');
     if(modalForm){const note=document.createElement('p');note.className='ux-form-intro full';note.textContent='Статус «Завершено» создаёт связанную оплату. Используйте его после сессии и проверки расчёта с клиентом.';modalForm.querySelector('[name="status"]')?.closest('.field')?.after(note);}

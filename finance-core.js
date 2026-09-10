@@ -1,5 +1,7 @@
 /* Pure Finance 2.0 calculations. No DOM, storage, network or role side effects. */
 (function(root) {
+  const Settings=typeof module!=='undefined'&&module.exports?require('./settings-core.js'):root.KrugSettings;
+  const earning=(data,b)=>Settings.calculateEmployeeEarning(b,(data.users||[]).find(u=>u.id===employeeId(data,b))||{},data.settings?.payouts||Settings.payoutDefaults);
   const categories = ['Аренда','Коммунальные','Интернет/связь','Оборудование','Ремонт','Расходники','Реклама','Подписки/софт','Подрядчики','Транспорт','Налоги','Прочее'];
   const periods = {today:'Сегодня',week:'Неделя',month:'Месяц',lastMonth:'Прошлый месяц',all:'Всё время'};
   const cents = n => Number.isFinite(Number(n)) ? Math.round(Number(n) * 100) : 0;
@@ -28,17 +30,17 @@
   const expenseSignature = e => JSON.stringify([e.category || 'Прочее',String(e.title || '').trim().toLowerCase(),e.employeeId || '']);
   function employeeId(data,b) { return b.employeeId || (data.users || []).find(u=>u.name === (b.employeeName || b.employee))?.id || ''; }
   function employeeRows(data, end, includeFuturePlans = false) {
-    const bookings = (data.bookings || []).filter(b=>b.status==='завершено' && b.date<=end);
+    const bookings = (data.bookings || []).filter(b=>b.date<=end && earning(data,b)>0);
     const payouts = (data.payouts || []).filter(p=>p.status!=='Отменено');
     const resolvePayout = p => p.employeeId || (data.users || []).find(u=>u.name===(p.employeeName || p.recipient))?.id || '';
     const ids = new Set([...(data.users || []).map(u=>u.id),...bookings.map(b=>employeeId(data,b)),...payouts.map(resolvePayout)]);
     return [...ids].map(id=>{
       const employee=(data.users || []).find(u=>u.id===id) || null;
-      const completed=bookings.filter(b=>employeeId(data,b)===id && cents(b.amount)>0);
+      const completed=bookings.filter(b=>employeeId(data,b)===id);
       const payments=payouts.filter(p=>resolvePayout(p)===id && paid(p) && payoutDate(p)<=end && validDate(payoutDate(p)));
       const planned=payouts.filter(p=>resolvePayout(p)===id && p.status==='Запланировано' && (includeFuturePlans || payoutDate(p)<=end));
-      // Preserve the existing CRM accrual rule: the full completed booking amount.
-      const earned=sum(completed), paidTotal=sum(payments,p=>Math.max(0,amount(p.amount))), plannedTotal=sum(planned,p=>Math.max(0,amount(p.amount)));
+      // Accruals use the employee's terms, including fixed fees for free sessions.
+      const earned=sum(completed,b=>earning(data,b)), paidTotal=sum(payments,p=>Math.max(0,amount(p.amount))), plannedTotal=sum(planned,p=>Math.max(0,amount(p.amount)));
       const outstanding=Math.max(0,amount(earned-paidTotal));
       const last=[...payments].sort((a,b)=>String(b.paidAt || b.createdAt).localeCompare(String(a.paidAt || a.createdAt)))[0];
       return {id,employee,name:employee?.name || (id?'Удалённый сотрудник':'Без сотрудника'),earned,paid:paidTotal,planned:plannedTotal,outstanding,available:Math.max(0,amount(outstanding-plannedTotal)),reserve:Math.max(outstanding,plannedTotal),overpaid:Math.max(0,amount(paidTotal+plannedTotal-earned)),lastPayout:last || null,completedBookings:completed};
@@ -73,7 +75,7 @@
     const forecastExpenses=sum([...monthExpenses,...projectedExpenses]);
     const currentEmployees=employeeRows({...data,payouts:payouts.filter(p=>p.status!=='Запланировано' || payoutDate(p)<=month.end)},today,true);
     const monthPaid=sum(payouts.filter(p=>paid(p) && monthInside(payoutDate(p)) && payoutDate(p)<=today));
-    const futureEarnedById=new Map();future.forEach(b=>{const id=employeeId(data,b);futureEarnedById.set(id,(futureEarnedById.get(id)||0)+cents(b.amount));});
+    const futureEarnedById=new Map();future.forEach(b=>{const id=employeeId(data,b);futureEarnedById.set(id,(futureEarnedById.get(id)||0)+cents(earning(data,{...b,status:'завершено'})));});
     const forecastReserve=sum(currentEmployees,e=>Math.max(amount(e.outstanding+(futureEarnedById.get(e.id)||0)/100),e.planned));
     const missingFutureReserve=[...futureEarnedById].filter(([id])=>!currentEmployees.some(e=>e.id===id)).reduce((n,[,value])=>n+value,0)/100;
     const forecastPayouts=amount(monthPaid+forecastReserve+missingFutureReserve);
@@ -104,7 +106,7 @@
     if(limit>0 && monthActualExpenses>limit)add('expense_limit','critical','Превышен лимит расходов месяца','','',amount(monthActualExpenses-limit),month.start.slice(0,7));
     const health=warnings.some(w=>w.severity==='critical') || freeCashAfterObligations<0 ? 'Риск' : (limit>0&&monthActualExpenses>limit*.8)||employeeOutstanding>Math.max(0,cashBalanceAsOf)||warnings.some(w=>w.severity==='warning') ? 'Внимание':'Хорошо';
     const serviceRevenue=rank(completed,b=>b.serviceName || b.service || 'Без услуги'),clientRevenue=rank(completed,b=>b.clientName || b.client || 'Без клиента');
-    return {period:range,asOf:end,revenue,cashIn,unpaidRevenue:sum(completed,unpaid),receivedForCompleted:sum(completed,b=>Math.min(amount(b.amount),received(b))),expenses:expenseTotal,payoutsPaid,employeeEarned:sum(completed,b=>Math.max(0,amount(b.amount))),employeeOutstanding,plannedPayouts,netCash,openingCash:amount(cashBalanceAsOf-netCash),cashBalanceAsOf,obligationsReserve,freeCashAfterObligations,averageCheck:completed.length?amount(revenue/completed.length):0,completedBookings:completed.length,employees,forecastRevenue,forecastExpenses,forecastPayouts,forecastFreeCash,forecastMonth:month,forecastReceivables:currentUnpaid,forecastFutureCash:futureCash,projectedExpenses,plan:{revenueTarget:target,revenueActual:monthActualRevenue,revenuePercent:target?Math.round(monthActualRevenue/target*100):null,revenueRemaining:Math.max(0,amount(target-monthActualRevenue)),expenseLimit:limit,expenseActual:monthActualExpenses,expenseRemaining:limit?amount(limit-monthActualExpenses):null},expenseCategories:rank(actualExpenses,e=>e.category || 'Прочее'),largestExpense:[...actualExpenses].sort((a,b)=>b.amount-a.amount)[0] || null,serviceRevenue,employeeRevenue:rank(completed,b=>(data.users || []).find(u=>u.id===employeeId(data,b))?.name || 'Без сотрудника'),topService:serviceRevenue[0] || null,topClient:clientRevenue[0] || null,warnings,health};
+    return {period:range,asOf:end,revenue,cashIn,unpaidRevenue:sum(completed,unpaid),receivedForCompleted:sum(completed,b=>Math.min(amount(b.amount),received(b))),expenses:expenseTotal,payoutsPaid,employeeEarned:sum(bookings.filter(b=>inside(b.date)),b=>earning(data,b)),employeeOutstanding,plannedPayouts,netCash,openingCash:amount(cashBalanceAsOf-netCash),cashBalanceAsOf,obligationsReserve,freeCashAfterObligations,averageCheck:completed.length?amount(revenue/completed.length):0,completedBookings:completed.length,employees,forecastRevenue,forecastExpenses,forecastPayouts,forecastFreeCash,forecastMonth:month,forecastReceivables:currentUnpaid,forecastFutureCash:futureCash,projectedExpenses,plan:{revenueTarget:target,revenueActual:monthActualRevenue,revenuePercent:target?Math.round(monthActualRevenue/target*100):null,revenueRemaining:Math.max(0,amount(target-monthActualRevenue)),expenseLimit:limit,expenseActual:monthActualExpenses,expenseRemaining:limit?amount(limit-monthActualExpenses):null},expenseCategories:rank(actualExpenses,e=>e.category || 'Прочее'),largestExpense:[...actualExpenses].sort((a,b)=>b.amount-a.amount)[0] || null,serviceRevenue,employeeRevenue:rank(completed,b=>(data.users || []).find(u=>u.id===employeeId(data,b))?.name || 'Без сотрудника'),topService:serviceRevenue[0] || null,topClient:clientRevenue[0] || null,warnings,health};
   }
   const api={categories,periods,periodRange,validDate,migrate,stats,employeeRows,amount,key,sum};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.KrugFinance=api;

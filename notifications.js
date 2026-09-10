@@ -7,16 +7,19 @@ let notificationSnapshot;
 const notificationNativeSave = saveState;
 const notificationEscape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-function normalizeNotifications() {
+function normalizeNotifications(state = globalNotificationState()) {
   state.notifications = (Array.isArray(state.notifications) ? state.notifications : []).filter(n => n && n.id && n.type).map(n => ({ ...n, readBy: Array.isArray(n.readBy) ? n.readBy : [], audienceRoles: Array.isArray(n.audienceRoles) ? n.audienceRoles : [], audienceUserIds: Array.isArray(n.audienceUserIds) ? n.audienceUserIds : [] }));
   for (const key of ['notificationSettings', 'sentReminderKeys', 'notificationCriticalKeys']) {
     if (!state[key] || typeof state[key] !== 'object' || Array.isArray(state[key])) state[key] = {};
   }
 }
 
+function globalNotificationState() { return state; }
+dataStore.addNormalizer(value=>{normalizeNotifications(value);return value;});
+
 function notificationPreferences(userId = currentUser()?.id) {
   const p = state.notificationSettings[userId] || {};
-  return { inApp: p.inApp !== false, system: p.system === true, offsets: { 30: true, 15: true, 5: true, ...p.offsets }, categories: { ...Object.fromEntries(Object.keys(notificationCategories).map(k => [k, true])), ...p.categories } };
+  return { inApp: p.inApp !== false, system: p.system === true, offsets: { ...generalSettings().reminderOffsets, ...p.offsets }, categories: { ...Object.fromEntries(Object.keys(notificationCategories).map(k => [k, true])), ...p.categories } };
 }
 
 function notificationCategory(n) {
@@ -29,6 +32,7 @@ function canViewNotification(n) {
   if (!n.audienceRoles.includes(currentRole()) && !n.audienceUserIds.includes(user.id)) return false;
   const entity = notificationEntity(n);
   switch (n.entityType) {
+    case 'settings': return isOwner();
     case 'booking': return entity ? canViewBooking(entity) : isManagerRole();
     case 'client': return canViewSection('clients') && (entity ? canViewClient(entity) : isManagerRole());
     case 'service': return canEditSettings();
@@ -56,7 +60,8 @@ function unreadNotificationsCount() {
 }
 function persistNotificationMetadata() {
   // A timer/read click must never overwrite newer bookings or payments from another tab.
-  const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+  const saved = dataStore.readState();
+  if (!saved) return false;
   const events = new Map((saved.notifications || []).map(n => [n.id, n]));
   state.notifications.forEach(n => {
     const previous = events.get(n.id);
@@ -70,9 +75,9 @@ function persistNotificationMetadata() {
   state.sentReminderKeys = { ...saved.sentReminderKeys, ...state.sentReminderKeys };
   for (const [key, value] of Object.entries(state.sentReminderKeys)) {
     const booking = (saved.bookings || []).find(b => b.id === value?.bookingId);
-    if (!booking || new Date(`${booking.date}T${booking.time}`).getTime() !== value.start) delete state.sentReminderKeys[key];
+    if (!booking || studioTimestamp(booking.date,booking.time) !== value.start) delete state.sentReminderKeys[key];
   }
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...saved, notifications: state.notifications, notificationSettings: settings, sentReminderKeys: state.sentReminderKeys }));
+  return dataStore.saveState({ ...saved, notifications: state.notifications, notificationSettings: settings, sentReminderKeys: state.sentReminderKeys });
 }
 function markNotificationRead(id) {
   const n = state.notifications.find(n => n.id === id);
@@ -196,7 +201,8 @@ function deliverSystemNotification(n) {
 function checkUpcomingBookingReminders(now = Date.now(), persist = true) {
   if (!currentUser()) return [];
   if (persist) {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    const saved = dataStore.readState();
+    if (!saved) return [];
     // Another tab changed the schedule: do not send a stale reminder or write stale business data.
     if (Object.keys(notificationFields).some(k => JSON.stringify(saved[k] || []) !== JSON.stringify(state[k] || []))) return [];
     state.sentReminderKeys = { ...state.sentReminderKeys, ...saved.sentReminderKeys };
@@ -204,7 +210,7 @@ function checkUpcomingBookingReminders(now = Date.now(), persist = true) {
   const p = notificationPreferences(), generated = [];
   const userId = currentUser().id;
   for (const b of accessibleBookings()) {
-    const start = new Date(`${b.date}T${b.time}`).getTime();
+    const start = studioTimestamp(b.date,b.time);
     if (!['заявка', 'подтверждено'].includes(b.status) || !Number.isFinite(start) || start <= now) continue;
     const due = [5, 15, 30].filter(offset => p.offsets[offset] !== false && start - now <= offset * 60000);
     if (!due.length) continue;
@@ -217,18 +223,21 @@ function checkUpcomingBookingReminders(now = Date.now(), persist = true) {
   }
   // Past schedules cannot produce reminders again; keep only current/future ledgers.
   for (const [key, value] of Object.entries(state.sentReminderKeys)) if (value.start <= now || !state.bookings.some(b => b.id === value.bookingId)) delete state.sentReminderKeys[key];
-  if (persist && generated.length) { trimNotifications(); persistNotificationMetadata(); generated.forEach(deliverSystemNotification); refreshNotificationUI(); }
+  if (persist && generated.length) { trimNotifications(); if(persistNotificationMetadata()) generated.forEach(deliverSystemNotification); refreshNotificationUI(); }
   return generated;
 }
 
 saveState = function saveStateWithNotifications() {
+  try {
   const previousIds = new Set(state.notifications.map(n => n.id));
   collectNotificationChanges();
   checkUpcomingBookingReminders(Date.now(), false);
   trimNotifications();
-  notificationNativeSave();
-  notificationSnapshot = notificationTakeSnapshot();
-  state.notifications.filter(n => !previousIds.has(n.id)).forEach(deliverSystemNotification);
+  const saved=notificationNativeSave();
+  if(saved) notificationSnapshot = notificationTakeSnapshot();
+  if(saved)state.notifications.filter(n => !previousIds.has(n.id)).forEach(deliverSystemNotification);
+  return saved;
+  } catch(error) { return dataStore.fail("business-save",error); }
 };
 
 function openNotificationTarget(n) {

@@ -1,7 +1,5 @@
-const STORAGE_KEY = "studio-income-app-v1";
+const STORAGE_KEY = KrugData.STORAGE_KEY;
 const PAYOUT_RESET_VERSION = 2;
-const CALENDAR_START_HOUR = 9;
-const CALENDAR_END_HOUR = 23;
 const CALENDAR_HOUR_HEIGHT = 72;
 const studioBlockTypes = ["Тех. блок", "Уборка", "Ремонт", "Контент", "Личное", "Закрыто", "Другое"];
 const accessRoles = [
@@ -197,9 +195,19 @@ const budgetRules = {
   }
 };
 
-let state = loadState();
-state = normalizeState(state);
-let view = "dashboard";
+let dataStorageNotice = '';
+let state = {};
+const dataStore = new KrugData.DataStore({
+  adapter: new KrugData.LocalStorageAdapter(), defaults: () => defaultState,
+  normalize: normalizeState,
+  onError: () => {
+    const firstError=!dataStorageNotice;
+    dataStorageNotice='Данные не сохранены или не прочитаны. Не закрывайте вкладку: изменения могут остаться только в памяти. Прежние данные не очищены.';
+    if(firstError)setTimeout(()=>render(),0);
+  }
+});
+state = loadState();
+let view = state.settings.general.defaultStartView;
 let editingPaymentId = null;
 let editingBookingId = null;
 let bookingModalOpen = false;
@@ -242,15 +250,7 @@ let accessNotice = "";
 
 const app = document.querySelector("#app");
 
-function loadState() {
-  const saved = localStorage.getItem(STORAGE_KEY);
-  if (!saved) return structuredClone(defaultState);
-  try {
-    return { ...structuredClone(defaultState), ...JSON.parse(saved) };
-  } catch {
-    return structuredClone(defaultState);
-  }
-}
+function loadState() { return dataStore.loadState(); }
 
 function servicePriceRuleFromStatic(serviceName) {
   const catalogItem = migrationServiceCatalog.find((item) => item.name === serviceName);
@@ -278,7 +278,9 @@ function normalizeState(nextState) {
     }
     return booking;
   });
-  return migrated;
+  const ready=KrugSettings.migrate(migrated,budgetRules);
+  ready.payments=ready.payments.map(p=>p.distributionSnapshot?p:{...p,distributionSnapshot:{version:0,legacy:true,...splitLegacyPayment(p,ready.serviceItems)}});
+  return ready;
 }
 
 function normalizeLegacyState(nextState) {
@@ -298,14 +300,14 @@ function normalizeLegacyState(nextState) {
     name: service.name || String(service || "Услуга"),
     categoryId: groupIds.has(service.categoryId) ? service.categoryId : service.category || "extra",
     price: Number(service.price || service.amount || 0),
-    duration: service.duration || "1 час",
+    duration: service.duration ?? '',
     order: Number(service.order || index + 1),
     mode: service.mode || "fixed",
     active: service.active !== false
   }));
   [...migrationServiceNames, ...customServices].forEach((name) => {
     if (!serviceItems.some((service) => service.name === name)) {
-      const categoryId = classifyService(name);
+      const categoryId = classifyService(name, nextState.serviceItems || defaultServiceItems);
       serviceItems.push({
         id: crypto.randomUUID(),
         name,
@@ -355,7 +357,7 @@ function normalizeLegacyState(nextState) {
     : null;
   const payments = (nextState.payments || []).map((payment) => {
     const service = serviceAliases[payment.service] || payment.service;
-    const category = classifyService(service);
+    const category = classifyService(service, nextState.serviceItems || defaultServiceItems);
     const employeeName = payment.employee === "Я" ? "AE XL" : payment.employee || "";
     const soundEngineer = payment.soundEngineer || (["recording", "studioProduction"].includes(category) ? employeeName : "") || "";
     const performer = payment.performer || (category === "online" ? employeeName : "") || "";
@@ -437,6 +439,7 @@ function normalizeLegacyState(nextState) {
     const previous = previousEntry?.[1] || {};
     const nextClient = {
       ...previous,
+      ...previous,
       id: previous.id || crypto.randomUUID(),
       name,
       phone: item.phone || previous.phone || "",
@@ -511,7 +514,12 @@ function normalizeLegacyState(nextState) {
 }
 
 function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  try {
+    captureSettingsSnapshots();
+    const saved=dataStore.saveState(state);
+    if(saved)dataStorageNotice="";
+    return saved;
+  } catch(error) { return dataStore.fail("business-save",error); }
 }
 
 saveState();
@@ -663,7 +671,7 @@ function switchLocalUser(userId) {
   if (!user) return false;
   state.sessionUserId = user.id;
   state.access = { ...(state.access || {}), currentUserId: user.id };
-  view = "dashboard";
+  view = generalSettings().defaultStartView;
   settingsTab = "services";
   selectedBookingId = null;
   selectedClientName = null;
@@ -678,8 +686,23 @@ function switchLocalUser(userId) {
   return true;
 }
 
+function escapeSettingsText(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function generalSettings() { return state.settings.general; }
+function calculateEmployeeEarning(booking,employee) { return KrugSettings.calculateEmployeeEarning(booking,employee,state.settings.payouts); }
+function captureSettingsSnapshots() {
+  state.users=state.users.map(e=>({...e,...KrugSettings.employeeParams(e,state.settings.payouts)}));
+  for(const e of state.users)if(!state.notificationSettings[e.id])state.notificationSettings[e.id]={offsets:{...generalSettings().reminderOffsets}};
+  for(const b of state.bookings){const e=state.users.find(e=>e.id===bookingEmployeeId(b)),p=state.settings.payouts;const eligible=b.status==='отменено'?p.includeCancelled:!p.completedOnly||b.status==='завершено';if(e&&!b.earningSnapshot&&eligible)b.earningSnapshot={...KrugSettings.earningRule(e,p),employeeId:e.id};}
+  for(const p of state.payments)if(!p.distributionSnapshot){const b=state.bookings.find(b=>b.id===p.bookingId),s=serviceById(b?.serviceId)||serviceByName(p.service);const category=/онлайн/i.test(p.service||'')?'online':b?.serviceCategoryId||s?.categoryId||'extra';p.distributionSnapshot=KrugSettings.distributionSnapshot(p.amount,category,state.settings.distribution);}
+}
+function confirmDestructive(message) { return !generalSettings().confirmDestructiveActions || confirm(message); }
+function isWorkingDay(date) { return generalSettings().workingDays.includes(new Date(date+'T12:00:00').getDay()); }
+function calendarStartHour() { return generalSettings().calendarStartHour; }
+function calendarEndHour() { return generalSettings().calendarEndHour; }
+function defaultDuration() { return `${generalSettings().defaultBookingDuration} мин`; }
+function studioTimestamp(date,time) { return KrugSettings.eventTimestamp(date,time,generalSettings().timezone); }
 function money(value) {
-  return new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(value || 0);
+  return new Intl.NumberFormat("ru-RU", { style: "currency", currency: generalSettings().currency, minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(value || 0);
 }
 
 function numberOrZero(value) {
@@ -732,8 +755,8 @@ function addDays(dateString, days) {
 
 function weekStart(dateString) {
   const date = new Date(`${dateString}T00:00:00`);
-  const day = date.getDay() || 7;
-  date.setDate(date.getDate() - day + 1);
+  const day = (date.getDay() - generalSettings().weekStartsOn + 7) % 7;
+  date.setDate(date.getDate() - day);
   return localDateKey(date);
 }
 
@@ -859,6 +882,7 @@ function render() {
       ${renderSidebar()}
       <section class="content">
         ${renderTopbar()}
+        ${dataStorageNotice ? `<div class="access-notice" role="alert">${dataStorageNotice}</div>` : ""}
         ${accessNotice ? `<div class="access-notice" role="status"><strong>${accessNotice}</strong><button class="icon-btn" type="button" data-action="closeAccessNotice">×</button></div>` : ""}
         ${view === "calendar" ? renderCalendar() : ""}
         ${view === "dashboard" ? renderDashboard() : ""}
@@ -903,12 +927,13 @@ function renderLogin() {
         <div class="brand">
           <img class="brand-mark" src="krug-logo.png" alt="КРУГ" />
           <div>
-            <strong>КРУГ CRM</strong>
+            <strong>${escapeSettingsText(generalSettings().studioName)} CRM</strong>
             <span>внутренняя CRM студии</span>
           </div>
         </div>
         <span class="preview-badge">Preview</span>
         <h1>Вход</h1>
+        ${dataStorageNotice ? `<div class="access-notice" role="alert">${dataStorageNotice}</div>` : ""}
         <p class="muted">Внутреннее приложение KRUG CRM для сотрудников студии.</p>
         <div class="grid">
           <div class="field">
@@ -945,7 +970,7 @@ function renderSidebar() {
       <div class="brand">
         <img class="brand-mark" src="krug-logo.png" alt="КРУГ" />
         <div>
-          <strong>КРУГ</strong>
+          <strong>${escapeSettingsText(generalSettings().studioName)}</strong>
           <span>CRM студии · Preview</span>
         </div>
       </div>
@@ -970,7 +995,7 @@ function navButtons() {
     ["clients", "Клиенты"],
     ["finance", "Финансы"],
     ["payments", "Платежи"],
-    ["payouts", "Выплаты"],
+    ...(isOwner() ? [["payouts", "Правила выплат"]] : []),
     ["budget", "Бюджет"],
     ["reports", "Отчёты"],
     ["settings", "Настройки"]
@@ -1044,8 +1069,8 @@ function pageSubtitle() {
   }[view];
 }
 
-function classifyService(service) {
-  const catalogItem = (state?.serviceItems || defaultServiceItems).find((item) => item.name === service) || migrationServiceCatalog.find((item) => item.name === service);
+function classifyService(service, items = state?.serviceItems || defaultServiceItems) {
+  const catalogItem = items.find((item) => item.name === service) || migrationServiceCatalog.find((item) => item.name === service);
   if (catalogItem?.categoryId) return budgetCategoryForServiceGroup(catalogItem.categoryId);
   if (catalogItem?.category) return catalogItem.category;
   const value = String(service || "").toLowerCase();
@@ -1107,8 +1132,8 @@ function splitWalletRemainder(amount, rule, outsideTotal) {
   return Object.fromEntries(budgetWallets.map((wallet) => [wallet, remainder * ((rule.wallets[wallet] || 0) / walletRatioTotal)]));
 }
 
-function splitPayment(payment) {
-  const ruleKey = classifyService(payment.service);
+function splitLegacyPayment(payment, items = state?.serviceItems || defaultServiceItems) {
+  const ruleKey = classifyService(payment.service, items);
   const rule = budgetRules[ruleKey];
   const amount = Number(payment.amount || 0);
   let outside = Object.fromEntries(Object.entries(rule.outside).map(([label, ratio]) => [outsideLabel(payment, label), amount * ratio]));
@@ -1124,12 +1149,18 @@ function splitPayment(payment) {
   return { ruleKey, rule, wallets, outside, amount };
 }
 
+function splitPayment(payment) {
+  const snapshot=payment.distributionSnapshot;
+  if(!snapshot)return splitLegacyPayment(payment);
+  if(snapshot.legacy)return snapshot;
+  return {amount:snapshot.amount,wallets:Object.fromEntries(snapshot.allocations.map(a=>[a.name,a.amount])),outside:{},ruleKey:snapshot.categoryId,rule:{title:categoryLabel(snapshot.categoryId)}};
+}
 function calculateBudget() {
   return state.payments.reduce(
     (acc, payment) => {
       const split = splitPayment(payment);
-      budgetWallets.forEach((wallet) => {
-        acc.wallets[wallet] += split.wallets[wallet];
+      Object.entries(split.wallets).forEach(([wallet,value]) => {
+        acc.wallets[wallet] = (acc.wallets[wallet] || 0) + value;
       });
       Object.entries(split.outside).forEach(([label, value]) => {
         acc.outside[label] = (acc.outside[label] || 0) + value;
@@ -1188,7 +1219,7 @@ function employeePayoutStats(employeeId) {
   const employeePayouts = (state.payouts || []).filter((payout) =>
     payout.status !== "Отменено" && (payout.employeeId === employee.id || (!payout.employeeId && payout.recipient === employee.name))
   );
-  const totalEarned = completedBookings.reduce((sum, booking) => sum + numberOrZero(booking.amount), 0);
+  const totalEarned = completedBookings.reduce((sum, booking) => sum + calculateEmployeeEarning(booking,employee), 0);
   const totalPaid = employeePayouts
     .filter((payout) => !payout.status || payout.status === "Выплачено")
     .reduce((sum, payout) => sum + Math.max(0, numberOrZero(payout.amount)), 0);
@@ -1222,15 +1253,13 @@ function totalEmployeePayoutAvailable() {
   return allEmployeePayoutStats().reduce((sum, stats) => sum + stats.availableToPay, 0);
 }
 
-function validateEmployeePayout(employeeId, amountValue) {
+function validateEmployeePayout(employeeId, amountValue, status="Выплачено") {
   const employee = (state.users || []).find((user) => user.id === employeeId);
   const stats = employeePayoutStats(employeeId);
   const amount = Number(amountValue || 0);
   if (!employee) return { ok: false, error: "Выбери сотрудника для выплаты.", employee, stats, amount };
-  if (!amount || amount <= 0) return { ok: false, error: "Укажи сумму выплаты больше нуля.", employee, stats, amount };
-  if (amount > stats.availableToPay) {
-    return { ok: false, error: `Нельзя выплатить больше доступной суммы. Доступно: ${money(stats.availableToPay)}.`, employee, stats, amount };
-  }
+  const error=KrugSettings.validatePayout(amount,stats.availableToPay,status,state.settings.payouts);
+  if(error)return {ok:false,error,employee,stats,amount};
   return { ok: true, error: "", employee, stats, amount };
 }
 
@@ -1460,8 +1489,8 @@ function updatePayoutEmployeeSummary(fillAmount = true) {
   const hint = document.querySelector("#payoutAvailableHint");
   if (!employeeId || !amount) return;
   const stats = employeePayoutStats(employeeId);
-  amount.max = String(stats.availableToPay);
-  if (fillAmount || Number(amount.value || 0) > stats.availableToPay) amount.value = stats.availableToPay || "";
+  if(state.settings.payouts.allowOverpay)amount.removeAttribute("max");else amount.max=String(stats.availableToPay);
+  if (fillAmount || !state.settings.payouts.allowOverpay && Number(amount.value || 0) > stats.availableToPay) amount.value = stats.availableToPay || "";
   if (hint) hint.textContent = stats.availableToPay > 0 ? `Доступно к выплате: ${money(stats.availableToPay)}` : "Сейчас выплачивать нечего.";
   const earned = document.querySelector("#payoutEarnedValue");
   const paid = document.querySelector("#payoutPaidValue");
@@ -1493,7 +1522,8 @@ function updatePayoutAmountFeedback() {
   let error = "";
   if (!employeeId) error = "Выбери сотрудника для выплаты.";
   else if (amount <= 0) error = "Укажи сумму выплаты больше нуля.";
-  else if (amount > stats.availableToPay) error = `Нельзя выплатить больше доступной суммы. Доступно: ${money(stats.availableToPay)}.`;
+  else if (!state.settings.payouts.allowOverpay && amount > stats.availableToPay) error = `Нельзя выплатить больше доступной суммы. Доступно: ${money(stats.availableToPay)}.`;
+  if(!error)error=KrugSettings.validatePayout(amount,stats.availableToPay,"Выплачено",state.settings.payouts);
   amountInput.setCustomValidity(error);
   hint.textContent = error || `Доступно к выплате: ${money(stats.availableToPay)}`;
   hint.classList.toggle("field-error", Boolean(error));
@@ -1643,7 +1673,7 @@ function renderEmptyState(title, text, actionLabel = "", actionAttrs = "") {
 }
 
 function todayKey() {
-  return localDateKey();
+  return KrugSettings.zonedDate(new Date(),generalSettings().timezone);
 }
 
 function weekdayLong(dateString) {
@@ -1651,7 +1681,7 @@ function weekdayLong(dateString) {
 }
 
 function currentClock() {
-  return new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  return new Date().toLocaleTimeString("ru-RU", { timeZone:generalSettings().timezone,hour12:generalSettings().timeFormat==="12h",hour: "2-digit", minute: "2-digit" });
 }
 
 function parseDurationHours(duration = "") {
@@ -1660,7 +1690,7 @@ function parseDurationHours(duration = "") {
 }
 
 function minutesUntil(dateString, timeString) {
-  const start = new Date(`${dateString}T${timeString || "00:00"}`);
+  const start = studioTimestamp(dateString,timeString || "00:00");
   return Math.round((start - new Date()) / 60000);
 }
 
@@ -1696,8 +1726,8 @@ function eventTimeRange(event) {
 }
 
 function studioBusyIntervals(date) {
-  const dayStart = CALENDAR_START_HOUR * 60;
-  const dayEnd = (CALENDAR_END_HOUR + 1) * 60;
+  const dayStart = calendarStartHour() * 60;
+  const dayEnd = calendarEndHour() * 60;
   const events = [
     ...(state.bookings || []).filter((booking) => booking.date === date && isActiveBooking(booking)),
     ...(state.studioBlocks || []).filter((block) => block.date === date && isActiveStudioBlock(block))
@@ -1710,14 +1740,15 @@ function studioBusyIntervals(date) {
 }
 
 function freeWindowRanges(date = todayKey()) {
+  if(!isWorkingDay(typeof date==="string"?date:date?.[0]?.date||todayKey()))return [];
   const busy = studioBusyIntervals(typeof date === "string" ? date : date?.[0]?.date || todayKey());
   const ranges = [];
-  let cursor = CALENDAR_START_HOUR * 60;
+  let cursor = calendarStartHour() * 60;
   busy.forEach((slot) => {
     if (slot.start > cursor) ranges.push([cursor, slot.start]);
     cursor = Math.max(cursor, slot.end);
   });
-  const dayEnd = (CALENDAR_END_HOUR + 1) * 60;
+  const dayEnd = calendarEndHour() * 60;
   if (cursor < dayEnd) ranges.push([cursor, dayEnd]);
   return ranges.filter(([start, end]) => end - start >= 30).slice(0, 8);
 }
@@ -1953,7 +1984,8 @@ function renderTodaySummary(data) {
 
 function currentStudioAvailability(date = todayKey()) {
   const now = new Date();
-  const nowMinutes = date === todayKey() ? now.getHours() * 60 + now.getMinutes() : CALENDAR_START_HOUR * 60;
+  const parts=KrugSettings.zonedParts(now,generalSettings().timezone);
+  const nowMinutes = date === todayKey() ? Number(parts.hour)*60+Number(parts.minute) : calendarStartHour() * 60;
   const activeEvents = [
     ...(state.bookings || []).filter((booking) => booking.date === date && isActiveBooking(booking)),
     ...(state.studioBlocks || []).filter((block) => block.date === date && isActiveStudioBlock(block))
@@ -1970,7 +2002,7 @@ function renderTodayAvailability(data) {
   const canNameCurrent = currentIsBlock || canViewBooking(current);
   return `
     <section class="card section studio-availability-strip ${current ? "busy" : "free"}">
-      <div><span>Студия сейчас</span><strong>${current ? "Занята" : "Свободна"}</strong></div>
+      <div><span>Студия сейчас</span><strong>${current ? "Занята" : !isWorkingDay(todayKey()) ? "Выходной" : "Свободна"}</strong></div>
       <div><span>${current ? "До какого времени" : "Ближайшее окно"}</span><strong>${current ? `${formatMinutes(bookingEndMinutes(current))} · ${canNameCurrent ? currentIsBlock ? current.title : current.client || current.service : "другая запись"}` : data.availability.nextFree ? `${formatMinutes(data.availability.nextFree[0])}–${formatMinutes(data.availability.nextFree[1])}` : "окон нет"}</strong></div>
       <div><span>Технических блоков сегодня</span><strong>${data.studioBlocks.length}</strong></div>
       <button class="btn secondary" type="button" data-view="calendar">Открыть календарь</button>
@@ -2007,64 +2039,23 @@ function renderRoleQuickActions() {
     if (isEngineer()) items.push('<button class="quick-action" data-view="clients"><span>К</span>Мои клиенты</button>');
   } else {
     items.push('<button class="quick-action" data-view="clients"><span>К</span>Клиенты</button>');
-    if (canViewSection("payments")) items.push('<button class="quick-action" data-view="payments"><span>₽</span>Добавить платёж</button>');
+    if (canViewSection("payments")) items.push('<button class="quick-action" data-view="payments"><span>₽</span>Оплаты клиентов</button>');
     if (canViewSection("reports")) items.push('<button class="quick-action" data-view="reports"><span>↗</span>Открыть отчёты</button>');
   }
   return items.join("");
 }
 
 function renderDashboard() {
-  const data = studioTodayData();
-  const attention = studioAttentionItems();
-
-  return `
-    <section class="studio-today-hero card section">
-      <div>
-        <span>Главная / Сегодня</span>
-        <h2>${formatDate(data.today)}</h2>
-        <p>${weekdayLong(data.today)} · ${currentClock()}</p>
-      </div>
-      <div class="studio-today-pulse">
-        <strong>${data.bookings.length}</strong>
-        <span>${plural(data.bookings.length, "запись", "записи", "записей")} сегодня</span>
-      </div>
-    </section>
-    <section class="card section today-summary-section">
-      <div class="section-head"><h2>Сегодняшняя сводка</h2><span class="muted">Оперативные показатели дня</span></div>
-      ${renderTodaySummary(data)}
-    </section>
-    ${renderTodayAvailability(data)}
-    <div class="dashboard-layout studio-home">
-      <section class="card section next-booking-card studio-home-next">
-        <div class="section-head">
-          <h2>Ближайшая запись</h2>
-          ${data.nextBooking ? `<span class="select-chip">${untilLabel(data.nextBooking)}</span>` : ""}
-        </div>
-        ${data.nextBooking ? renderNextBooking(data.nextBooking) : renderEmptyState("На сегодня активных записей больше нет", "Можно проверить будущие даты в календаре.")}
-      </section>
-      <section class="card section studio-home-schedule">
-        <div class="section-head">
-          <h2>Записи на сегодня</h2>
-          <button class="link-button" data-view="calendar">Календарь</button>
-        </div>
-        ${renderTodayBookingList(data.bookings)}
-      </section>
-      <section class="card section studio-home-attention">
-        <div class="section-head"><h2>Требует внимания</h2><span class="select-chip">${attention.length}</span></div>
-        ${renderAttentionList(attention)}
-      </section>
-      ${isManagerRole() ? `<section class="card section studio-home-money">
-        <h2>Деньги сегодня</h2>
-        ${renderTodayMoney(data)}
-      </section>` : ""}
-      <section class="card section studio-home-quick">
-        <h2>Быстрые действия</h2>
-        <div class="quick-actions">
-          ${renderRoleQuickActions()}
-        </div>
-      </section>
-    </div>
-  `;
+  const data=studioTodayData(),attention=studioAttentionItems();
+  return `<div class="today-simple">
+    <section class="card section today-actions"><h2>Другие действия</h2><div class="today-action-grid">${renderRoleQuickActions()}</div></section>
+    <header class="today-heading"><div><h2>${formatDate(data.today)}</h2><p class="muted">${weekdayLong(data.today)} · ${data.bookings.length} ${plural(data.bookings.length,"запись","записи","записей")}</p></div><button class="btn secondary" data-view="calendar">Открыть расписание</button></header>
+    ${data.nextBooking?`<section class="card section"><h2>Ближайшая сессия</h2>${renderNextBooking(data.nextBooking)}</section>`:''}
+    ${attention.length?`<details class="f-details today-attention" open><summary>Нужно внимание · ${attention.length}</summary><div class="section">${renderAttentionList(attention)}</div></details>`:'<p class="today-calm">Нет задач, требующих внимания.</p>'}
+    <section class="card section"><div class="section-head"><h2>Все записи сегодня</h2><button class="link-button" data-view="bookings">Все даты →</button></div>${renderTodayBookingList(data.bookings)}</section>
+    <details class="f-details" open><summary>Свободное время и занятость студии</summary>${renderTodayAvailability(data)}</details>
+    <details class="f-details" open><summary>Итоги дня${isManagerRole()?' и деньги':''}</summary><section class="section">${renderTodaySummary(data)}${isManagerRole()?`<h3>Деньги сегодня</h3>${renderTodayMoney(data)}`:''}</section></details>
+  </div>`;
 }
 
 function renderNextBooking(booking) {
@@ -2076,7 +2067,7 @@ function renderNextBooking(booking) {
         <span class="service-icon">${serviceIcon(booking.service)}</span>
         <div>
           <h3>${booking.client || "Без имени"}</h3>
-          <p class="muted">${booking.service} · ${booking.employee || "сотрудник не указан"}</p>
+          <p class="muted">${booking.serviceName || booking.service || "Услуга не указана"} · ${booking.employee || "сотрудник не указан"}</p>
         </div>
       </div>
       <div class="next-booking-time">
@@ -2112,7 +2103,7 @@ function renderTodayBookingList(bookings) {
             <div class="today-booking-time"><strong>${booking.time}</strong><span>${booking.duration || "1 час"}</span></div>
             <div class="today-booking-content">
               <strong>${booking.client || "Без имени"}</strong>
-              <span>${booking.service} · ${booking.employee || "сотрудник не указан"}</span>
+              <span>${booking.serviceName || booking.service || "Услуга не указана"} · ${booking.employee || "сотрудник не указан"}</span>
               ${booking.comment ? `<small>${booking.comment}</small>` : ""}
             </div>
             <div class="today-booking-side">
@@ -2130,7 +2121,7 @@ function renderTodayBookingList(bookings) {
 function renderTodaySchedule(bookings) {
   const byHour = new Map(bookings.map((booking) => [Number(String(booking.time || "0").slice(0, 2)), booking]));
   const rows = [];
-  for (let hour = CALENDAR_START_HOUR; hour <= Math.min(CALENDAR_END_HOUR, 20); hour += 2) {
+  for (let hour = calendarStartHour(); hour <= Math.min((calendarEndHour()-1), 20); hour += 2) {
     const booking = byHour.get(hour);
     rows.push(booking ? renderTodayScheduleRow(booking) : renderTodayFreeRow(hour));
   }
@@ -2299,7 +2290,7 @@ function applyBookingServiceFields(service = {}, form = document.querySelector('
     input.classList.toggle("catalog-locked", locks.price);
   });
   durationInputs.forEach((input) => {
-    input.outerHTML=serviceDurationControl(service,service.duration || '1 час',input.id);
+    input.outerHTML=serviceDurationControl(service,service.duration || defaultDuration(),input.id);
   });
   form.querySelectorAll("[data-service-lock-hint]").forEach((hint) => {
     hint.textContent = serviceLockHint(service);
@@ -2313,6 +2304,7 @@ function employeeByName(name) {
 
 function saveCalendarSettings() {
   state.calendarSettings = {
+    ...state.calendarSettings,
     mode: calendarMode,
     date: calendarDate,
     employee: calendarEmployeeFilter,
@@ -2404,9 +2396,9 @@ function employeeConflictsForBooking(booking, excludeId = booking?.id) {
 
 function calendarBookingGeometry(booking) {
   const startMinutes = bookingStartMinutes(booking);
-  const visibleEndMinutes = (CALENDAR_END_HOUR + 1) * 60;
+  const visibleEndMinutes = calendarEndHour() * 60;
   const durationMinutes = Math.min(bookingDurationMinutes(booking), Math.max(15, visibleEndMinutes - startMinutes));
-  const minuteOffset = startMinutes % 60;
+  const minuteOffset = startMinutes % generalSettings().calendarSlotMinutes;
   const top = (minuteOffset / 60) * CALENDAR_HOUR_HEIGHT;
   const height = Math.max(34, (durationMinutes / 60) * CALENDAR_HOUR_HEIGHT - 6);
   return {
@@ -2486,7 +2478,7 @@ function renderCalendar() {
   const today = todayKey();
   calendarWeekStart = weekStart(calendarDate);
   const days = calendarMode === "day" ? [calendarDate] : weekDays(calendarWeekStart);
-  const hours = Array.from({ length: CALENDAR_END_HOUR - CALENDAR_START_HOUR + 1 }, (_, index) => CALENDAR_START_HOUR + index);
+  const hours = Array.from({ length: (calendarEndHour()-calendarStartHour())*60/generalSettings().calendarSlotMinutes }, (_, index) => calendarStartHour()+index*generalSettings().calendarSlotMinutes/60);
   const visibleBookings = calendarBookings();
   if (selectedBookingId && !visibleBookings.some((booking) => booking.id === selectedBookingId)) selectedBookingId = null;
   if (selectedStudioBlockId && !(state.studioBlocks || []).some((block) => block.id === selectedStudioBlockId && days.includes(block.date))) selectedStudioBlockId = null;
@@ -2514,16 +2506,17 @@ function renderCalendar() {
         </div>
       </div>
       ${renderCalendarFilters()}
+      ${visibleBookings.some(b=>days.includes(b.date)&&(bookingStartMinutes(b)<calendarStartHour()*60||bookingStartMinutes(b)>=calendarEndHour()*60))?`<section class="card section"><h3>Записи вне рабочих часов</h3>${visibleBookings.filter(b=>days.includes(b.date)&&(bookingStartMinutes(b)<calendarStartHour()*60||bookingStartMinutes(b)>=calendarEndHour()*60)).map(b=>`<button class="btn secondary" data-open-booking="${b.id}">${formatDate(b.date)} · ${displayTime(b.time)} · ${b.client}</button>`).join('')}</section>`:''}
       ${calendarMode === "day" ? renderDaySummary(calendarDate, visibleBookings.filter((booking) => booking.date === calendarDate)) : ""}
       ${calendarMode === "day" ? renderDayAvailability(calendarDate) : ""}
       <div class="calendar-workspace">
-        <section class="card calendar-grid" style="--calendar-days:${days.length}">
+        <section class="card calendar-grid" style="--calendar-days:${days.length};--calendar-hour-height:${CALENDAR_HOUR_HEIGHT*generalSettings().calendarSlotMinutes/60}px;--settings-slot-height:${CALENDAR_HOUR_HEIGHT*generalSettings().calendarSlotMinutes/60}px">
           <div class="calendar-corner"></div>
           ${days.map((day) => `<div class="calendar-day-head ${day === today ? "today" : ""}"><strong>${weekdayLabel(day)}</strong></div>`).join("")}
           ${hours
             .map(
               (hour) => `
-                <div class="calendar-hour">${String(hour).padStart(2, "0")}:00</div>
+                <div class="calendar-hour">${displayTime(formatMinutes(hour*60))}</div>
                 ${days.map((day) => renderCalendarSlot(day, hour, today)).join("")}
               `
             )
@@ -2535,27 +2528,14 @@ function renderCalendar() {
   `;
 }
 
-function renderCalendarSlot(day, hour, today) {
-  const hourText = `${String(hour).padStart(2, "0")}:`;
-  const bookings = calendarBookings().filter((booking) => booking.date === day && String(booking.time || "").startsWith(hourText));
-  const blocks = (state.studioBlocks || []).filter((block) => block.date === day && isActiveStudioBlock(block) && String(block.time || "").startsWith(hourText));
-  const currentLine = day === today && currentHourLine(hour);
-  return `
-    <button class="calendar-slot ${day === today ? "today" : ""}" data-calendar-slot="${day}|${String(hour).padStart(2, "0")}:00">
-      ${currentLine ? `<span class="current-time-line" style="top:${currentLine}%"></span>` : ""}
-      ${bookings.map(renderCalendarBooking).join("")}
-      ${blocks.map(renderCalendarStudioBlock).join("")}
-    </button>
-  `;
+function displayTime(value) {const [h,m]=String(value).split(':').map(Number);return generalSettings().timeFormat==='12h'?`${h%12||12}:${String(m||0).padStart(2,'0')} ${h<12?'AM':'PM'}`:value;}
+function renderCalendarSlot(day,hour,today) {
+  const start=hour*60,end=start+generalSettings().calendarSlotMinutes;
+  const bookings=calendarBookings().filter(b=>b.date===day&&bookingStartMinutes(b)>=start&&bookingStartMinutes(b)<end);
+  const blocks=state.studioBlocks.filter(b=>b.date===day&&isActiveStudioBlock(b)&&bookingStartMinutes(b)>=start&&bookingStartMinutes(b)<end);
+  return `<button class="calendar-slot ${isWorkingDay(day)?'':'nonworking'} ${day===today?'today':''}" data-calendar-slot="${day}|${formatMinutes(start)}" title="${isWorkingDay(day)?'Создать запись':'Нерабочий день'}">${bookings.map(renderCalendarBooking).join('')}${blocks.map(renderCalendarStudioBlock).join('')}</button>`;
 }
-
-function currentHourLine(hour) {
-  const now = new Date();
-  const currentHour = now.getHours();
-  if (currentHour !== hour) return 0;
-  if (currentHour < CALENDAR_START_HOUR || currentHour > CALENDAR_END_HOUR) return 0;
-  return Math.max(4, Math.min(96, (now.getMinutes() / 60) * 100));
-}
+function currentHourLine(hour) {const p=KrugSettings.zonedParts(new Date(),generalSettings().timezone);return Number(p.hour)===hour?Math.max(4,Math.min(96,Number(p.minute)/60*100)):0;}
 
 function renderCalendarBooking(booking) {
   const employee = state.users.find((user) => user.id === booking.employeeId) || employeeByName(booking.employee);
@@ -2677,9 +2657,9 @@ function renderBookingModal() {
   const filteredEmployee = currentRole() === "engineer" ? currentUser() : state.users.find((user) => user.id === calendarEmployeeFilter);
   const defaultEmployee = filteredEmployee?.name || currentUser()?.name || activeEmployees()[0]?.name || "";
   const employeeOptions = bookingEmployeeOptions(booking.employee || defaultEmployee);
-  const status = booking.status || "подтверждено";
+  const status = booking.status || generalSettings().defaultBookingStatus;
   const fieldLocks = serviceFieldLocks(service);
-  const durationValue = booking.id ? booking.duration : service.duration || "1 час";
+  const durationValue = booking.id ? booking.duration : service.duration || defaultDuration();
   const amountValue = booking.id ? booking.amount : service.pricingType==='hourly' ? calculateHourlyServicePrice(service,1).totalPrice : service.price || 0;
   const conflictDraft = {
     ...booking,
@@ -2876,7 +2856,7 @@ function renderBookings() {
   const employees = [...new Map([...employeeSource.map((user) => [user.id || user.name, user]), ...bookings.filter((booking) => booking.employee).map((booking) => [booking.employeeId || booking.employee, { id: booking.employeeId || booking.employee, name: booking.employee }])]).values()];
 
   return `
-    <div class="grid two-col bookings-page">
+    <div class="bookings-page bookings-single-column">
       <section class="card section">
         <div class="toolbar booking-filters">
           <input id="bookingSearchFilter" placeholder="Клиент, телефон, Telegram" value="${bookingSearchFilter}" />
@@ -2898,7 +2878,7 @@ function renderBookings() {
           ${bookings.map(renderBookingCard).join("") || (canCreateBooking() ? renderEmptyState("Пока нет записей", "Создай первую запись из календаря или кнопкой ниже.", "Создать первую запись", 'type="button" data-action="openBookingModal"') : renderEmptyState("Назначенных записей нет", "Здесь появятся записи, назначенные на вас."))}
         </div>
       </section>
-      ${canCreateBooking() ? renderBookingForm() : ""}
+      ${canCreateBooking() && editingBookingId ? renderBookingForm() : ""}
     </div>
   `;
 }
@@ -2952,7 +2932,7 @@ function renderBookingForm() {
   const priceRule = servicePriceRule(selectedService);
   const fieldLocks = serviceFieldLocks(selectedServiceItem);
   const amountValue = booking.id ? booking.amount : selectedServiceItem.pricingType==='hourly' ? calculateHourlyServicePrice(selectedServiceItem,1).totalPrice : selectedServiceItem.price || '';
-  const durationValue = booking.id ? booking.duration : selectedServiceItem.duration || "1 час";
+  const durationValue = booking.id ? booking.duration : selectedServiceItem.duration || defaultDuration();
   const defaultUser = currentUser()?.name || state.users[0]?.name || "";
   const employeeOptions = bookingEmployeeOptions(booking.employee || defaultUser);
 
@@ -3014,7 +2994,7 @@ function renderBookingForm() {
         </div>
         <div class="field">
           <label>Статус</label>
-          <select name="status">${bookingStatuses.map((status) => `<option value="${status}" ${((booking.status || "подтверждено") === status) ? "selected" : ""}>${statusTitle(status)}</option>`).join("")}</select>
+          <select name="status">${bookingStatuses.map((status) => `<option value="${status}" ${((booking.status || generalSettings().defaultBookingStatus) === status) ? "selected" : ""}>${statusTitle(status)}</option>`).join("")}</select>
         </div>
         <div class="field full">
           <label>Комментарий</label>
@@ -3041,7 +3021,7 @@ function renderPayments() {
   const selectedBookingForPayment = payment.bookingId || "";
 
   return `
-    <div class="grid two-col">
+    <div class="payments-page">
       <section class="card section">
         <div class="toolbar">
           <input id="searchPayments" placeholder="Поиск по клиенту, услуге, исполнителю или звукорежу" value="${clientFilter}" />
@@ -3058,10 +3038,10 @@ function renderPayments() {
                   <tbody>${payments.map(renderPaymentRow).join("")}</tbody>
                 </table>
               </div>`
-            : renderEmptyState("Пока нет платежей", "Платёж появится автоматически после завершения записи или может быть внесён вручную.", "Создать запись", 'type="button" data-action="openBookingModal"')
+            : renderEmptyState("Пока нет платежей", "Платёж появится автоматически после завершения записи — проверьте фактическое поступление денег.", "Создать запись", 'type="button" data-action="openBookingModal"')
         }
       </section>
-      <section class="card section">
+      ${editingPaymentId ? `<section class="card section payment-editor">
         <h2>${formTitle}</h2>
         <form id="paymentForm" class="form-grid">
           <input type="hidden" name="id" value="${payment.id || ""}" />
@@ -3125,7 +3105,7 @@ function renderPayments() {
           <button class="btn" type="submit">${editingPaymentId ? "Сохранить" : "Добавить"}</button>
           ${editingPaymentId ? '<button class="btn secondary" type="button" data-action="cancelEdit">Отмена</button>' : ""}
         </form>
-      </section>
+      </section>` : ""}
     </div>
   `;
 }
@@ -3230,7 +3210,7 @@ function renderClientCard(client, stats = clientStats(client)) {
         ${(client.tags || []).length ? `<div class="client-tags">${client.tags.slice(0, 4).map((tag) => `<span>${tag}</span>`).join("")}</div>` : ""}
         <div class="client-card-stats">
           <span>Записей: <strong>${stats.totalBookings}</strong></span>
-          ${canViewPayment() ? `<span>Принёс: <strong>${money(stats.totalRevenue)}</strong></span><span>Средний чек: <strong>${money(stats.averageCheck)}</strong></span>` : ""}
+          ${canViewPayment() && generalSettings().showClientFinance ? `<span>Принёс: <strong>${money(stats.totalRevenue)}</strong></span><span>Средний чек: <strong>${money(stats.averageCheck)}</strong></span>` : ""}
           <span>Последнее: <strong>${lastLabel}</strong></span>
           <span>Следующее: <strong>${nextLabel}</strong></span>
         </div>
@@ -3277,7 +3257,7 @@ function renderClientDetail(clientValue) {
           <article><span>Следующий визит</span><strong>${stats.nextBookingDate ? formatDate(stats.nextBookingDate) : "нет"}</strong></article>
           <article><span>Любимая услуга</span><strong>${stats.favoriteService || "нет данных"}</strong></article>
           <article><span>Чаще работает с</span><strong>${stats.favoriteEmployee || "нет данных"}</strong></article>
-          ${canViewPayment() ? `<article><span>Принёс денег</span><strong>${money(stats.totalRevenue)}</strong></article><article><span>Средний чек</span><strong>${money(stats.averageCheck)}</strong></article>` : ""}
+          ${canViewPayment() && generalSettings().showClientFinance ? `<article><span>Принёс денег</span><strong>${money(stats.totalRevenue)}</strong></article><article><span>Средний чек</span><strong>${money(stats.averageCheck)}</strong></article>` : ""}
         </div>
       </div>
       </section>
@@ -3294,7 +3274,7 @@ function renderClientDetail(clientValue) {
       </div>
       ${stats.nextBooking ? `<section class="card section"><div class="section-head"><h3>Ближайшая запись</h3><span class="status-pill status-${stats.nextBooking.status.replaceAll(" ", "-")}">${statusTitle(stats.nextBooking.status)}</span></div>${renderClientBookingHistoryItem(stats.nextBooking)}</section>` : ""}
       <section class="card section"><div class="section-head"><h3>История записей</h3><span class="muted">Новые сверху</span></div><div class="client-booking-history">${bookingHistory.map(renderClientBookingHistoryItem).join("") || renderEmptyState("Записей пока нет", "История появится после первой записи клиента.")}</div></section>
-      ${canViewPayment() ? `<section class="card section"><div class="section-head"><h3>Финансы клиента</h3><span class="select-chip">${stats.paymentCount} платежей</span></div><div class="client-finance-summary"><article><span>Всего оплатил</span><strong>${money(stats.totalRevenue)}</strong></article><article><span>Средний чек</span><strong>${money(stats.averageCheck)}</strong></article><article><span>Последний платёж</span><strong>${stats.lastPayment ? `${formatDate(stats.lastPayment.date)} · ${money(stats.lastPayment.amount)}` : "нет"}</strong></article><article class="${stats.unpaidBookings.length ? "warning" : ""}"><span>Без платежа</span><strong>${stats.unpaidBookings.length}</strong></article></div>${history.length ? `<div class="list client-payment-history">${history.map((payment) => `<div class="list-item"><span>${formatDate(payment.date)} · ${payment.service}<small>${payment.comment || "без комментария"}</small></span><strong>${money(payment.amount)}</strong></div>`).join("")}</div>` : ""}</section>` : ""}
+      ${canViewPayment() && generalSettings().showClientFinance ? `<section class="card section"><div class="section-head"><h3>Финансы клиента</h3><span class="select-chip">${stats.paymentCount} платежей</span></div><div class="client-finance-summary"><article><span>Всего оплатил</span><strong>${money(stats.totalRevenue)}</strong></article><article><span>Средний чек</span><strong>${money(stats.averageCheck)}</strong></article><article><span>Последний платёж</span><strong>${stats.lastPayment ? `${formatDate(stats.lastPayment.date)} · ${money(stats.lastPayment.amount)}` : "нет"}</strong></article><article class="${stats.unpaidBookings.length ? "warning" : ""}"><span>Без платежа</span><strong>${stats.unpaidBookings.length}</strong></article></div>${history.length ? `<div class="list client-payment-history">${history.map((payment) => `<div class="list-item"><span>${formatDate(payment.date)} · ${payment.service}<small>${payment.comment || "без комментария"}</small></span><strong>${money(payment.amount)}</strong></div>`).join("")}</div>` : ""}</section>` : ""}
     </section>
   `;
 }
@@ -3314,7 +3294,7 @@ function renderClientBookingHistoryItem(booking) {
 
 function renderBudget() {
   const budget = calculateBudget();
-  const walletEntries = budgetWallets.map((wallet) => [wallet, budget.wallets[wallet]]);
+  const walletEntries = Object.entries(budget.wallets);
   const outsideEntries = sortedEntries(budget.outside);
   const payoutTotals = payoutTotalsFromBudget(budget);
   const outsideRows = [
@@ -3325,11 +3305,11 @@ function renderBudget() {
   ].filter(([label, value]) => value > 0 || label === "Доступно к выплате");
 
   return `
-    <div class="budget-page">
+    <div class="budget-page"><p class="f-notice">Доли поступлений за всё время, а не доступные деньги. Расходы и выплаты здесь не вычитаются. Остаток студии смотрите в обзоре финансов.</p>
       <div class="budget-wallets">
         ${walletEntries.map(([wallet, total], index) => renderBudgetWalletCard(wallet, total, index)).join("")}
       </div>
-      <div class="budget-main-grid">
+      <details class="f-details"><summary>Исторические доли и выплаты · подробности</summary><div class="budget-main-grid">
         <section class="card section">
           <h2>Копилки</h2>
           ${renderBudgetProgress(walletEntries)}
@@ -3343,16 +3323,13 @@ function renderBudget() {
           ${renderPayoutHistory()}
         </section>
       </div>
-      <section class="card section budget-rules-section">
+      </details><details class="f-details"><summary>По каким правилам распределяются новые оплаты</summary><section class="card section budget-rules-section">
         <h2>Правила распределения</h2>
         <div class="budget-rule-grid">
-          ${Object.values(budgetRules)
-            .filter((rule) => rule !== budgetRules.unknown)
-            .map(renderBudgetRule)
-            .join("")}
+          ${Object.entries(state.settings.distribution.rules).map(([id,r])=>`<article><h3>${catalogGroups().find(g=>g.id===id)?.name||id}</h3><p>${Object.entries(r).filter(([,p])=>p>0).map(([wid,p])=>`${escapeSettingsText(state.settings.distribution.wallets.find(w=>w.id===wid)?.name||wid)}: ${Number(p).toFixed(2)}%`).join(' · ')}</p></article>`).join('')}
         </div>
       </section>
-      <section class="card section budget-table-card">
+      </details><details class="f-details"><summary>История распределения по оплатам</summary><section class="card section budget-table-card">
         <h2>Расшифровка по платежам</h2>
         ${budget.rows.length
           ? `<div class="table-wrap">
@@ -3367,7 +3344,7 @@ function renderBudget() {
             </div>`
           : renderEmptyState("Платежей пока нет", "После завершения записи доход попадёт сюда автоматически.")}
       </section>
-    </div>
+    </details></div>
   `;
 }
 
@@ -3390,10 +3367,10 @@ function renderPayouts() {
       </section>
       <section class="card section">
         <div class="section-head">
-          <div><h2>Расчёты с сотрудниками</h2><p class="muted">Заработок считается по завершённым записям.</p></div>
+          <div><h2>Расчёты с сотрудниками</h2><p class="muted">Расчёт по условиям сотрудника. Подробности — в карточке.</p></div>
           ${canManagePayouts() ? '<button class="btn payout-button" type="button" data-action="openPayout">Новая выплата</button>' : ""}
         </div>
-        ${employeeStats.length && !hasCompletedBookings ? '<div class="payout-accrual-empty"><strong>Пока нет завершённых услуг — начислений сотрудникам нет.</strong></div>' : ""}
+        ${employeeStats.length && !hasCompletedBookings ? '<div class="payout-accrual-empty"><strong>Пока нет начислений по действующим условиям сотрудников.</strong></div>' : ""}
         <div class="employee-payout-grid">
           ${employeeStats.map((stats) => renderEmployeePayoutCard(stats, warnings)).join("") || renderEmptyState("Нет сотрудников", "Добавьте сотрудников в настройках, чтобы считать выплаты.")}
         </div>
@@ -3413,12 +3390,10 @@ function renderPayouts() {
 
 function renderPayoutSummary(summary, personal = false) {
   const items = [
-    ["Заработано", money(summary.totalEarned), ""],
+    ["Можно выдать сейчас", money(summary.availableToPay), "accent"],
     ["Выплачено", money(summary.totalPaid), ""],
     ["Запланировано", money(summary.totalPlanned), ""],
-    ["Доступно", money(summary.availableToPay), "accent"],
-    ["Переплата", money(summary.overpaid), summary.overpaid > 0 ? "warning" : ""],
-    ...(!personal ? [["Сотрудников к выплате", summary.payableEmployees, ""], ["Предупреждений", summary.warningsCount, summary.warningsCount > 0 ? "warning" : ""]] : [])
+    ...(summary.overpaid > 0 ? [["Проверьте переплату", money(summary.overpaid), "warning"]] : [])
   ];
   return `<div class="payout-summary-grid">${items.map(([label, value, className]) => `<article class="${className}"><span>${label}</span><strong>${value}</strong></article>`).join("")}</div>`;
 }
@@ -3450,7 +3425,8 @@ function renderEmployeePayoutCard(stats, warnings = []) {
         <span class="avatar">${initials(employee.name)}</span>
         <div><h3>${employee.name}</h3><small>${employee.position || employee.role || "Сотрудник"}</small></div>
       </div>
-      <div class="employee-payout-values">
+      <p class="muted">Можно выдать сейчас <strong class="f-amount">${money(availableToPay)}</strong>За вычетом уже выданного и запланированного.</p>
+      <details class="f-details"><summary>Как рассчитана сумма</summary><div class="employee-payout-values">
         <span>Заработано<strong>${money(totalEarned)}</strong></span>
         <span>Выплачено<strong>${money(totalPaid)}</strong></span>
         <span>Запланировано<strong>${money(totalPlanned)}</strong></span>
@@ -3458,11 +3434,12 @@ function renderEmployeePayoutCard(stats, warnings = []) {
         <span>Завершено записей<strong>${completedBookingsCount}</strong></span>
         <span>Последняя выплата<strong>${lastPayoutDate ? `${formatDate(lastPayoutDate.slice(0, 10))} · ${money(lastPayoutAmount)}` : "не было"}</strong></span>
       </div>
+      </details>
       ${overpaid ? `<p class="payout-warning">Переплата относительно завершённых записей: ${money(overpaid)}</p>` : ""}
       ${employeeWarnings.length ? `<p class="payout-warning">${employeeWarnings.length} ${plural(employeeWarnings.length, "предупреждение", "предупреждения", "предупреждений")} по расчётам.</p>` : ""}
       ${!completedBookingsCount ? `<p class="muted payout-card-empty">Нет завершённых записей.</p>` : ""}
       <div class="employee-payout-actions">
-        ${canManagePayouts() ? `<button class="btn" type="button" data-open-employee-payout="${employee.id}" ${availableToPay <= 0 || overpaid > 0 ? "disabled" : ""}>Выплатить</button>` : ""}
+        ${canManagePayouts() ? `<button class="btn" type="button" data-open-employee-payout="${employee.id}" ${!state.settings.payouts.allowOverpay && (availableToPay <= 0 || overpaid > 0) ? "disabled" : ""}>Выплатить</button>` : ""}
         <button class="btn secondary" type="button" data-payout-filter-employee="${employee.id}">История</button>
         <button class="btn secondary" type="button" data-open-employee-bookings="${employee.id}">Записи</button>
       </div>
@@ -3614,7 +3591,7 @@ function renderPayoutModal() {
         <div class="modal-head">
           <div>
             <h2>Новая выплата</h2>
-            <p class="muted">Сумма ограничена заработком по завершённым записям.</p>
+            <p class="muted">Ограничения и начисления задаются владельцем в правилах выплат.</p>
           </div>
           <button class="icon-btn" type="button" data-action="closePayout">×</button>
         </div>
@@ -3636,7 +3613,7 @@ function renderPayoutModal() {
           <p class="payout-warning full" id="payoutOverpaidHint" ${selectedStats.overpaid <= 0 ? "hidden" : ""}>Есть переплата: ${money(selectedStats.overpaid)}. Новая выплата недоступна.</p>
           <div class="field">
             <label>Сумма</label>
-            <input name="amount" id="payoutAmount" type="number" min="1" max="${available}" step="1" required value="${available || ""}" />
+            <input name="amount" id="payoutAmount" type="number" min="${state.settings.payouts.minAmount||0.01}" ${state.settings.payouts.allowOverpay?"":`max="${available}"`} step="0.01" required value="${available || ""}" />
             <span class="field-note" id="payoutAvailableHint">${available > 0 ? `Доступно к выплате: ${money(available)}` : "Сейчас выплачивать нечего."}</span>
             <button class="link-button payout-all-button" type="button" data-action="payoutAll" ${available <= 0 ? "disabled" : ""}>Выплатить всё</button>
           </div>
@@ -3655,14 +3632,14 @@ function renderPayoutModal() {
             <label>Статус</label>
             <select name="status">
               <option>Выплачено</option>
-              <option>Запланировано</option>
+              ${state.settings.payouts.allowPlanned?"<option>Запланировано</option>":""}
             </select>
           </div>
           <div class="field full">
             <label>Комментарий</label>
             <textarea name="comment" placeholder="Например: выплата за смены / запись / неделя"></textarea>
           </div>
-          <button class="btn" type="submit" ${available <= 0 ? "disabled" : ""}>Сохранить выплату</button>
+          <button class="btn" type="submit" ${available <= 0 && !state.settings.payouts.allowOverpay ? "disabled" : ""}>Сохранить выплату</button>
           <button class="btn secondary" type="button" data-action="closePayout">Отмена</button>
         </form>
       </section>
@@ -3696,7 +3673,7 @@ function renderBudgetRule(rule) {
 }
 
 function renderBudgetRow({ payment, split }) {
-  const walletLines = budgetWallets
+  const walletLines = Object.keys(split.wallets)
     .filter((wallet) => split.wallets[wallet] > 0)
     .map((wallet) => `${wallet}: ${money(split.wallets[wallet])}`)
     .join("<br>");
@@ -3770,9 +3747,9 @@ function renderSettings() {
       </div>
       ${settingsTab === "services" ? renderServiceSettings() : ""}
       ${settingsTab === "employees" ? renderEmployeeSettings() : ""}
-      ${settingsTab === "payouts" ? renderSettingsPlaceholder("Выплаты", "Настройки правил выплат будут расширяться здесь. Текущие выплаты доступны в отдельном разделе “Выплаты”.") : ""}
-      ${settingsTab === "budget" ? renderSettingsPlaceholder("Бюджет / копилки", "Базовые правила копилок сохранены в текущей логике бюджета. Здесь заложена отдельная вкладка для дальнейшей настройки.") : ""}
-      ${settingsTab === "general" ? renderSettingsPlaceholder("Общие настройки", "Общие параметры CRM: профиль студии, уведомления и рабочее время можно будет развивать в этом разделе.") : ""}
+      ${settingsTab === "payouts" ? renderPayoutSettings() : ""}
+      ${settingsTab === "budget" ? renderDistributionSettings() : ""}
+      ${settingsTab === "general" ? renderGeneralSettings() : ""}
       ${settingsTab === "profile" ? renderProfileSettings() : ""}
       ${settingsTab === "access" ? renderAccessSettings() : ""}
     </section>
@@ -3879,8 +3856,7 @@ function renderEmployeeSettings() {
           <div class="field"><label>Имя</label><input name="name" required /></div>
           <div class="field"><label>Должность</label><input name="position" value="Звукорежиссёр" /></div>
           <div class="field"><label>Доступ</label><select name="role">${accessRoles.map((role) => `<option value="${role.id}">${role.label}</option>`).join("")}</select></div>
-          <div class="field"><label>Процент</label><input name="percent" type="number" min="0" max="100" step="1" value="0" /></div>
-          <div class="field"><label>Фикс. ставка</label><input name="fixedRate" type="number" min="0" step="1" value="0" /></div>
+          <p class="muted full">Условия начислений настраивает владелец во вкладке «Правила выплат».</p>
           <div class="field"><label>Цвет календаря</label><input name="color" type="color" value="#ff6633" /></div>
           <div class="field"><label>Телефон</label><input name="phone" /></div>
           <div class="field"><label>Telegram</label><input name="telegram" /></div>
@@ -3913,8 +3889,7 @@ function renderEmployeeCard(user) {
         <div class="field"><label>Имя</label><input name="name" value="${user.name}" /></div>
         <div class="field"><label>Должность</label><input name="position" value="${user.position || ""}" /></div>
         <div class="field"><label>Роль</label><select name="positionRole">${employeeRoles.map((role) => `<option ${((user.position || "") === role) ? "selected" : ""}>${role}</option>`).join("")}</select></div>
-        <div class="field"><label>Процент</label><input name="percent" type="number" min="0" max="100" step="1" value="${user.percent || 0}" /></div>
-        <div class="field"><label>Фикс. ставка</label><input name="fixedRate" type="number" min="0" step="1" value="${user.fixedRate || 0}" /></div>
+        <p class="muted full">Условия начислений настраивает владелец во вкладке «Правила выплат».</p>
         <div class="field"><label>Цвет</label><input name="color" type="color" value="${user.color || "#ff6633"}" /></div>
         <div class="field"><label>Телефон</label><input name="phone" value="${user.phone || ""}" /></div>
         <div class="field"><label>Telegram</label><input name="telegram" value="${user.telegram || ""}" /></div>
@@ -3965,7 +3940,7 @@ function bookingFromForm(data) {
   const employeeName = employee.name || data.employee || existing?.employee || "";
   const clientName = data.client.trim();
   const matchedClient = state.clients.find((client) => clientMatchesRecord(client, { clientId: existing?.clientId, client: clientName, phone: data.phone, telegram: data.telegram }));
-  const duration = String(data.duration || service.duration || '1 час').trim();
+  const duration = String(data.duration || service.duration || defaultDuration()).trim();
   const changed = !existing || data.priceRecalculate === 'yes' || service.id !== existing.serviceId || bookingDurationMinutes({duration}) !== bookingDurationMinutes(existing);
   let pricing = {};
   if (!changed && service.mode !== 'manual' && service.mode !== 'minimum') {
@@ -3996,7 +3971,7 @@ function bookingFromForm(data) {
     employeeName,
     employee: employeeName,
     comment: data.comment.trim(),
-    status: bookingStatuses.includes(data.status) ? data.status : "подтверждено",
+    status: bookingStatuses.includes(data.status) ? data.status : generalSettings().defaultBookingStatus,
     paymentCreated: Boolean(existing?.paymentCreated || existing?.paymentId),
     paymentId: existing?.paymentId || "",
     createdAt,
@@ -4138,7 +4113,7 @@ function deleteBookingSafely(bookingId) {
   const message = linkedPayments.length
     ? "У этой записи есть связанный платёж. Удалить только запись? Платёж останется в финансах."
     : "Удалить запись?";
-  if (!confirm(message)) return false;
+  if (!confirmDestructive(message)) return false;
 
   if (linkedPayments.length) {
     const marker = "Исходная запись удалена";
@@ -4424,13 +4399,14 @@ function bindViewEvents() {
         return;
       }
       const [date, time] = slot.dataset.calendarSlot.split("|");
+      if(!isWorkingDay(date)){alert("Нерабочий день. Для исключения используйте кнопку «Новая запись».");return;}
       const employee = currentRole() === "engineer"
         ? currentUser()
         : state.users.find((user) => user.id === calendarEmployeeFilter);
       editingBookingId = null;
       selectedStudioBlockId = null;
       calendarDate = date;
-      bookingSlotDraft = { date, time, status: "подтверждено", employeeId: employee?.id || "", employee: employee?.name || "" };
+      bookingSlotDraft = { date, time, status: generalSettings().defaultBookingStatus, employeeId: employee?.id || "", employee: employee?.name || "" };
       bookingModalOpen = true;
       saveCalendarSettings();
       render();
@@ -4473,7 +4449,7 @@ function bindViewEvents() {
   document.querySelectorAll("[data-delete-studio-block]").forEach((button) => {
     button.addEventListener("click", () => {
       if (!isManagerRole()) return;
-      if (!confirm("Удалить технический блок?")) return;
+      if (!confirmDestructive("Удалить технический блок?")) return;
       state.studioBlocks = (state.studioBlocks || []).filter((block) => block.id !== button.dataset.deleteStudioBlock);
       selectedStudioBlockId = null;
       saveState();
@@ -4730,7 +4706,7 @@ function bindViewEvents() {
         alert("Сначала перенеси или удали услуги этой категории.");
         return;
       }
-      if (!confirm("Удалить категорию?")) return;
+      if (!confirmDestructive("Удалить категорию?")) return;
       state.serviceGroups = state.serviceGroups.filter((group) => group.id !== id);
       saveState();
       render();
@@ -4783,7 +4759,7 @@ function bindViewEvents() {
         alert("Эта услуга уже используется в записях или платежах. Её можно отключить, но не удалить.");
         return;
       }
-      if (!confirm("Удалить услугу?")) return;
+      if (!confirmDestructive("Удалить услугу?")) return;
       state.serviceItems = state.serviceItems.filter((service) => service.id !== button.dataset.deleteServiceItem);
       syncServicesFromCatalog();
       saveState();
@@ -4932,6 +4908,11 @@ function bindViewEvents() {
   document.querySelectorAll("[data-confirm-payout]").forEach((button) => {
     button.addEventListener("click", () => {
       if (!canManagePayouts()) return;
+      const planned=state.payouts.find(p=>p.id===button.dataset.confirmPayout);
+      if(!planned||planned.status!=='Запланировано')return;
+      const available=employeePayoutStats(planned.employeeId).availableToPay+Number(planned.amount);
+      const error=KrugSettings.validatePayout(planned.amount,available,'Выплачено',state.settings.payouts);
+      if(error){alert(error);return;}
       state.payouts = state.payouts.map((payout) =>
         payout.id === button.dataset.confirmPayout
           ? { ...payout, status: "Выплачено", paidAt: localDateTimeValue() }
@@ -4955,7 +4936,7 @@ function bindViewEvents() {
     event.preventDefault();
     if (!canManagePayouts()) return;
     const data = Object.fromEntries(new FormData(event.target));
-    const validation = validateEmployeePayout(data.employeeId, data.amount);
+    const validation = validateEmployeePayout(data.employeeId, data.amount, data.status);
     if (!validation.ok) {
       alert(validation.error);
       return;
@@ -4976,6 +4957,7 @@ function bindViewEvents() {
       comment: data.comment.trim(),
       createdBy: currentUser()?.name || "",
       createdAt: new Date().toISOString(),
+      rulesSnapshot: structuredClone(state.settings.payouts),
       remainingAfter: Math.max(0, available - amount)
     });
     payoutModalOpen = false;
@@ -5003,6 +4985,7 @@ function bindViewEvents() {
     const performer = paymentCategoryKey === "online" ? data.performer : "";
     const previousPayment = state.payments.find((item) => item.id === data.id);
     const payment = {
+      ...previousPayment,
       id: data.id || crypto.randomUUID(),
       date: data.date,
       client: data.client.trim(),
@@ -5215,7 +5198,7 @@ function bindViewEvents() {
 
   document.querySelectorAll("[data-delete]").forEach((button) => {
     button.addEventListener("click", () => {
-      if (!confirm("Удалить оплату?")) return;
+      if (!confirmDestructive("Удалить оплату?")) return;
       state.payments = state.payments.filter((item) => item.id !== button.dataset.delete);
       saveState();
       render();
@@ -5237,8 +5220,9 @@ function bindViewEvents() {
       password: data.password,
       role: accessRoles.some((role) => role.id === data.role) ? data.role : "staff",
       position: data.position || "Другое",
-      percent: Number(data.percent || 0),
-      fixedRate: Number(data.fixedRate || 0),
+      payoutMode: state.settings.payouts.calculationMode,
+      payoutPercent: 0, payoutHourlyRate: 0, payoutFixedAmount: 0,
+      percent: 0, fixedRate: 0,
       color: data.color || "#ff6633",
       phone: data.phone.trim(),
       telegram: data.telegram.trim(),
@@ -5264,8 +5248,8 @@ function bindViewEvents() {
               ...user,
               name: data.name.trim(),
               position: data.positionRole || data.position || user.position,
-              percent: Number(data.percent || 0),
-              fixedRate: Number(data.fixedRate || 0),
+              percent: user.percent,
+              fixedRate: user.fixedRate,
               color: data.color || user.color,
               phone: data.phone || "",
               telegram: data.telegram || "",

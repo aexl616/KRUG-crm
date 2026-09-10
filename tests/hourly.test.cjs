@@ -10,7 +10,7 @@ const document={querySelector:()=>null,querySelectorAll:()=>[],addEventListener(
 const storage=new Map();
 const ctx=vm.createContext({console,crypto:webcrypto,structuredClone,Date,document,window:{isSecureContext:true,addEventListener(){},matchMedia:()=>({matches:false})},localStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v)},setInterval(){},setTimeout(){},confirm:()=>true,alert(){}});
 const run=code=>vm.runInContext(code,ctx);
-for(const file of ['hourly-core.js','app.js'])run(fs.readFileSync(require('node:path').join(__dirname,'..',file),'utf8').replace(/render\(\);\s*$/,''));
+for(const file of ['hourly-core.js','settings-core.js','data-store.js','app.js'])run(fs.readFileSync(require('node:path').join(__dirname,'..',file),'utf8').replace(/render\(\);\s*$/,''));
 run('render=()=>{};');
 for(const file of ['hourly-ui.js','finance-core.js','finance.js','notifications.js'])run(fs.readFileSync(require('node:path').join(__dirname,'..',file),'utf8'));
 run("state.sessionUserId='u1';");
