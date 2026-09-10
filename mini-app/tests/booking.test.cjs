@@ -11,7 +11,7 @@ function setup() {
 }
 test('all supplied price tiers are exact; unspecified 2h is unavailable', async () => {
   const { B, API } = setup();
-  const expected = [[1200,2400,3300,4250,5200,6150,7100,8050],[1000,null,2800,3600,4400,5200,6000,6800],[1800,3600,4800,6000,7200,8400,9600,10800],[1000,null,2800,3600,4400,5100,5800,6500]];
+  const expected = [[1200,2400,3600,4800,6000,7200,8400,9600],[1000,null,2800,3600,4400,5200,6000,6800],[1800,3600,4800,6000,7200,8400,9600,10800],[1000,null,2800,3600,4400,5100,5800,6500]];
   (await Promise.all(['recording','morning','recording-mix','rental'].map(API.getService))).forEach((service, i) => expected[i].forEach((price, j) => {
     if (price === null) assert.throws(() => B.priceFor(service, j + 1));
     else assert.equal(B.priceFor(service, j + 1), price);
@@ -72,10 +72,10 @@ test('service clears dependencies; duration retains only a still available date'
   assert.equal(await B.changeDuration(draft, service, 4, async () => ['15:00']), false);
   assert.equal(draft.date, '2030-01-01');
   assert.equal(draft.startTime, null);
-  assert.equal(draft.price, 4250);
+  assert.equal(draft.price, 4800);
   assert.equal(await B.changeDuration(draft, service, 8, async () => []), true);
   assert.equal(draft.date, null);
-  assert.equal(draft.price, 8050);
+  assert.equal(draft.price, 9600);
   draft.date = '2030-01-01'; draft.startTime = '15:00';
   B.changeService(draft, await API.getService('rental'));
   for (const key of ['durationHours','date','startTime','price']) assert.equal(draft[key], null);
@@ -105,16 +105,16 @@ test('automatic morning pricing uses the complete interval and preserves other p
   const recording = await API.getService('recording');
   assert.ok(!(await API.getServices()).some(s => s.id === 'morning'));
   for (const [start, duration, expected, period] of [
-    ['09:00',3,2800,'morning'], ['12:00',3,2800,'morning'],
-    ['13:00',3,3300,'regular'], ['08:00',3,3300,'regular'],
-    ['12:01',3,3300,'regular'], ['09:00',6,5200,'morning'],
-    ['09:00',7,7100,'regular'], ['09:00',2,2400,'regular']
+    ['09:00',3,3000,'morning'], ['12:00',3,3000,'morning'],
+    ['13:00',3,3200,'mixed'], ['08:00',3,3200,'mixed'],
+    ['14:00',3,3400,'mixed'], ['09:00',6,6000,'morning'],
+    ['09:00',7,7200,'mixed'], ['09:00',2,2000,'morning']
   ]) {
     const quote = B.quoteFor(recording, duration, start);
     assert.equal(quote.totalPrice, expected, `${start} / ${duration}`);
     assert.equal(quote.pricingPeriod, period);
   }
-  assert.equal(B.quoteFor(recording,3,null).totalPrice,3300);
+  assert.equal(B.quoteFor(recording,3,null).totalPrice,3600);
   assert.equal(B.quoteFor(await API.getService('recording-mix'),3,'09:00').totalPrice,4800);
   assert.equal(B.quoteFor(await API.getService('rental'),3,'09:00').totalPrice,2800);
   assert.equal(B.quoteFor({pricingType:'fixed',price:5000},2,'09:00').totalPrice,5000);
@@ -125,14 +125,35 @@ test('saved morning price snapshot ignores input price and survives retries and 
   while (!(await API.getAvailableSlots(date,3,'recording')).includes('09:00')) date = B.addDays(date,1);
   const draft = { serviceId:'recording',durationHours:3,date,startTime:'09:00',price:1,priceSnapshot:{totalPrice:1},requestId:'morning-test',client:{name:'Анна',phone:'79991234567'} };
   const saved = await API.createBooking(draft);
-  assert.equal(saved.price,2800);
-  assert.equal(saved.priceSnapshot.totalPrice,2800);
-  assert.equal(saved.priceSnapshot.regularPrice,3300);
+  assert.equal(saved.price,3000);
+  assert.equal(saved.priceSnapshot.totalPrice,3000);
+  assert.equal(saved.priceSnapshot.regularPrice,3600);
   assert.equal(saved.priceSnapshot.pricingPeriod,'morning');
   assert.equal(saved.priceSnapshot.endTime,'12:00');
   const service = await API.getService('recording');
-  service.morningPricing.priceTiers[0].totalPrice = 1;
-  assert.equal((await API.getMyBookings())[0].price,2800);
+  service.morningPricing.hourlyRate = 1;
+  assert.equal((await API.getMyBookings())[0].price,3000);
   assert.equal((await API.createBooking(draft)).id,saved.id);
-  assert.equal(JSON.parse(storage.get('krug_mini_app_bookings_v1'))[0].priceSnapshot.totalPrice,2800);
+  assert.equal(JSON.parse(storage.get('krug_mini_app_bookings_v1'))[0].priceSnapshot.totalPrice,3000);
+});
+test('every duration 1–8 sums morning and ordinary hours, with snapshot segments', async () => {
+  const { B, API } = setup();
+  const service = await API.getService('recording');
+  for (let hours = 1; hours <= 8; hours++) {
+    for (let start = 9; start + hours <= 23; start++) {
+      const quote = B.quoteFor(service,hours,`${start}:00`);
+      let expected = 0;
+      for (let hour = start; hour < start + hours; hour++) expected += hour < 15 ? 1000 : 1200;
+      assert.equal(quote.totalPrice,expected,`${start}:00 + ${hours}h`);
+      assert.equal(quote.segments.reduce((sum,s) => sum + s.durationHours,0),hours);
+      assert.equal(quote.segments.reduce((sum,s) => sum + s.totalPrice,0),expected);
+    }
+  }
+  let date = B.addDays(B.today(),1);
+  while (!(await API.getAvailableSlots(date,3,'recording')).includes('14:00')) date = B.addDays(date,1);
+  const saved = await API.createBooking({serviceId:'recording',durationHours:3,date,startTime:'14:00',price:1,client:{name:'Анна',phone:'79991234567'}});
+  assert.equal(saved.price,3400);
+  assert.equal(saved.priceSnapshot.pricingPeriod,'mixed');
+  assert.deepEqual(Array.from(saved.priceSnapshot.segments,s => s.totalPrice),[1000,2400]);
+  assert.equal((await API.getMyBookings())[0].price,3400);
 });

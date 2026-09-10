@@ -27,9 +27,19 @@ window.KrugBooking = (() => {
     const regularPrice = priceFor(service, hours);
     const start = startTime ? toMinutes(startTime) : NaN;
     const rule = service.morningPricing;
-    const eligible = !!rule && start >= rule.startMinute && start + hours * 60 <= rule.endMinute;
-    const tier = eligible ? rule.priceTiers.find(t => t.durationHours === hours) : null;
-    return { totalPrice: tier ? tier.totalPrice : regularPrice, pricingPeriod: tier ? 'morning' : 'regular', regularPrice, durationHours: hours, startTime: startTime || null, endTime: startTime ? endTime(startTime, hours) : null, version: 1 };
+    const base = { totalPrice: regularPrice, pricingPeriod: 'regular', regularPrice, durationHours: hours, startTime: startTime || null, endTime: startTime ? endTime(startTime, hours) : null, version: 2 };
+    if (!rule || !Number.isFinite(start)) return base;
+    const end = start + hours * 60;
+    const boundaries = [...new Set([start, end, rule.startMinute, rule.endMinute].filter(value => value >= start && value <= end))].sort((a, b) => a - b);
+    const segments = boundaries.slice(0, -1).map((from, i) => {
+      const to = boundaries[i + 1];
+      const period = from >= rule.startMinute && to <= rule.endMinute ? 'morning' : 'regular';
+      const hourlyRate = period === 'morning' ? rule.hourlyRate : rule.regularHourlyRate;
+      const durationHours = (to - from) / 60;
+      return { startTime: toTime(from), endTime: toTime(to), durationHours, hourlyRate, totalPrice: Math.round(durationHours * hourlyRate), pricingPeriod: period };
+    });
+    const periods = new Set(segments.map(segment => segment.pricingPeriod));
+    return { ...base, totalPrice: segments.reduce((sum, segment) => sum + segment.totalPrice, 0), pricingPeriod: periods.size > 1 ? 'mixed' : segments[0].pricingPeriod, segments };
   }
   function availableSlots(availability, durationHours, now = new Date()) {
     if (!Number.isFinite(durationHours) || durationHours <= 0 || durationHours > 8 || availability.closed) return [];

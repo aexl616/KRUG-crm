@@ -43,7 +43,7 @@ const server = http.createServer((req, res) => {
       await check('service');
       await page.locator('[data-action="next"]').click();
       await page.locator('[data-duration="3"]').click();
-      assert.match(await page.locator('.price-panel').innerText(), /3\s300/);
+      assert.match(await page.locator('.price-panel').innerText(), /3\s600/);
       await check('duration');
       await page.locator('[data-action="next"]').click();
       assert.ok(await page.locator('[data-date]').count() <= 8);
@@ -75,7 +75,7 @@ const server = http.createServer((req, res) => {
       assert.equal(await page.locator('.booking-card').count(), 1);
       const persisted = await page.evaluate(() => JSON.parse(localStorage.getItem('krug_mini_app_bookings_v1')));
       assert.equal(persisted[0].date, selectedDate);
-      assert.equal(persisted[0].price, Number(selectedTime.slice(0, 2)) >= 9 && Number(selectedTime.slice(0, 2)) + 3 <= 15 ? 2800 : 3300);
+      assert.equal(persisted[0].price, 3600 - Math.max(0, Math.min(15, Number(selectedTime.slice(0, 2)) + 3) - Math.max(9, Number(selectedTime.slice(0, 2)))) * 200);
       assert.equal(persisted[0].priceSnapshot.totalPrice, persisted[0].price);
       // Verify another service cannot occupy this same studio interval.
       assert.equal(await page.evaluate(async ({ date, time }) => (await KrugData.getAvailableSlots(date, 1, 'rental')).includes(time), { date: selectedDate, time: selectedTime }), false);
@@ -96,27 +96,27 @@ const server = http.createServer((req, res) => {
     const pricingDate = await pricePage.evaluate(async () => {
       for (const el of document.querySelectorAll('[data-date]')) {
         const slots = await KrugData.getAvailableSlots(el.dataset.date,3,'recording');
-        if (['09:00','12:00','13:00'].every(time => slots.includes(time))) return el.dataset.date;
+        if (['09:00','12:00','13:00','14:00'].every(time => slots.includes(time))) return el.dataset.date;
       }
     });
     assert.ok(pricingDate);
     await pricePage.locator(`[data-date="${pricingDate}"]`).click();
     await pricePage.locator('[data-action="next"]').click();
-    for (const [time, price] of [['09:00',2800],['12:00',2800],['13:00',3300]]) {
+    for (const [time, price] of [['09:00',3000],['12:00',3000],['13:00',3200],['14:00',3400]]) {
       await pricePage.locator(`[data-time="${time}"]`).click();
       assert.equal((await pricePage.locator('.dock-summary strong').innerText()).replace(/\D/g,''),String(price));
     }
     await pricePage.locator('[data-time="09:00"]').click();
     await pricePage.locator('[data-action="back"]').click();
     await pricePage.locator(`[data-date="${pricingDate}"]`).click();
-    assert.equal((await pricePage.locator('.dock-summary strong').innerText()).replace(/\D/g,''),'3300');
+    assert.equal((await pricePage.locator('.dock-summary strong').innerText()).replace(/\D/g,''),'3600');
     await pricePage.locator('[data-action="back"]').click();
     await pricePage.locator('[data-duration="4"]').click();
-    assert.equal((await pricePage.locator('.dock-summary strong').innerText()).replace(/\D/g,''),'4250');
+    assert.equal((await pricePage.locator('.dock-summary strong').innerText()).replace(/\D/g,''),'4800');
     await pricePage.locator('[data-action="next"]').click();
     await pricePage.locator('[data-action="next"]').click();
     await pricePage.locator('[data-time="09:00"]').click();
-    assert.equal((await pricePage.locator('.dock-summary strong').innerText()).replace(/\D/g,''),'3600');
+    assert.equal((await pricePage.locator('.dock-summary strong').innerText()).replace(/\D/g,''),'4000');
     await pricePage.screenshot({path:path.join(output,'krug-morning-price.png')});
     await priceContext.close();
     console.log('PASS automatic morning price UI at 09:00/12:00/13:00, date reset and duration change');

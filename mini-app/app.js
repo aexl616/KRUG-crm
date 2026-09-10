@@ -41,12 +41,17 @@
   function pricingHint() {
     const service = current();
     if (!service?.morningPricing || !bookingDraft.durationHours) return '';
-    if (!service.morningPricing.priceTiers.some(t => t.durationHours === bookingDraft.durationHours)) return 'Для этой длительности действует обычная цена';
     if (!bookingDraft.startTime) return 'Цена уточнится после выбора времени';
-    return B.quoteFor(service, bookingDraft.durationHours, bookingDraft.startTime).pricingPeriod === 'morning' ? 'Утренняя цена' : 'Обычная цена';
+    const quote = B.quoteFor(service, bookingDraft.durationHours, bookingDraft.startTime);
+    return quote.segments.map(segment => `${segment.durationHours} ч × ${money(segment.hourlyRate)}`).join(' + ');
+  }
+  function priceBreakdown(booking) {
+    const snapshot = booking.priceSnapshot || (booking === bookingDraft && current() ? B.quoteFor(current(), booking.durationHours, booking.startTime) : null);
+    if (!snapshot?.segments) return '';
+    return `<div class="muted">${snapshot.segments.map(segment => `<div>${segment.startTime}–${segment.endTime} · ${segment.durationHours} ч × ${money(segment.hourlyRate)} = ${money(segment.totalPrice)}</div>`).join('')}</div>`;
   }
   function summary(booking, serviceName) {
-    return `<div class="summary"><strong>${escape(serviceName || booking.serviceName)}</strong><div class="session-date">${dateLabel(booking.date)}</div><div class="session-time">${booking.startTime}–${B.endTime(booking.startTime, booking.durationHours)} <small>МСК</small></div><p class="muted">${hours(booking.durationHours)}</p><div class="summary-total"><span>Итого</span><strong>${money(booking.price)}</strong></div></div>`;
+    return `<div class="summary"><strong>${escape(serviceName || booking.serviceName)}</strong><div class="session-date">${dateLabel(booking.date)}</div><div class="session-time">${booking.startTime}–${B.endTime(booking.startTime, booking.durationHours)} <small>МСК</small></div><p class="muted">${hours(booking.durationHours)}</p>${priceBreakdown(booking)}<div class="summary-total"><span>Итого</span><strong>${money(booking.price)}</strong></div></div>`;
   }
   function contactField(name, label, options = '') {
     return `<label for="contact-${name}">${label}</label><input id="contact-${name}" name="${name}" ${options} value="${escape(bookingDraft.client[name])}" aria-invalid="${!!fieldErrors[name]}" aria-describedby="error-${name}"><p class="field-error" id="error-${name}" aria-live="polite">${escape(fieldErrors[name] || '')}</p>`;

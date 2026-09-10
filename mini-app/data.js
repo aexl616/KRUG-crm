@@ -5,7 +5,7 @@ window.KrugData = (() => {
   const CLIENT_ID = 'krug-mock-client';
   const tiers = values => values.flatMap((price, i) => price === null ? [] : [{ durationHours: i + 1, totalPrice: price }]);
   const services = [
-    { id: 'recording', name: 'Запись', description: 'Запись звука в студии. Запись со сведением — отдельная услуга.', pricingType: 'hourly', priceTiers: tiers([1200,2400,3300,4250,5200,6150,7100,8050]), active: true },
+    { id: 'recording', name: 'Запись', description: 'Запись звука в студии. Запись со сведением — отдельная услуга.', pricingType: 'hourly', priceTiers: tiers([1200,2400,3600,4800,6000,7200,8400,9600]), active: true },
     { id: 'morning', name: 'Запись утром', description: 'Запись по отдельной утренней цене. Начало только до 12:00.', pricingType: 'hourly', priceTiers: tiers([1000,null,2800,3600,4400,5200,6000,6800]), latestStartHour: 11, active: true },
     { id: 'recording-mix', name: 'Запись + сведение', description: 'Запись звука и сведение в одном формате.', pricingType: 'hourly', priceTiers: tiers([1800,3600,4800,6000,7200,8400,9600,10800]), active: true },
     { id: 'rental', name: 'Аренда', description: 'Студия для твоей самостоятельной работы', pricingType: 'hourly', priceTiers: tiers([1000,null,2800,3600,4400,5100,5800,6500]), active: true }
@@ -13,9 +13,9 @@ window.KrugData = (() => {
   // Retain the legacy service for existing records; expose only one recording choice.
   services.find(s => s.id === 'recording').morningPricing = {
     startMinute: 9 * 60, endMinute: 15 * 60,
-    priceTiers: structuredClone(services.find(s => s.id === 'morning').priceTiers)
+    hourlyRate: 1000, regularHourlyRate: 1200
   };
-  services.find(s => s.id === 'recording').description = 'Запись звука в студии. Если вся сессия проходит с 09:00 до 15:00, утренняя цена применяется автоматически.';
+  services.find(s => s.id === 'recording').description = 'Каждый час с 09:00 до 15:00 — 1 000 ₽. После 15:00 — 1 200 ₽. Стоимость складывается по времени сессии.';
   function readBookings() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
