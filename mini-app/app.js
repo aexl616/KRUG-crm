@@ -71,8 +71,8 @@
   function renderNavigation() {
     const active = screen === 'success' ? 'bookings' : screen;
     const items = [['home', 'Главная', '⌂'], ['flow', 'Записаться', '+'], ['bookings', 'Мои записи', '≡'], ['profile', 'Профиль', '○']];
-    // Home already has its primary booking action. Elsewhere the nav resumes a draft.
-    navigation.innerHTML = items.filter(([id]) => !(screen === 'home' && id === 'flow')).map(([id, label, icon]) => `<button type="button" data-action="${id === 'flow' ? 'resume' : id}" ${active === id ? 'aria-current="page"' : ''}><span aria-hidden="true">${icon}</span>${label}</button>`).join('');
+    // Booking starts or resumes from the primary action on Home.
+    navigation.innerHTML = items.filter(([id]) => id !== 'flow').map(([id, label, icon]) => `<button type="button" data-action="${id === 'flow' ? 'resume' : id}" ${active === id ? 'aria-current="page"' : ''}><span aria-hidden="true">${icon}</span>${label}</button>`).join('');
     navigation.classList.toggle('booking-navigation', screen === 'flow');
     document.title = `КРУГ — ${items.find(([id]) => id === active)?.[1] || 'Запись'}`;
   }
@@ -167,7 +167,7 @@
       if (version !== renderId) return;
       const bookings = groups[bookingsTab];
       html = heading('ТВОЁ ВРЕМЯ В КРУГЕ', 'Мои записи') + '<p class="muted">Время московское</p><div class="booking-tabs" role="tablist" aria-label="Раздел записей">' + [['upcoming','Ближайшие'],['history','История']].map(([id,label]) => '<button role="tab" id="tab-' + id + '" aria-controls="booking-panel" aria-selected="' + (bookingsTab === id) + '" data-action="list-' + id + '">' + label + ' <span>' + groups[id].length + '</span></button>').join('') + '</div><section id="booking-panel" role="tabpanel" aria-labelledby="tab-' + bookingsTab + '">';
-      html += bookings.length ? '<div class="booking-list">' + bookings.map(bookingCard).join('') + '</div>' : '<div class="empty"><h2>' + (bookingsTab === 'history' ? 'История пока пуста' : 'Время для новой сессии') + '</h2><p class="muted">' + (bookingsTab === 'history' ? 'Здесь появятся прошедшие и отменённые записи.' : 'Выбери «Записаться» внизу — найдём удобное время.') + '</p></div>';
+      html += bookings.length ? '<div class="booking-list">' + bookings.map(bookingCard).join('') + '</div>' : '<div class="empty"><h2>' + (bookingsTab === 'history' ? 'История пока пуста' : 'Время для новой сессии') + '</h2><p class="muted">' + (bookingsTab === 'history' ? 'Здесь появятся прошедшие и отменённые записи.' : 'Открой главную и нажми «Записаться» — найдём удобное время.') + '</p></div>';
       html += '</section>';
     }
 
@@ -184,7 +184,6 @@
     if (action === 'bookings') screen = 'bookings';
     if (action === 'profile') screen = 'profile';
     if (action === 'start') { if (!draftStarted) { resetDraft(); step = 0; } screen = 'flow'; }
-    if (action === 'resume') { if (!draftStarted) { resetDraft(); step = 0; } screen = 'flow'; }
     if (action === 'list-upcoming' || action === 'list-history') bookingsTab = action === 'list-upcoming' ? 'upcoming' : 'history';
     if (action === 'more-dates') dateLimit += 8;
     if (action === 'back') {

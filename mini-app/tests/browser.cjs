@@ -263,13 +263,15 @@ const server = http.createServer((req, res) => {
         const content=document.querySelector('.screen-content').getBoundingClientRect();
         return content.bottom <= nav.top && nav.bottom <= innerHeight && [...document.querySelectorAll('#main-navigation button')].every(b=>b.getBoundingClientRect().height>=44);
       }));
-      await p.locator('[data-action="resume"]').click();
+      await p.locator('#main-navigation [data-action="home"]').click();
+      await p.locator('[data-action="start"]').click();
       await p.locator('[data-service="recording"]').click();
       await p.locator('[data-action="next"]').click();
       await p.locator('[data-duration="3"]').click();
       await p.locator('#main-navigation [data-action="profile"]').click();
       await p.locator('.profile-identity').waitFor();
-      await p.locator('[data-action="resume"]').click();
+      await p.locator('#main-navigation [data-action="home"]').click();
+      await p.locator('[data-action="start"]').click();
       assert.equal(await p.locator('[data-duration="3"]').getAttribute('aria-pressed'),'true');
       await p.locator('#main-navigation [data-action="bookings"]').click();
       await p.locator('[data-action="list-history"]').click();
