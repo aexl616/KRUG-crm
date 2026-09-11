@@ -20,6 +20,13 @@ function mapError(error) {
   if (message.includes('INVALID_REASON')) return [400, 'INVALID_REASON', 'Добавь короткую причину операции.'];
   if (message.includes('INVALID_TELEGRAM_USER_ID')) return [400, 'INVALID_TELEGRAM_USER_ID', 'Некорректный Telegram user ID.'];
   if (message.includes('CLIENT_NOT_FOUND')) return [404, 'CLIENT_NOT_FOUND', 'Клиент не найден.'];
+  if (message.includes('BOOKING_NOT_FOUND')) return [404, 'BOOKING_NOT_FOUND', 'Запись не найдена.'];
+  if (message.includes('BOOKING_CANCELLED')) return [409, 'BOOKING_CANCELLED', 'Отменённую запись нельзя оплатить.'];
+  if (message.includes('PAYMENT_BEFORE_START')) return [409, 'PAYMENT_BEFORE_START', 'Оплату можно зафиксировать только после начала сессии.'];
+  if (message.includes('INVALID_PAID_AMOUNT')) return [400, 'INVALID_PAID_AMOUNT', 'Проверь фактически полученную сумму.'];
+  if (message.includes('INVALID_PAYMENT_METHOD')) return [400, 'INVALID_PAYMENT_METHOD', 'Укажи способ оплаты.'];
+  if (message.includes('STATUS_CHANGE_NOT_ALLOWED')) return [409, 'STATUS_CHANGE_NOT_ALLOWED', 'Для этой записи изменение статуса недоступно.'];
+  if (message.includes('CANCELLATION_NOT_ALLOWED')) return [409, 'CANCELLATION_NOT_ALLOWED', 'Эту запись уже нельзя отменить.'];
   if (message.includes('MERGE_CANDIDATE_NOT_FOUND')) return [404, 'MERGE_CANDIDATE_NOT_FOUND', 'Предложение объединения уже неактуально.'];
   if (message.includes('MERGE_CLIENT_NOT_FOUND')) return [409, 'MERGE_CLIENT_NOT_FOUND', 'Один из профилей уже изменился. Обнови список.'];
   if (message.includes('INVALID_CLIENTS')) return [400, 'INVALID_CLIENTS', 'Не удалось синхронизировать клиентскую базу.'];
@@ -47,6 +54,28 @@ module.exports = async function handler(req, res) {
     let data;
     if (action === 'overview') {
       data = await rpc('krug_admin_app_overview', { p_token: token });
+    } else if (action === 'bookingsOverview') {
+      data = await rpc('krug_admin_bookings_overview', { p_token: token });
+    } else if (action === 'confirmBooking') {
+      const bookingId = String(body.bookingId || '');
+      if (!UUID_RE.test(bookingId)) return apiError(res, 400, 'INVALID_BOOKING_ID');
+      data = await rpc('krug_admin_confirm_booking', { p_token: token, p_booking_id: bookingId });
+    } else if (action === 'settleBooking') {
+      const bookingId = String(body.bookingId || '');
+      const paidAmount = body.paidAmount == null || body.paidAmount === '' ? null : Number(body.paidAmount);
+      const paymentMethod = String(body.paymentMethod || 'На студии').trim();
+      if (!UUID_RE.test(bookingId)) return apiError(res, 400, 'INVALID_BOOKING_ID');
+      if (paidAmount != null && (!Number.isSafeInteger(paidAmount) || paidAmount < 0)) return apiError(res, 400, 'INVALID_PAID_AMOUNT');
+      data = await rpc('krug_admin_settle_booking', {
+        p_token: token,
+        p_booking_id: bookingId,
+        p_paid_amount: paidAmount,
+        p_payment_method: paymentMethod
+      });
+    } else if (action === 'cancelBooking') {
+      const bookingId = String(body.bookingId || '');
+      if (!UUID_RE.test(bookingId)) return apiError(res, 400, 'INVALID_BOOKING_ID');
+      data = await rpc('krug_admin_cancel_booking', { p_token: token, p_booking_id: bookingId });
     } else if (action === 'setPolicy') {
       const percent = Number(body.percent);
       if (!Number.isFinite(percent)) return apiError(res, 400, 'INVALID_PERCENT');
