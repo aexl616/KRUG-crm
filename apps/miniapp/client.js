@@ -1,9 +1,14 @@
-/* Client profile adapter. Local profile remains as UI cache while the CRM backend becomes authoritative. */
+/* Client profile adapter. Local profile remains as UI cache while the CRM backend is authoritative. */
 window.KrugClient = (() => {
   const fallback = { id: 'krug-mock-client', name: 'Демо-профиль', telegram: '', phone: '' };
   const PROFILE_KEY='krug_mini_client_v1';
   function readProfile(){const raw=localStorage.getItem(PROFILE_KEY);return raw ? JSON.parse(raw) : {};}
   function writeProfile(profile){localStorage.setItem(PROFILE_KEY,JSON.stringify(profile));}
+
+  function telegramHeaders(){
+    const initData=window.KrugTelegram?.getInitData?.() || '';
+    return initData ? {'X-Telegram-Init-Data':initData} : {};
+  }
 
   async function registerBackend(profile){
     if (!profile.telegramUserId) return null;
@@ -11,7 +16,7 @@ window.KrugClient = (() => {
     if(!base)throw new Error('Сервис регистрации временно недоступен.');
     const response=await fetch(`${base}/api/clients/register`,{
       method:'POST',
-      headers:{'Content-Type':'application/json'},
+      headers:{'Content-Type':'application/json',...telegramHeaders()},
       body:JSON.stringify({
         telegramUserId:profile.telegramUserId,
         name:profile.name,
@@ -35,6 +40,7 @@ window.KrugClient = (() => {
     const remote=await registerBackend(next);
     if(remote){next.backendSynced=true;next.banned=!!remote.banned;}
     writeProfile(next);
+    window.KrugLoyalty?.invalidate?.();
     return getCurrentClient();
   }
   async function getCurrentClient() {
@@ -62,9 +68,8 @@ window.KrugClient = (() => {
       banned: !!profile.banned,
       avatarUrl: profile.avatarUrl || (typeof telegram?.photo_url === 'string' && /^https:\/\//i.test(telegram.photo_url) ? telegram.photo_url : null),
       visits: completed.length,
-      totalSpent: completed.reduce((total, booking) => total + (Number.isFinite(booking.price) ? booking.price : 0), 0)
+      totalSpent: completed.reduce((total, booking) => total + (Number.isFinite(booking.paidAmount) ? booking.paidAmount : Number.isFinite(booking.price) ? booking.price : 0), 0)
     };
   }
-  // Telegram data is still unverified during the test phase; server-side initData verification comes with Telegram auth.
   return { getCurrentClient, saveCurrentClient };
 })();
