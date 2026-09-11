@@ -2,8 +2,11 @@
 
 const { supabasePublic } = require('../_lib/supabase-public');
 const { applyPublicCors, readJsonBody, apiError } = require('../_lib/http');
+const { resolveTelegramUser, mapTelegramAuthError } = require('../_lib/telegram-auth');
 
 function mapError(error) {
+  const auth = mapTelegramAuthError(error);
+  if (auth) return auth;
   const message = String(error?.message || error?.details?.message || '');
   if (message.includes('INVALID_TELEGRAM_USER_ID')) return [400, 'INVALID_TELEGRAM_USER_ID', 'Не удалось определить Telegram-пользователя.'];
   if (message.includes('INVALID_CLIENT_NAME')) return [400, 'INVALID_CLIENT_NAME', 'Проверь имя.'];
@@ -22,15 +25,17 @@ module.exports = async function handler(req, res) {
   const body = readJsonBody(req);
   if (!body) return apiError(res, 400, 'INVALID_JSON');
 
-  const telegramUserId = Number(body.telegramUserId);
+  const claimedTelegramUserId = Number(body.telegramUserId);
   const name = String(body.name || '').trim();
   const phone = String(body.phone || '').trim();
   const telegram = String(body.telegram || '').trim();
 
-  if (!Number.isSafeInteger(telegramUserId) || telegramUserId <= 0) return apiError(res, 400, 'INVALID_TELEGRAM_USER_ID');
+  if (!Number.isSafeInteger(claimedTelegramUserId) || claimedTelegramUserId <= 0) return apiError(res, 400, 'INVALID_TELEGRAM_USER_ID');
   if (name.length < 2 || name.length > 80) return apiError(res, 400, 'INVALID_CLIENT_NAME');
 
   try {
+    const authUser = resolveTelegramUser(req, claimedTelegramUserId);
+    const telegramUserId = authUser?.id || claimedTelegramUserId;
     const client = await supabasePublic('rpc/krug_register_app_client', {
       method: 'POST',
       body: JSON.stringify({
