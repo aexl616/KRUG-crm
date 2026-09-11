@@ -57,11 +57,35 @@
     return `miniapp-booking-${remoteId}`;
   }
 
+  function cleanMiniAppClients(rows) {
+    const seen = new Set();
+    return (Array.isArray(rows) ? rows : []).filter(client => {
+      if (!client || client.source !== 'miniapp') return true;
+      const key = String(client.miniAppClientId || client.id || '');
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  function cleanMiniAppBookings(rows) {
+    const seen = new Set();
+    return (Array.isArray(rows) ? rows : []).filter(booking => {
+      if (!booking || booking.source !== 'miniapp') return true;
+      const key = String(booking.miniAppBookingId || booking.id || '');
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
   function mergeClients(remoteClients) {
-    const current = Array.isArray(state.clients) ? state.clients : [];
-    const byMiniAppId = new Map(current.filter(Boolean).map(client => [String(client.miniAppClientId || ''), client]));
+    const remoteIds = new Set(remoteClients.filter(Boolean).map(row => String(row.id || '')).filter(Boolean));
+    const original = Array.isArray(state.clients) ? state.clients : [];
+    const current = cleanMiniAppClients(original).filter(client => client?.source !== 'miniapp' || remoteIds.has(String(client.miniAppClientId || '').trim()));
+    const byMiniAppId = new Map(current.filter(Boolean).filter(client => client.miniAppClientId).map(client => [String(client.miniAppClientId), client]));
     const result = [...current];
-    let changed = false;
+    let changed = JSON.stringify(original) !== JSON.stringify(current);
 
     for (const remote of remoteClients) {
       if (!remote?.id || !String(remote.name || '').trim()) continue;
@@ -107,9 +131,11 @@
   }
 
   function mergeBookings(remoteBookings, clients) {
-    const current = Array.isArray(state.bookings) ? state.bookings : [];
+    const remoteIds = new Set(remoteBookings.filter(Boolean).map(row => String(row.id || '')).filter(Boolean));
+    const original = Array.isArray(state.bookings) ? state.bookings : [];
+    const current = cleanMiniAppBookings(original).filter(booking => booking?.source !== 'miniapp' || remoteIds.has(String(booking.miniAppBookingId || '').trim()));
     const result = [...current];
-    let changed = false;
+    let changed = JSON.stringify(original) !== JSON.stringify(current);
 
     for (const remote of remoteBookings) {
       if (!remote?.id || !remote?.date || !remote?.startTime) continue;
