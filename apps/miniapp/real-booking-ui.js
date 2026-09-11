@@ -22,13 +22,16 @@
         const loyalty = await window.KrugLoyalty.getLoyaltyBalance().catch(() => null);
         if (!root.contains(bonus)) return;
         const checkbox = bonus.querySelector('#use-bonuses');
+        const text = bonus.querySelector('p.muted');
         if (checkbox && loyalty?.requiresTelegram) {
           checkbox.checked = false;
           checkbox.disabled = true;
-          const text = bonus.querySelector('p.muted');
           if (text) text.textContent = 'Использование баллов доступно при запуске Mini App через Telegram.';
+        } else if (checkbox && loyalty?.requiresProfile) {
+          checkbox.checked = false;
+          checkbox.disabled = true;
+          if (text) text.textContent = 'Баллы появятся после сохранения профиля. Заявку можно отправить без них.';
         } else if (loyalty) {
-          const text = bonus.querySelector('p.muted');
           if (text && !checkbox?.checked) text.textContent = `После оплаченной сессии начислим ${loyalty.accrualPercent}% баллами`;
           if (text && checkbox?.checked) text.textContent = text.textContent.replace(/^Спишется/i, 'Зарезервируем');
         }
