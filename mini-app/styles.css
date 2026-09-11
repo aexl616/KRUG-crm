@@ -112,3 +112,77 @@ main { min-height: 0; flex: 1; display: flex; flex-direction: column; padding-to
 .quick-card .service-copy strong { max-width:none; line-height:1.3; }
 .quick-card .service-copy small { margin-top:8px; }
 .quick-card .service-copy b { margin-top:10px; }
+/* 0.2.4: KRUG visual tokens and component states */
+:root {
+  --font-heading: 'Suisse Intl', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-accent: 'Neue Montreal', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --radius-card: 18px; --space-card: 16px; --motion: 180ms;
+}
+h1 { font-family:var(--font-heading); font-size:34px; line-height:1.12; letter-spacing:-1.1px; margin:10px 0 20px; }
+h2, .loyalty-section h3 { font-family:var(--font-heading); font-size:20px; line-height:1.25; }
+.home-hero { padding:4px 0 18px; }
+.home-hero h1 { font-size:36px; line-height:1.12; margin:12px 0 0; }
+.home-services h2, .home-next > h2 { font-size:16px; color:var(--text); }
+.eyebrow { font-size:10px; letter-spacing:1.5px; }
+.muted, .intro { font-size:13px; line-height:1.5; }
+.quick-grid, .service-list { gap:12px; }
+.quick-card, .service-card, .duration, .date-card, .time-card, .booking-tabs, .empty, .primary, .secondary { border-radius:var(--radius-card); }
+.quick-card, .service-card { padding:var(--space-card); border:1px solid #30302e; background:var(--surface); }
+.home-services .quick-card { border:1px solid #30302e; gap:12px; min-height:0; justify-content:flex-start; }
+.card-index { font-size:10px; opacity:.7; }
+.quick-card .service-copy strong, .service-copy strong { font-family:var(--font-heading); font-size:17px; line-height:1.25; font-weight:650; letter-spacing:-.3px; }
+.quick-card .service-copy small { font-size:12px; line-height:1.4; color:var(--muted); margin-top:7px; }
+.quick-card .service-copy small:first-of-type { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.quick-card .service-copy b, .service-copy b { font-family:var(--font-accent); font-size:14px; line-height:1.4; font-weight:550; margin-top:10px; }
+.service-copy { min-width:0; }
+.service-copy strong, .service-copy small, .service-copy b { overflow-wrap:anywhere; }
+.primary { min-height:56px; background:var(--accent); color:#111; font-family:var(--font-accent); font-weight:650; }
+.secondary { min-height:52px; background:#242423; border:1px solid var(--line); font-weight:500; }
+button { transition:background-color var(--motion), border-color var(--motion), color var(--motion), transform var(--motion), opacity var(--motion); }
+button:not(:disabled):active { transform:scale(.985); }
+button:disabled { opacity:.38; }
+.selected, [aria-pressed="true"] { border-color:var(--accent)!important; background:#302218!important; box-shadow:inset 0 0 0 1px var(--accent); }
+.duration, .date-card, .time-card { border:1px solid var(--line); min-height:52px; }
+.duration { font-family:var(--font-accent); }
+.flow-nav { margin:-8px 0 3px; min-height:44px; }
+.flow-nav > span { font-size:12px; }
+.progress { margin-bottom:18px; gap:5px; }
+.progress span { height:2px; }
+.main-navigation { gap:6px; border-top:1px solid var(--line); padding-top:8px; margin-top:10px; }
+.main-navigation button { min-height:54px; border-radius:14px; background:transparent; color:var(--muted); font-size:11px; font-weight:500; gap:5px; }
+.main-navigation button > span { display:flex; align-items:center; justify-content:center; }
+.main-navigation svg { width:22px; height:22px; }
+.main-navigation [aria-current="page"] { color:var(--accent); background:#231c17; box-shadow:inset 0 2px 0 var(--accent); }
+.booking-date, .session-date { font-family:var(--font-heading); font-size:28px; color:var(--text); font-weight:650; line-height:1.2; }
+.booking-card h2 { font-size:17px; }
+.booking-card { padding:16px 0; }
+.status { font-size:11px; padding:6px 10px; line-height:1.4; }
+.history-card { opacity:.72; }
+.history-card .booking-date { font-size:20px; font-weight:500; }
+.summary-total { align-items:baseline; padding-top:20px; margin-top:20px; }
+.summary-total strong { font-family:var(--font-accent); font-size:30px; letter-spacing:-.8px; white-space:nowrap; }
+.summary-total > span { font-size:13px; color:var(--muted); }
+.session-time { font-family:var(--font-accent); font-size:22px; line-height:1.4; }
+.profile-identity h2 { font-size:24px; }
+.profile-stats strong, .home-bonus strong, .bonus-total strong { font-family:var(--font-accent); }
+.avatar { border-radius:var(--radius-card); }
+.empty { border:1px solid var(--line); padding:24px 20px; background:var(--surface); }
+.notice { background:#25221f; border:1px solid #494038; color:var(--text); border-radius:var(--radius-card); }
+.loading-state { background:rgba(17,17,17,.7); backdrop-filter:blur(2px); align-content:center; gap:14px; font-size:14px; }
+.loading-state::before { content:''; display:block; justify-self:center; width:24px; height:24px; border:2px solid #5a514a; border-top-color:var(--accent); border-radius:50%; }
+.success-icon { width:56px; height:56px; border-radius:var(--radius-card); background:var(--accent); font-size:30px; margin:0 0 20px; }
+#app[data-screen="success"] .summary { border:1px solid var(--line); border-radius:var(--radius-card); padding:20px; background:var(--surface); }
+#app[data-screen="success"] .summary .session-date { font-size:26px; }
+.screen-content { animation:krug-appear var(--motion) ease-out; }
+@keyframes krug-appear { from {opacity:.65} to {opacity:1} }
+@media (prefers-reduced-motion:reduce) { *, *::before, *::after { animation:none!important; transition:none!important; scroll-behavior:auto!important; } }
+
+#app[data-screen="success"] h1 { font-size:30px; margin-bottom:16px; }
+#app[data-screen="success"] .success-icon { width:44px; height:44px; font-size:26px; margin-bottom:14px; }
+#app[data-screen="success"] .summary { padding:16px; }
+#app[data-screen="success"] .session-date { margin:14px 0 4px; }
+#app[data-screen="success"] .summary p { margin:8px 0; }
+#app[data-screen="success"] .summary-total { margin-top:12px; padding-top:12px; }
+#app[data-screen="success"] .price-details { margin:4px 0; }
+#app[data-screen="success"] > .screen-content > .status { margin:12px 0 0; }
+#app[data-screen="success"] .success-actions { margin-top:16px; }

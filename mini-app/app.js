@@ -71,10 +71,12 @@
   }
   function renderNavigation() {
     const active = screen === 'success' ? 'bookings' : screen === 'other' ? 'home' : screen;
-    const items = [['home', 'Главная', '⌂'], ['flow', 'Записаться', '+'], ['bookings', 'Мои записи', '≡'], ['profile', 'Профиль', '○']];
+    const svg = path => '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+path+'</svg>';
+    const items = [['home', 'Главная', svg('<path d="m4 10 8-6 8 6v10H4z"/><path d="M9 20v-7h6v7"/>')], ['flow', 'Записаться', ''], ['bookings', 'Мои записи', svg('<rect x="4" y="5" width="16" height="15" rx="3"/><path d="M8 3v4m8-4v4M4 10h16m-11 4h2m2 0h2"/>')], ['profile', 'Профиль', svg('<circle cx="12" cy="8" r="3.5"/><path d="M5 20v-2a7 7 0 0 1 14 0v2"/>')]];
     // Booking starts or resumes from the primary action on Home.
     navigation.innerHTML = items.filter(([id]) => id !== 'flow').map(([id, label, icon]) => `<button type="button" data-action="${id === 'flow' ? 'resume' : id}" ${active === id ? 'aria-current="page"' : ''}><span aria-hidden="true">${icon}</span>${label}</button>`).join('');
     navigation.classList.toggle('booking-navigation', screen === 'flow');
+    root.dataset.screen = screen;
     document.title = `КРУГ — ${items.find(([id]) => id === active)?.[1] || 'Запись'}`;
   }
   function bookingCard(booking, compact = false) {

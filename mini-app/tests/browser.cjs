@@ -27,6 +27,7 @@ const server = http.createServer((req, res) => {
       page.on('pageerror', e => errors.push(e.message));
       page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
       const check = async name => {
+        await page.waitForTimeout(220);
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${width}: overflow on ${name}`);
         assert.ok(await page.evaluate(() => {
           const content = document.querySelector('.screen-content')?.getBoundingClientRect();
@@ -240,6 +241,7 @@ const server = http.createServer((req, res) => {
       const p = await ctx.newPage();
       await p.goto(url);
       await p.locator('.home-bonus strong').waitFor();
+      assert.equal(await p.locator('#main-navigation svg').count(),3);
       assert.equal(await p.locator('.home-bonus strong').innerText(), '740');
       await p.locator('#main-navigation [data-action="profile"]').click();
       await p.locator('.profile-identity').waitFor();
