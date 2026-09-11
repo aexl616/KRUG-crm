@@ -1,6 +1,6 @@
 'use strict';
 
-const { supabasePublic } = require('./_lib/supabase-public');
+const { supabaseServer } = require('./_lib/supabase-server');
 const { applyPublicCors, readJsonBody, apiError } = require('./_lib/http');
 const { resolveTelegramUser, mapTelegramAuthError } = require('./_lib/telegram-auth');
 
@@ -8,6 +8,7 @@ function mapError(error) {
   const auth = mapTelegramAuthError(error);
   if (auth) return auth;
   const message = String(error?.message || error?.details?.message || '');
+  if (message.includes('SUPABASE_SERVER_SECRET_REQUIRED')) return [503, 'SERVER_SECRET_REQUIRED', 'Серверный доступ к базе ещё не настроен.'];
   if (message.includes('INVALID_TELEGRAM_USER_ID')) return [400, 'INVALID_TELEGRAM_USER_ID', 'Не удалось определить Telegram-профиль.'];
   if (message.includes('CLIENT_NOT_FOUND')) return [404, 'CLIENT_NOT_FOUND', 'Сначала сохрани профиль в Mini App.'];
   return [502, 'LOYALTY_UNAVAILABLE', 'Баллы временно недоступны. Попробуй ещё раз.'];
@@ -23,14 +24,12 @@ module.exports = async function handler(req, res) {
   const body = readJsonBody(req);
   if (!body) return apiError(res, 400, 'INVALID_JSON');
   const claimedTelegramUserId = Number(body.telegramUserId);
-  if (!Number.isSafeInteger(claimedTelegramUserId) || claimedTelegramUserId <= 0) {
-    return apiError(res, 400, 'INVALID_TELEGRAM_USER_ID');
-  }
+  if (!Number.isSafeInteger(claimedTelegramUserId) || claimedTelegramUserId <= 0) return apiError(res, 400, 'INVALID_TELEGRAM_USER_ID');
 
   try {
     const authUser = resolveTelegramUser(req, claimedTelegramUserId);
     const telegramUserId = authUser?.id || claimedTelegramUserId;
-    const loyalty = await supabasePublic('rpc/krug_loyalty_snapshot', {
+    const loyalty = await supabaseServer('rpc/krug_loyalty_snapshot', {
       method: 'POST',
       body: JSON.stringify({ p_telegram_user_id: telegramUserId })
     });
