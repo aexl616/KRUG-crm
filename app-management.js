@@ -20,13 +20,7 @@
   const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   })[char]);
-
   const initials = value => String(value || '?').trim().split(/\s+/).slice(0, 2).map(part => [...part][0] || '').join('').toUpperCase() || '?';
-  const formatDateTime = value => {
-    if (!value) return '—';
-    try { return new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(value)); }
-    catch { return '—'; }
-  };
   const points = value => new Intl.NumberFormat('ru-RU').format(Number(value) || 0);
 
   function readLocalState() {
@@ -538,8 +532,18 @@
     });
   }
 
+  root.addEventListener('click', event => {
+    const nativeNav = event.target.closest('.nav button:not(.app-mgmt-nav-button), .mobile-tabs button:not(.app-mgmt-nav-button)');
+    if (!nativeNav) return;
+    ui.active = false;
+    closeModal();
+  }, true);
+
   const observer = new MutationObserver(() => {
-    if (!document.querySelector('.app-shell')) return;
+    if (!document.querySelector('.app-shell')) {
+      ui.active = false;
+      return;
+    }
     ensureButtons();
     if (ui.active && !contentNode()?.querySelector('.app-management-screen')) renderCurrent();
   });
