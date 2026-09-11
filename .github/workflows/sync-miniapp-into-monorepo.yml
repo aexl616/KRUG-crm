@@ -1,0 +1,52 @@
+name: Sync Mini App into monorepo
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/sync-miniapp-into-monorepo.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout KRUG monorepo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout current Mini App
+        uses: actions/checkout@v4
+        with:
+          repository: aexl616/krug-miniapp
+          ref: main
+          path: .source-miniapp
+
+      - name: Import Mini App snapshot
+        shell: bash
+        run: |
+          rm -rf apps/miniapp
+          mkdir -p apps/miniapp
+          rsync -a --delete \
+            --exclude='.git' \
+            --exclude='.github' \
+            .source-miniapp/ apps/miniapp/
+          rm -rf .source-miniapp
+
+      - name: Commit imported snapshot
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add apps/miniapp
+          if git diff --cached --quiet; then
+            echo 'Mini App is already in sync.'
+            exit 0
+          fi
+          git commit -m 'chore: import current mini app into monorepo'
+          git push
