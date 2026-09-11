@@ -2,12 +2,15 @@
 
 const { supabasePublic } = require('./_lib/supabase-public');
 const { applyPublicCors, readJsonBody, apiError } = require('./_lib/http');
+const { resolveTelegramUser, mapTelegramAuthError } = require('./_lib/telegram-auth');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 function mapBookingError(error) {
+  const auth = mapTelegramAuthError(error);
+  if (auth) return auth;
   const message = String(error?.message || error?.details?.message || '');
   if (message.includes('USER_BANNED')) return [403, 'USER_BANNED', 'Доступ к записи через Mini App ограничен. Свяжись со студией.'];
   if (message.includes('SLOT_UNAVAILABLE')) return [409, 'SLOT_UNAVAILABLE', 'Это время уже заняли. Выбери другое.'];
@@ -43,7 +46,7 @@ module.exports = async function handler(req, res) {
   const phone = String(client.phone || '').trim();
   const telegram = String(client.telegram || '').trim();
   const telegramUserIdRaw = client.telegramUserId ?? body.telegramUserId ?? null;
-  const telegramUserId = telegramUserIdRaw == null || telegramUserIdRaw === '' ? null : Number(telegramUserIdRaw);
+  const claimedTelegramUserId = telegramUserIdRaw == null || telegramUserIdRaw === '' ? null : Number(telegramUserIdRaw);
   const comment = String(body.comment || '').trim();
   const useBonuses = body.useBonuses === true;
 
@@ -51,19 +54,15 @@ module.exports = async function handler(req, res) {
   if (!serviceId || serviceId.length > 80) return apiError(res, 400, 'INVALID_SERVICE');
   if (!DATE_RE.test(date)) return apiError(res, 400, 'INVALID_DATE');
   if (!TIME_RE.test(startTime)) return apiError(res, 400, 'INVALID_TIME');
-  if (!Number.isFinite(durationHours) || durationHours <= 0 || durationHours > 12) {
-    return apiError(res, 400, 'INVALID_DURATION');
-  }
+  if (!Number.isFinite(durationHours) || durationHours <= 0 || durationHours > 12) return apiError(res, 400, 'INVALID_DURATION');
   if (name.length < 2 || name.length > 80) return apiError(res, 400, 'INVALID_CLIENT_NAME');
   if (comment.length > 1000) return apiError(res, 400, 'COMMENT_TOO_LONG');
-  if (telegramUserId != null && (!Number.isSafeInteger(telegramUserId) || telegramUserId <= 0)) {
-    return apiError(res, 400, 'INVALID_TELEGRAM_USER_ID');
-  }
-  if (useBonuses && telegramUserId == null) {
-    return apiError(res, 400, 'LOYALTY_REQUIRES_TELEGRAM', 'Баллы доступны после входа через Telegram.');
-  }
+  if (claimedTelegramUserId != null && (!Number.isSafeInteger(claimedTelegramUserId) || claimedTelegramUserId <= 0)) return apiError(res, 400, 'INVALID_TELEGRAM_USER_ID');
+  if (useBonuses && claimedTelegramUserId == null) return apiError(res, 400, 'LOYALTY_REQUIRES_TELEGRAM', 'Баллы доступны после входа через Telegram.');
 
   try {
+    const authUser = resolveTelegramUser(req, claimedTelegramUserId);
+    const telegramUserId = authUser?.id || claimedTelegramUserId;
     const booking = await supabasePublic('rpc/krug_create_booking_v3', {
       method: 'POST',
       body: JSON.stringify({
@@ -80,9 +79,6 @@ module.exports = async function handler(req, res) {
         p_use_bonuses: useBonuses
       })
     });
-
-    // Money is never accepted here. The client can only reserve loyalty points;
-    // actual payment and final point settlement happen in the internal CRM on-site.
     return res.status(201).json({ ok: true, booking });
   } catch (error) {
     const [status, code, message] = mapBookingError(error);
