@@ -1,6 +1,6 @@
 'use strict';
 
-const { supabasePublic } = require('./_lib/supabase-public');
+const { supabaseServer } = require('./_lib/supabase-server');
 const { applyPublicCors, readJsonBody, apiError } = require('./_lib/http');
 const { resolveTelegramUser, mapTelegramAuthError } = require('./_lib/telegram-auth');
 
@@ -12,6 +12,7 @@ function mapBookingError(error) {
   const auth = mapTelegramAuthError(error);
   if (auth) return auth;
   const message = String(error?.message || error?.details?.message || '');
+  if (message.includes('SUPABASE_SERVER_SECRET_REQUIRED')) return [503, 'SERVER_SECRET_REQUIRED', 'Серверный доступ к базе ещё не настроен.'];
   if (message.includes('USER_BANNED')) return [403, 'USER_BANNED', 'Доступ к записи через Mini App ограничен. Свяжись со студией.'];
   if (message.includes('SLOT_UNAVAILABLE')) return [409, 'SLOT_UNAVAILABLE', 'Это время уже заняли. Выбери другое.'];
   if (message.includes('SERVICE_UNAVAILABLE')) return [400, 'SERVICE_UNAVAILABLE', 'Эта услуга сейчас недоступна.'];
@@ -63,7 +64,7 @@ module.exports = async function handler(req, res) {
   try {
     const authUser = resolveTelegramUser(req, claimedTelegramUserId);
     const telegramUserId = authUser?.id || claimedTelegramUserId;
-    const booking = await supabasePublic('rpc/krug_create_booking_v3', {
+    const booking = await supabaseServer('rpc/krug_create_booking_v3', {
       method: 'POST',
       body: JSON.stringify({
         p_request_id: requestId,
