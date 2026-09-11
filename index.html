@@ -31,5 +31,54 @@
     <script src="crm-miniapp-sync.js"></script>
     <script src="crm-polish.js"></script>
     <script src="crm-v08.js"></script>
+    <script>
+      (() => {
+        if (typeof renderFinance !== 'function' || typeof KrugFinance === 'undefined') return;
+        const baseRenderFinance081 = renderFinance;
+        const pad = value => String(value).padStart(2, '0');
+        const key = date => `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}`;
+        const shortDate = value => { const [,m,d] = String(value || '').split('-'); return d && m ? `${d}.${m}` : value; };
+        const daysBetween = (start, end) => {
+          const rows = [];
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) return rows;
+          let cursor = new Date(`${start}T12:00:00`), finish = new Date(`${end}T12:00:00`), guard = 0;
+          while (cursor <= finish && guard < 366) { rows.push(key(cursor)); cursor.setDate(cursor.getDate()+1); guard += 1; }
+          return rows;
+        };
+        const renderTrend = () => {
+          const today = todayKey();
+          let range = KrugFinance.periodRange(financePeriod, new Date());
+          let start = range.start;
+          let end = range.end > today ? today : range.end;
+          if (start === '0001-01-01') { const d = new Date(`${end}T12:00:00`); d.setDate(d.getDate()-29); start = key(d); range = {...range, label:'Последние 30 дней'}; }
+          const days = daysBetween(start, end);
+          if (!days.length) return '';
+          const income = new Map(), expense = new Map(), bookings = new Map();
+          (state.payments || []).forEach(row => { const d=String(row.date||'').slice(0,10); income.set(d,(income.get(d)||0)+Number(row.amount||0)); });
+          (state.expenses || []).forEach(row => { const d=String(row.date||'').slice(0,10); expense.set(d,(expense.get(d)||0)+Number(row.amount||0)); });
+          (state.bookings || []).filter(row => row.status !== 'отменено').forEach(row => { const d=String(row.date||'').slice(0,10); bookings.set(d,(bookings.get(d)||0)+1); });
+          const rows = days.map(date => ({date,income:income.get(date)||0,expense:expense.get(date)||0,bookings:bookings.get(date)||0}));
+          const totals = rows.reduce((a,r)=>({income:a.income+r.income,expense:a.expense+r.expense,bookings:a.bookings+r.bookings}),{income:0,expense:0,bookings:0});
+          const hasData = rows.some(r => r.income || r.expense || r.bookings);
+          const head = `<div class="krug-trend-head"><div><h2>Динамика студии</h2><p>${range.label} · ${shortDate(start)} — ${shortDate(end)}</p></div><div class="krug-trend-totals"><span>Записей<strong>${totals.bookings}</strong></span><span>Доход<strong>${money(totals.income)}</strong></span><span>Расход<strong>${money(totals.expense)}</strong></span></div></div><div class="krug-trend-legend"><span><i></i>доход</span><span class="expense"><i></i>расход</span><span class="bookings"><i></i>количество записей</span></div>`;
+          if (!hasData) return `<section class="krug-finance-trend">${head}<div class="krug-trend-empty">Данные появятся после первых записей и финансовых операций.</div><p class="krug-trend-note">График использует тот же период, что выбран выше.</p></section>`;
+          const width=Math.max(760,rows.length*34+76), height=228, left=44, right=28, top=14, bottom=38, chartH=height-top-bottom, innerW=width-left-right;
+          const moneyMax=Math.max(1,...rows.flatMap(r=>[r.income,r.expense])), bookingMax=Math.max(1,...rows.map(r=>r.bookings)), step=innerW/rows.length, barW=Math.min(9,Math.max(4,step*.22));
+          const grid=Array.from({length:4},(_,i)=>{const ratio=i/3,y=top+chartH*ratio,value=Math.round(moneyMax*(1-ratio));return `<line class="krug-trend-grid" x1="${left}" x2="${width-right}" y1="${y}" y2="${y}"/><text class="krug-trend-axis" x="2" y="${y+3}">${value>=1000?`${Math.round(value/1000)}k`:value}</text>`;}).join('');
+          const labelEvery=rows.length<=10?1:rows.length<=20?2:rows.length<=40?4:7;
+          const bars=rows.map((r,i)=>{const cx=left+step*(i+.5),ih=chartH*(r.income/moneyMax),eh=chartH*(r.expense/moneyMax),label=i%labelEvery===0||i===rows.length-1?`<text class="krug-trend-axis" text-anchor="middle" x="${cx}" y="${height-12}">${shortDate(r.date)}</text>`:'';return `<g><rect class="krug-trend-income" x="${cx-barW-1}" y="${top+chartH-ih}" width="${barW}" height="${ih}" rx="2"><title>${r.date}: доход ${money(r.income)}</title></rect><rect class="krug-trend-expense" x="${cx+1}" y="${top+chartH-eh}" width="${barW}" height="${eh}" rx="2"><title>${r.date}: расход ${money(r.expense)}</title></rect>${label}</g>`;}).join('');
+          const points=rows.map((r,i)=>[left+step*(i+.5),top+chartH-chartH*(r.bookings/bookingMax),r]);
+          const line=`<polyline class="krug-trend-line" points="${points.map(([x,y])=>`${x},${y}`).join(' ')}"/>${points.map(([x,y,r])=>`<circle class="krug-trend-point" cx="${x}" cy="${y}" r="3"><title>${r.date}: записей ${r.bookings}</title></circle>`).join('')}`;
+          return `<section class="krug-finance-trend">${head}<div class="krug-trend-scroll"><svg class="krug-trend-svg" viewBox="0 0 ${width} ${height}" width="${width}" role="img" aria-label="Динамика записей, доходов и расходов по дням">${grid}${bars}${line}</svg></div><p class="krug-trend-note">Белая линия — количество записей; столбцы — рубли. Период синхронизирован с фильтром выше.</p></section>`;
+        };
+        renderFinance = function renderFinanceV081() {
+          const html = baseRenderFinance081();
+          if (financeTab !== 'money' || html.includes('krug-finance-trend')) return html;
+          const marker = '<section class="card section"><h2>Что хотите сделать?</h2>';
+          return html.includes(marker) ? html.replace(marker, `${renderTrend()}${marker}`) : `${renderTrend()}${html}`;
+        };
+        try { render(); } catch (error) { console.warn('[KRUG CRM] finance chart hotfix render skipped', error); }
+      })();
+    </script>
   </body>
 </html>
