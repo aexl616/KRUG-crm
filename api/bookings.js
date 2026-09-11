@@ -9,6 +9,7 @@ const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 function mapBookingError(error) {
   const message = String(error?.message || error?.details?.message || '');
+  if (message.includes('USER_BANNED')) return [403, 'USER_BANNED', 'Доступ к записи через Mini App ограничен. Свяжись со студией.'];
   if (message.includes('SLOT_UNAVAILABLE')) return [409, 'SLOT_UNAVAILABLE', 'Это время уже заняли. Выбери другое.'];
   if (message.includes('SERVICE_UNAVAILABLE')) return [400, 'SERVICE_UNAVAILABLE', 'Эта услуга сейчас недоступна.'];
   if (message.includes('DURATION_UNAVAILABLE')) return [400, 'DURATION_UNAVAILABLE', 'Эта длительность недоступна для услуги.'];
@@ -59,7 +60,7 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    const booking = await supabasePublic('rpc/krug_create_booking', {
+    const booking = await supabasePublic('rpc/krug_create_booking_v2', {
       method: 'POST',
       body: JSON.stringify({
         p_request_id: requestId,
