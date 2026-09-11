@@ -40,11 +40,101 @@
 .content>.card.section{box-shadow:none}
 .today-simple .today-metrics,.today-simple .today-money-grid,.today-simple .today-actions{display:none!important}
 
+/* 0.6.2 — quiet visual system across the old CRM surfaces */
+:root{
+  --crm-bg:#101112;
+  --crm-surface:#171819;
+  --crm-surface-2:#1c1e20;
+  --crm-border:#292b2d;
+  --crm-border-soft:#222426;
+  --crm-text:#f1f1ef;
+  --crm-muted:#8e9297;
+  --crm-accent:#ff6b22;
+}
+body{background:var(--crm-bg)!important}
+.content{padding:22px 24px 36px!important}
+.content>*,.client-intelligence-page,.calendar-page,.payments-page,.payouts-page,.budget-page,.settings-shell{max-width:1480px;margin-left:auto!important;margin-right:auto!important}
+
+/* Cards should structure information, not decorate every block. */
+.card,.section{box-shadow:none!important}
+.card.section{background:var(--crm-surface)!important;border-color:var(--crm-border)!important;border-radius:14px!important}
+.section{padding:18px 20px!important}
+.section+.section{margin-top:14px!important}
+.section-head{gap:14px!important;margin-bottom:14px!important}
+.section-head h2,.section-head h3{letter-spacing:-.01em}
+.muted{color:var(--crm-muted)!important}
+
+/* Compact controls and flatten secondary actions. */
+.btn,.icon-btn,.quick-action,.select-chip,.link-button{box-shadow:none!important}
+.btn{min-height:38px!important;border-radius:9px!important;padding:0 13px!important;font-weight:650!important}
+.btn.secondary{background:#1b1d1f!important;border-color:#34373a!important}
+.btn.secondary:hover{background:#222426!important}
+.icon-btn{width:34px!important;height:34px!important;border-radius:8px!important}
+.link-button{background:transparent!important;border:0!important;padding:4px 0!important;color:#b8bbc0!important}
+.toolbar{gap:8px!important}
+.toolbar input,.toolbar select,.field input,.field select,.field textarea{border-radius:9px!important;background:#121314!important;border-color:#303235!important;box-shadow:none!important}
+
+/* Statuses become small labels instead of visual anchors. */
+.status-pill,.client-status,.pill{border-radius:999px!important;font-size:11px!important;line-height:1!important;padding:6px 9px!important;font-weight:700!important;box-shadow:none!important}
+
+/* Calendar: remove the dashboard-inside-dashboard feeling. */
+.calendar-day-summary{display:flex!important;align-items:center!important;gap:18px!important;padding:10px 0!important;border-top:1px solid var(--crm-border-soft)!important;border-bottom:1px solid var(--crm-border-soft)!important;background:transparent!important}
+.calendar-day-summary article{background:transparent!important;border:0!important;padding:0!important;min-width:auto!important}
+.calendar-day-summary article span{font-size:10px!important;text-transform:uppercase!important;letter-spacing:.07em!important;color:var(--crm-muted)!important}
+.calendar-day-summary article strong{font-size:13px!important;margin-top:2px!important}
+.calendar-filters{display:flex!important;gap:8px!important;flex-wrap:wrap!important;margin:0 0 12px!important}
+.calendar-filters select{height:38px!important;min-height:38px!important;max-width:220px!important;padding:0 10px!important}
+.calendar-availability-summary{padding:14px 16px!important}
+.calendar-availability-summary .free-slots{gap:6px!important}
+.calendar-availability-summary .select-chip{padding:7px 10px!important}
+.calendar-day-summary+*,.calendar-availability-summary+*{margin-top:12px!important}
+
+/* Client detail: one profile, not a wall of metric tiles. */
+.client-intelligence-page{display:grid!important;gap:14px!important}
+.client-intelligence-page>.card.section{padding:18px 20px!important}
+.client-profile{display:grid!important;grid-template-columns:minmax(280px,.8fr) minmax(520px,1.4fr)!important;gap:22px!important;align-items:start!important}
+.client-profile-stats{display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:0!important;border-top:1px solid var(--crm-border)!important;border-left:1px solid var(--crm-border)!important}
+.client-profile-stats article{background:transparent!important;border:0!important;border-right:1px solid var(--crm-border)!important;border-bottom:1px solid var(--crm-border)!important;border-radius:0!important;padding:11px 12px!important;min-height:auto!important}
+.client-profile-stats article span{font-size:10px!important;text-transform:uppercase!important;letter-spacing:.06em!important;color:var(--crm-muted)!important}
+.client-profile-stats article strong{font-size:14px!important;margin-top:3px!important}
+.client-title-row h2{margin-bottom:4px!important}
+.client-tags{gap:5px!important}
+.client-tags span{font-size:11px!important;padding:5px 8px!important}
+.client-intelligence-layout{gap:14px!important}
+.client-insights>div{padding:9px 0!important;border-bottom:1px solid var(--crm-border-soft)!important;background:transparent!important}
+.client-insights>div:last-child{border-bottom:0!important}
+.client-finance-summary{display:flex!important;gap:20px!important;flex-wrap:wrap!important;border-top:1px solid var(--crm-border)!important;padding-top:12px!important}
+.client-finance-summary article{background:transparent!important;border:0!important;padding:0!important;min-width:130px!important}
+
+/* Tables: lighter separators, no card-like rows. */
+.table-wrap{border:1px solid var(--crm-border)!important;border-radius:12px!important;overflow:hidden!important;background:#151617!important}
+table{border-collapse:collapse!important}
+th{background:#151617!important;color:var(--crm-muted)!important;font-size:10px!important;text-transform:uppercase!important;letter-spacing:.06em!important;font-weight:700!important}
+th,td{border-bottom:1px solid var(--crm-border-soft)!important;padding:11px 12px!important}
+tbody tr:hover{background:#1a1c1e!important}
+
+/* Settings and finance pages: reduce visual nesting. */
+.settings-shell{padding:0!important;background:transparent!important;border:0!important}
+.settings-tabs{background:transparent!important;border-bottom:1px solid var(--crm-border)!important;padding:0!important;gap:2px!important}
+.settings-tabs button{border-radius:8px 8px 0 0!important;padding:10px 12px!important;background:transparent!important}
+.settings-tabs button.active{background:#1b1d1f!important}
+.settings-shell>.settings-grid,.settings-shell>.section{margin-top:14px!important}
+.payout-summary-section,.budget-wallet-card{box-shadow:none!important}
+.budget-wallets{gap:10px!important}
+.budget-wallet-card{border-radius:12px!important;padding:14px!important}
+
+/* Empty states should be quiet and useful. */
+.empty-state{min-height:140px!important;padding:24px!important;background:transparent!important;border:1px dashed #303235!important;border-radius:12px!important}
+.empty-state h3,.empty-state h2{font-size:16px!important;margin-bottom:4px!important}
+
 @media(max-width:1100px){
   .crm-filterbar{grid-template-columns:1fr 160px 1fr}.crm-filterbar select:nth-of-type(2),.crm-filterbar select:nth-of-type(3){grid-column:auto}
   .crm-booking-row{grid-template-columns:130px 1fr 1fr auto}.crm-booking-price{display:none}.crm-booking-row>.status-pill{grid-column:4}
+  .client-profile{grid-template-columns:1fr!important}
+  .client-profile-stats{grid-template-columns:repeat(3,minmax(0,1fr))!important}
 }
 @media(max-width:760px){
+  .content{padding:14px!important}
   .crm-page-head,.crm-section-head{align-items:flex-start;flex-direction:column}
   .crm-page-actions{width:100%}.crm-page-actions .btn{flex:1}
   .crm-clean-section{padding:14px}
@@ -53,4 +143,8 @@
   .crm-filterbar,.crm-client-filterbar{grid-template-columns:1fr 1fr}.crm-filterbar>input:first-child,.crm-client-filterbar>input:first-child{grid-column:1/-1}
   .crm-booking-row{grid-template-columns:110px 1fr auto}.crm-booking-service{grid-column:2}.crm-booking-price{display:none}.crm-booking-row>.status-pill{grid-column:3;grid-row:1/3}
   .crm-client-row{grid-template-columns:38px 1fr auto}.crm-client-stat{display:none}.crm-client-row .client-status{grid-column:3;grid-row:1}
+  .calendar-day-summary{overflow-x:auto!important;gap:14px!important}
+  .calendar-filters{display:grid!important;grid-template-columns:1fr 1fr!important}
+  .calendar-filters select{max-width:none!important;width:100%!important}
+  .client-profile-stats{grid-template-columns:repeat(2,minmax(0,1fr))!important}
 }
