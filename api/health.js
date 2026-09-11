@@ -12,8 +12,9 @@ module.exports = function handler(req, res) {
   return res.status(200).json({
     ok: true,
     service: 'krug-api',
-    version: '0.4.3',
+    version: '0.4.4',
     timezone: 'Europe/Moscow',
-    payments: 'on_site_only'
+    payments: 'on_site_only',
+    appManagement: true
   });
 };
