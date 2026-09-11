@@ -2,10 +2,13 @@
 
 const { supabasePublic } = require('../_lib/supabase-public');
 const { applyPublicCors, readJsonBody, apiError } = require('../_lib/http');
+const { resolveTelegramUser, mapTelegramAuthError } = require('../_lib/telegram-auth');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function mapCancelError(error) {
+  const auth = mapTelegramAuthError(error);
+  if (auth) return auth;
   const message = String(error?.message || error?.details?.message || '');
   if (message.includes('BOOKING_NOT_FOUND')) return [404, 'BOOKING_NOT_FOUND', 'Запись не найдена.'];
   if (message.includes('CANCELLATION_AFTER_START')) return [409, 'CANCELLATION_AFTER_START', 'После начала сессии отменить запись в приложении нельзя. Свяжись со студией.'];
@@ -27,6 +30,7 @@ module.exports = async function handler(req, res) {
   if (!UUID_RE.test(requestId)) return apiError(res, 400, 'INVALID_REQUEST_ID');
 
   try {
+    resolveTelegramUser(req);
     const booking = await supabasePublic('rpc/krug_cancel_booking', {
       method: 'POST',
       body: JSON.stringify({ p_request_id: requestId })
