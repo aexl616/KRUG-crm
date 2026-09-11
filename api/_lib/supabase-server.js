@@ -23,14 +23,18 @@ async function supabaseServer(path, options = {}) {
     return supabasePublic(path, options);
   }
 
+  const headers = {
+    apikey: secret,
+    'Content-Type': 'application/json',
+    ...(options.headers || {})
+  };
+  // Modern sb_secret_* keys are opaque API keys and must not be treated as JWTs.
+  // Legacy service_role keys are JWTs and still use the Bearer header.
+  if (!secret.startsWith('sb_secret_')) headers.Authorization = `Bearer ${secret}`;
+
   const response = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
     ...options,
-    headers: {
-      apikey: secret,
-      Authorization: `Bearer ${secret}`,
-      'Content-Type': 'application/json',
-      ...(options.headers || {})
-    }
+    headers
   });
 
   const body = await response.text();
