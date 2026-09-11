@@ -8,13 +8,15 @@ window.KrugLoyalty = (() => {
     return initData ? { 'X-Telegram-Init-Data': initData } : {};
   }
 
+  function emptySnapshot(extra = {}) {
+    return { balance: 0, ledgerBalance: 0, reserved: 0, rublesPerBonus: 1, accrualPercent: 0, enabled: false, history: [], ...extra };
+  }
+
   async function fetchSnapshot({ force = false } = {}) {
     if (cache && !force && Date.now() - cache.at < 10000) return structuredClone(cache.value);
     const client = await window.KrugClient.getCurrentClient();
     const telegramUserId = Number(client.telegramUserId);
-    if (!Number.isSafeInteger(telegramUserId) || telegramUserId <= 0) {
-      return { balance: 0, ledgerBalance: 0, reserved: 0, rublesPerBonus: 1, accrualPercent: 0, enabled: false, history: [], requiresTelegram: true };
-    }
+    if (!Number.isSafeInteger(telegramUserId) || telegramUserId <= 0) return emptySnapshot({ requiresTelegram: true });
 
     let response;
     try {
@@ -27,6 +29,9 @@ window.KrugLoyalty = (() => {
       throw new Error('Не удалось загрузить баллы. Проверь интернет и попробуй ещё раз.');
     }
     const result = await response.json().catch(() => ({}));
+    if (response.status === 404 && result.error === 'CLIENT_NOT_FOUND') {
+      return emptySnapshot({ requiresProfile: true });
+    }
     if (!response.ok || !result.ok) throw new Error(result.message || 'Баллы временно недоступны.');
     const value = result.loyalty || {};
     value.balance = Number(value.balance || 0);
@@ -48,7 +53,8 @@ window.KrugLoyalty = (() => {
       rublesPerBonus: snapshot.rublesPerBonus,
       accrualPercent: snapshot.accrualPercent,
       enabled: snapshot.enabled !== false,
-      requiresTelegram: !!snapshot.requiresTelegram
+      requiresTelegram: !!snapshot.requiresTelegram,
+      requiresProfile: !!snapshot.requiresProfile
     };
   }
 
@@ -66,7 +72,8 @@ window.KrugLoyalty = (() => {
     const amount = Math.max(0, Number(price) || 0);
     const rublesPerBonus = Math.max(1, Number(snapshot.rublesPerBonus || 1));
     const maxPointsByPrice = Math.floor(amount / rublesPerBonus);
-    const applied = useBonuses && snapshot.enabled !== false
+    const canRedeem = snapshot.enabled !== false && !snapshot.requiresTelegram && !snapshot.requiresProfile;
+    const applied = useBonuses && canRedeem
       ? Math.min(Math.max(0, Number(snapshot.balance || 0)), maxPointsByPrice)
       : 0;
     return {
@@ -76,8 +83,9 @@ window.KrugLoyalty = (() => {
       remaining: Number(snapshot.balance || 0) - applied,
       rublesPerBonus,
       accrualPercent: Number(snapshot.accrualPercent || 0),
-      enabled: snapshot.enabled !== false,
-      requiresTelegram: !!snapshot.requiresTelegram
+      enabled: canRedeem,
+      requiresTelegram: !!snapshot.requiresTelegram,
+      requiresProfile: !!snapshot.requiresProfile
     };
   }
 
