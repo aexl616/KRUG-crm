@@ -45,6 +45,7 @@ module.exports = async function handler(req, res) {
   const telegramUserIdRaw = client.telegramUserId ?? body.telegramUserId ?? null;
   const telegramUserId = telegramUserIdRaw == null || telegramUserIdRaw === '' ? null : Number(telegramUserIdRaw);
   const comment = String(body.comment || '').trim();
+  const useBonuses = body.useBonuses === true;
 
   if (!UUID_RE.test(requestId)) return apiError(res, 400, 'INVALID_REQUEST_ID');
   if (!serviceId || serviceId.length > 80) return apiError(res, 400, 'INVALID_SERVICE');
@@ -58,9 +59,12 @@ module.exports = async function handler(req, res) {
   if (telegramUserId != null && (!Number.isSafeInteger(telegramUserId) || telegramUserId <= 0)) {
     return apiError(res, 400, 'INVALID_TELEGRAM_USER_ID');
   }
+  if (useBonuses && telegramUserId == null) {
+    return apiError(res, 400, 'LOYALTY_REQUIRES_TELEGRAM', 'Баллы доступны после входа через Telegram.');
+  }
 
   try {
-    const booking = await supabasePublic('rpc/krug_create_booking_v2', {
+    const booking = await supabasePublic('rpc/krug_create_booking_v3', {
       method: 'POST',
       body: JSON.stringify({
         p_request_id: requestId,
@@ -72,12 +76,13 @@ module.exports = async function handler(req, res) {
         p_client_phone: phone,
         p_client_telegram: telegram || null,
         p_telegram_user_id: telegramUserId,
-        p_comment: comment
+        p_comment: comment,
+        p_use_bonuses: useBonuses
       })
     });
 
-    // Payment is intentionally not accepted from the client. Studio bookings are
-    // always created unpaid and can only be marked paid from the internal CRM flow.
+    // Money is never accepted here. The client can only reserve loyalty points;
+    // actual payment and final point settlement happen in the internal CRM on-site.
     return res.status(201).json({ ok: true, booking });
   } catch (error) {
     const [status, code, message] = mapBookingError(error);
