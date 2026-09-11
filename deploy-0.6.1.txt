@@ -1,0 +1,1 @@
+KRUG CRM 0.6.1 clean UI + operational data reset
