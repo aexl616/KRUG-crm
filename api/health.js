@@ -9,14 +9,23 @@ module.exports = function handler(req, res) {
     return apiError(res, 405, 'METHOD_NOT_ALLOWED');
   }
 
+  const hasSupabaseServerSecret = Boolean(process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY);
+  const hasTelegramBotToken = Boolean(process.env.TELEGRAM_BOT_TOKEN);
+  const telegramAuthRequired = process.env.TELEGRAM_AUTH_REQUIRED === '1';
+
   return res.status(200).json({
     ok: true,
     service: 'krug-api',
-    version: '0.4.6',
+    version: '0.5.0-prep',
     timezone: 'Europe/Moscow',
     payments: 'on_site_only',
     appManagement: true,
     miniAppBookings: 'live',
-    loyalty: 'demo_until_0.5'
+    loyalty: 'migrating_to_live',
+    readiness: {
+      supabaseServerSecret: hasSupabaseServerSecret,
+      telegramBotToken: hasTelegramBotToken,
+      telegramAuthRequired
+    }
   });
 };
