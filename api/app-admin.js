@@ -1,6 +1,6 @@
 'use strict';
 
-const { supabasePublic } = require('./_lib/supabase-public');
+const { supabaseServer } = require('./_lib/supabase-server');
 const { readJsonBody, apiError } = require('./_lib/http');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -13,6 +13,7 @@ function adminToken(req) {
 
 function mapError(error) {
   const message = String(error?.message || error?.details?.message || '');
+  if (message.includes('SUPABASE_SERVER_SECRET_REQUIRED')) return [503, 'SERVER_SECRET_REQUIRED', 'Серверный доступ к базе ещё не настроен.'];
   if (message.includes('ADMIN_UNAUTHORIZED')) return [401, 'ADMIN_UNAUTHORIZED', 'Неверный ключ управления Mini App.'];
   if (message.includes('INVALID_PERCENT')) return [400, 'INVALID_PERCENT', 'Процент должен быть от 0 до 100.'];
   if (message.includes('INVALID_POINTS_AMOUNT')) return [400, 'INVALID_POINTS_AMOUNT', 'Некорректное количество баллов.'];
@@ -34,7 +35,7 @@ function mapError(error) {
 }
 
 async function rpc(name, payload) {
-  return supabasePublic(`rpc/${name}`, { method: 'POST', body: JSON.stringify(payload) });
+  return supabaseServer(`rpc/${name}`, { method: 'POST', body: JSON.stringify(payload) });
 }
 
 module.exports = async function handler(req, res) {
@@ -66,12 +67,7 @@ module.exports = async function handler(req, res) {
       const paymentMethod = String(body.paymentMethod || 'На студии').trim();
       if (!UUID_RE.test(bookingId)) return apiError(res, 400, 'INVALID_BOOKING_ID');
       if (paidAmount != null && (!Number.isSafeInteger(paidAmount) || paidAmount < 0)) return apiError(res, 400, 'INVALID_PAID_AMOUNT');
-      data = await rpc('krug_admin_settle_booking', {
-        p_token: token,
-        p_booking_id: bookingId,
-        p_paid_amount: paidAmount,
-        p_payment_method: paymentMethod
-      });
+      data = await rpc('krug_admin_settle_booking', { p_token: token, p_booking_id: bookingId, p_paid_amount: paidAmount, p_payment_method: paymentMethod });
     } else if (action === 'cancelBooking') {
       const bookingId = String(body.bookingId || '');
       if (!UUID_RE.test(bookingId)) return apiError(res, 400, 'INVALID_BOOKING_ID');
