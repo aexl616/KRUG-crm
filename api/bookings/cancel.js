@@ -1,6 +1,6 @@
 'use strict';
 
-const { supabasePublic } = require('../_lib/supabase-public');
+const { supabaseServer } = require('../_lib/supabase-server');
 const { applyPublicCors, readJsonBody, apiError } = require('../_lib/http');
 const { resolveTelegramUser, mapTelegramAuthError } = require('../_lib/telegram-auth');
 
@@ -10,6 +10,7 @@ function mapCancelError(error) {
   const auth = mapTelegramAuthError(error);
   if (auth) return auth;
   const message = String(error?.message || error?.details?.message || '');
+  if (message.includes('SUPABASE_SERVER_SECRET_REQUIRED')) return [503, 'SERVER_SECRET_REQUIRED', 'Серверный доступ к базе ещё не настроен.'];
   if (message.includes('BOOKING_NOT_FOUND')) return [404, 'BOOKING_NOT_FOUND', 'Запись не найдена.'];
   if (message.includes('CANCELLATION_AFTER_START')) return [409, 'CANCELLATION_AFTER_START', 'После начала сессии отменить запись в приложении нельзя. Свяжись со студией.'];
   if (message.includes('CANCELLATION_NOT_ALLOWED')) return [409, 'CANCELLATION_NOT_ALLOWED', 'Эту запись уже нельзя отменить.'];
@@ -31,7 +32,7 @@ module.exports = async function handler(req, res) {
 
   try {
     resolveTelegramUser(req);
-    const booking = await supabasePublic('rpc/krug_cancel_booking', {
+    const booking = await supabaseServer('rpc/krug_cancel_booking', {
       method: 'POST',
       body: JSON.stringify({ p_request_id: requestId })
     });
