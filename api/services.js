@@ -16,6 +16,8 @@ function normalizeService(row) {
         .sort((a, b) => a.durationHours - b.durationHours)
     : [];
 
+  const minimumPrice = tiers.length ? Math.min(...tiers.map(tier => tier.totalPrice)) : null;
+
   return {
     id: row.id,
     name: row.name,
@@ -32,7 +34,9 @@ function normalizeService(row) {
     defaultDurationHours: row.default_duration_hours == null ? null : Number(row.default_duration_hours),
     fixedStart: row.fixed_start ? String(row.fixed_start).slice(0, 5) : null,
     pricingRules: row.pricing_rules || {},
-    priceTiers: tiers
+    price: ['fixed', 'minimum'].includes(row.pricing_type) ? minimumPrice : null,
+    priceTiers: tiers,
+    paymentMode: 'on_site_only'
   };
 }
 
