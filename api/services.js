@@ -13,10 +13,11 @@ function normalizeService(row) {
           startsAt: tier.starts_at,
           endsAt: tier.ends_at
         }))
-        .sort((a, b) => a.durationHours - b.durationHours)
+        .sort((a, b) => a.durationHours - b.durationHours || a.totalPrice - b.totalPrice)
     : [];
 
   const minimumPrice = tiers.length ? Math.min(...tiers.map(tier => tier.totalPrice)) : null;
+  const isRentalPackage = row.public_category === 'rental_package';
 
   return {
     id: row.id,
@@ -29,13 +30,14 @@ function normalizeService(row) {
     publicVisible: row.public_visible,
     active: row.active,
     legacyOnly: row.legacy_only,
-    selectDuration: row.select_duration,
+    selectDuration: isRentalPackage ? false : row.select_duration,
     minDurationHours: row.min_duration_hours == null ? null : Number(row.min_duration_hours),
     defaultDurationHours: row.default_duration_hours == null ? null : Number(row.default_duration_hours),
     fixedStart: row.fixed_start ? String(row.fixed_start).slice(0, 5) : null,
     pricingRules: row.pricing_rules || {},
     price: ['fixed', 'minimum'].includes(row.pricing_type) ? minimumPrice : null,
     priceTiers: tiers,
+    isRentalPackage,
     paymentMode: 'on_site_only'
   };
 }
@@ -48,10 +50,16 @@ module.exports = async function handler(req, res) {
   }
 
   try {
+    // Hidden rental packages are still returned as supporting booking options,
+    // but remain publicVisible=false so they do not appear as top-level services.
     const rows = await supabasePublic(
-      'services?select=*,service_price_tiers(*)&active=eq.true&public_visible=eq.true&order=sort_order.asc'
+      'services?select=*,service_price_tiers(*)&active=eq.true&order=sort_order.asc'
     );
-    return res.status(200).json({ ok: true, services: rows.map(normalizeService) });
+    const services = rows
+      .filter(row => row.public_visible || row.public_category === 'rental_package')
+      .map(normalizeService);
+
+    return res.status(200).json({ ok: true, services });
   } catch (error) {
     console.error('[KRUG API] services failed', error.status || error.name || 'Error');
     return apiError(res, 502, 'CATALOG_UNAVAILABLE');
