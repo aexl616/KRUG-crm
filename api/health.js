@@ -12,20 +12,23 @@ module.exports = function handler(req, res) {
   const hasSupabaseServerSecret = Boolean(process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY);
   const hasTelegramBotToken = Boolean(process.env.TELEGRAM_BOT_TOKEN);
   const telegramAuthRequired = process.env.TELEGRAM_AUTH_REQUIRED === '1';
+  const telegramReady = hasSupabaseServerSecret && hasTelegramBotToken && telegramAuthRequired;
 
   return res.status(200).json({
     ok: true,
     service: 'krug-api',
-    version: '0.5.0-prep',
+    version: '0.5.0',
     timezone: 'Europe/Moscow',
     payments: 'on_site_only',
     appManagement: true,
     miniAppBookings: 'live',
-    loyalty: 'migrating_to_live',
+    loyalty: 'live',
+    telegram: telegramReady ? 'enforced' : 'prepared_waiting_for_env',
     readiness: {
       supabaseServerSecret: hasSupabaseServerSecret,
       telegramBotToken: hasTelegramBotToken,
-      telegramAuthRequired
+      telegramAuthRequired,
+      launchReady: telegramReady
     }
   });
 };
