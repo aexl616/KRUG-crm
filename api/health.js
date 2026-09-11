@@ -17,7 +17,7 @@ module.exports = function handler(req, res) {
   return res.status(200).json({
     ok: true,
     service: 'krug-api',
-    version: '0.5.0',
+    version: '0.5.1',
     timezone: 'Europe/Moscow',
     payments: 'on_site_only',
     appManagement: true,
