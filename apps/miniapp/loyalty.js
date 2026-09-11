@@ -1,26 +1,87 @@
-/* Demo ledger projection: opening entries plus atomic booking snapshots. */
+/* Live loyalty adapter. The backend owns balances, reservations and history. */
 window.KrugLoyalty = (() => {
-  const openingBalance = 700;
-  const entries = [
-    { id: 'demo-3', amount: -500, title: 'Списание', daysAgo: 3 },
-    { id: 'demo-2', amount: 240, title: 'Запись', daysAgo: 7 },
-    { id: 'demo-1', amount: 300, title: 'Запись', daysAgo: 14 }
-  ];
-  async function getLoyaltyBalance() {const history=await getLoyaltyHistory();return {balance:openingBalance+history.reduce((sum,e)=>sum+e.amount,0),rublesPerBonus:1,openingBalance};}
-  async function getLoyaltyHistory() {
-    const history=entries.map(({daysAgo,...entry})=>({...entry,date:window.KrugBooking.addDays(window.KrugBooking.today(),-daysAgo)}));
-    for(const b of await window.KrugData.getMyBookings()){
-      if(b.bonusSpent>0){history.push({id:b.id+'-spend',title:'Списание · '+b.serviceName,amount:-b.bonusSpent,date:(b.createdAt || b.date).slice(0,10)});
-        if(b.status==='cancelled' && b.cancelledAfterStart===false)history.push({id:b.id+'-refund',title:'Возврат за отмену',amount:b.bonusSpent,date:b.cancelledAt.slice(0,10)});
-      }
-      if(b.bonusEarned>0 && b.paymentStatus==='paid' && b.status==='completed')history.push({id:b.id+'-earn',title:'Начисление · '+b.serviceName,amount:b.bonusEarned,date:b.paidCompletedAt.slice(0,10)});
+  const API_BASE = String(window.KrugConfig?.API_BASE || '').replace(/\/$/, '');
+  let cache = null;
+
+  function telegramHeaders() {
+    const initData = window.KrugTelegram?.getInitData?.() || '';
+    return initData ? { 'X-Telegram-Init-Data': initData } : {};
+  }
+
+  async function fetchSnapshot({ force = false } = {}) {
+    if (cache && !force && Date.now() - cache.at < 10000) return structuredClone(cache.value);
+    const client = await window.KrugClient.getCurrentClient();
+    const telegramUserId = Number(client.telegramUserId);
+    if (!Number.isSafeInteger(telegramUserId) || telegramUserId <= 0) {
+      return { balance: 0, ledgerBalance: 0, reserved: 0, rublesPerBonus: 1, accrualPercent: 0, enabled: false, history: [], requiresTelegram: true };
     }
-    return history.sort((a,b)=>b.date.localeCompare(a.date));
+
+    let response;
+    try {
+      response = await fetch(`${API_BASE}/api/loyalty`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...telegramHeaders() },
+        body: JSON.stringify({ telegramUserId })
+      });
+    } catch {
+      throw new Error('Не удалось загрузить баллы. Проверь интернет и попробуй ещё раз.');
+    }
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.ok) throw new Error(result.message || 'Баллы временно недоступны.');
+    const value = result.loyalty || {};
+    value.balance = Number(value.balance || 0);
+    value.ledgerBalance = Number(value.ledgerBalance || value.balance || 0);
+    value.reserved = Number(value.reserved || 0);
+    value.rublesPerBonus = Number(value.rublesPerBonus || 1);
+    value.accrualPercent = Number(value.accrualPercent || 0);
+    value.history = Array.isArray(value.history) ? value.history : [];
+    cache = { at: Date.now(), value };
+    return structuredClone(value);
   }
-  async function getRedemptionQuote(price,useBonuses){
-    const {balance}=await getLoyaltyBalance();
-    const applied=useBonuses ? Math.min(Math.max(0,price),Math.max(0,balance)) : 0;
-    return {balance,applied,payable:Math.max(0,price-applied),remaining:balance-applied};
+
+  async function getLoyaltyBalance(options) {
+    const snapshot = await fetchSnapshot(options);
+    return {
+      balance: snapshot.balance,
+      ledgerBalance: snapshot.ledgerBalance,
+      reserved: snapshot.reserved,
+      rublesPerBonus: snapshot.rublesPerBonus,
+      accrualPercent: snapshot.accrualPercent,
+      enabled: snapshot.enabled !== false,
+      requiresTelegram: !!snapshot.requiresTelegram
+    };
   }
-  return { getLoyaltyBalance, getLoyaltyHistory, getRedemptionQuote };
+
+  async function getLoyaltyHistory(options) {
+    const snapshot = await fetchSnapshot(options);
+    return snapshot.history.map(entry => ({
+      ...entry,
+      amount: Number(entry.amount || 0),
+      date: String(entry.date || String(entry.createdAt || '').slice(0, 10))
+    }));
+  }
+
+  async function getRedemptionQuote(price, useBonuses) {
+    const snapshot = await fetchSnapshot();
+    const amount = Math.max(0, Number(price) || 0);
+    const rublesPerBonus = Math.max(1, Number(snapshot.rublesPerBonus || 1));
+    const maxPointsByPrice = Math.floor(amount / rublesPerBonus);
+    const applied = useBonuses && snapshot.enabled !== false
+      ? Math.min(Math.max(0, Number(snapshot.balance || 0)), maxPointsByPrice)
+      : 0;
+    return {
+      balance: Number(snapshot.balance || 0),
+      applied,
+      payable: Math.max(0, amount - applied * rublesPerBonus),
+      remaining: Number(snapshot.balance || 0) - applied,
+      rublesPerBonus,
+      accrualPercent: Number(snapshot.accrualPercent || 0),
+      enabled: snapshot.enabled !== false,
+      requiresTelegram: !!snapshot.requiresTelegram
+    };
+  }
+
+  function invalidate() { cache = null; }
+
+  return { getLoyaltyBalance, getLoyaltyHistory, getRedemptionQuote, invalidate };
 })();
