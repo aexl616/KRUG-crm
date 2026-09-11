@@ -1,6 +1,7 @@
 'use strict';
 
 const { supabasePublic } = require('./_lib/supabase-public');
+const { applyPublicCors, apiError } = require('./_lib/http');
 
 function normalizeService(row) {
   const tiers = Array.isArray(row.service_price_tiers)
@@ -36,9 +37,10 @@ function normalizeService(row) {
 }
 
 module.exports = async function handler(req, res) {
+  if (applyPublicCors(req, res)) return;
   if (req.method !== 'GET') {
-    res.setHeader('Allow', 'GET');
-    return res.status(405).json({ ok: false, error: 'METHOD_NOT_ALLOWED' });
+    res.setHeader('Allow', 'GET, OPTIONS');
+    return apiError(res, 405, 'METHOD_NOT_ALLOWED');
   }
 
   try {
@@ -48,6 +50,6 @@ module.exports = async function handler(req, res) {
     return res.status(200).json({ ok: true, services: rows.map(normalizeService) });
   } catch (error) {
     console.error('[KRUG API] services failed', error.status || error.name || 'Error');
-    return res.status(502).json({ ok: false, error: 'CATALOG_UNAVAILABLE' });
+    return apiError(res, 502, 'CATALOG_UNAVAILABLE');
   }
 };
