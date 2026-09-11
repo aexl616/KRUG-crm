@@ -1,6 +1,6 @@
 'use strict';
 
-const { supabasePublic } = require('../_lib/supabase-public');
+const { supabaseServer } = require('../_lib/supabase-server');
 const { applyPublicCors, readJsonBody, apiError } = require('../_lib/http');
 const { resolveTelegramUser, mapTelegramAuthError } = require('../_lib/telegram-auth');
 
@@ -8,6 +8,7 @@ function mapError(error) {
   const auth = mapTelegramAuthError(error);
   if (auth) return auth;
   const message = String(error?.message || error?.details?.message || '');
+  if (message.includes('SUPABASE_SERVER_SECRET_REQUIRED')) return [503, 'SERVER_SECRET_REQUIRED', 'Серверный доступ к базе ещё не настроен.'];
   if (message.includes('INVALID_TELEGRAM_USER_ID')) return [400, 'INVALID_TELEGRAM_USER_ID', 'Не удалось определить Telegram-пользователя.'];
   if (message.includes('INVALID_CLIENT_NAME')) return [400, 'INVALID_CLIENT_NAME', 'Проверь имя.'];
   if (message.includes('INVALID_CLIENT_PHONE')) return [400, 'INVALID_CLIENT_PHONE', 'Проверь номер телефона.'];
@@ -36,7 +37,7 @@ module.exports = async function handler(req, res) {
   try {
     const authUser = resolveTelegramUser(req, claimedTelegramUserId);
     const telegramUserId = authUser?.id || claimedTelegramUserId;
-    const client = await supabasePublic('rpc/krug_register_app_client', {
+    const client = await supabaseServer('rpc/krug_register_app_client', {
       method: 'POST',
       body: JSON.stringify({
         p_telegram_user_id: telegramUserId,
