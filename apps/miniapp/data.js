@@ -12,10 +12,18 @@ window.KrugData = (() => {
     return `${API_BASE}${path}`;
   }
 
+  function telegramHeaders() {
+    const initData = window.KrugTelegram?.getInitData?.() || '';
+    return initData ? { 'X-Telegram-Init-Data': initData } : {};
+  }
+
   async function request(path, options = {}) {
     let response;
     try {
-      response = await fetch(apiUrl(path), options);
+      response = await fetch(apiUrl(path), {
+        ...options,
+        headers: { ...telegramHeaders(), ...(options.headers || {}) }
+      });
     } catch {
       throw Object.assign(new Error('Не удалось связаться со студией. Проверь интернет и попробуй ещё раз.'), { code: 'NETWORK_ERROR' });
     }
@@ -43,12 +51,10 @@ window.KrugData = (() => {
       row.selectDuration = false;
     } else if (row.pricingType === 'hourly') {
       const hasDynamicRule = Number.isFinite(Number(row.pricingRules?.hourlyRate)) || Number.isFinite(Number(row.pricingRules?.regular?.extraHour));
-      // Without a server-supplied extrapolation rule only explicit package tiers are selectable.
       row.selectDuration = hasDynamicRule;
     } else if (row.pricingType === 'minimum') {
       row.selectDuration = true;
     }
-
     return row;
   }
 
@@ -74,11 +80,9 @@ window.KrugData = (() => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) return { date, closed: true, slots: [] };
     const duration = Number(durationHours);
     if (!Number.isFinite(duration) || duration <= 0 || !serviceId) return { date, closed: true, slots: [] };
-
     const key = availabilityKey(date, duration, serviceId);
     const cached = availabilityCache.get(key);
     if (!force && cached && Date.now() - cached.at < 15000) return structuredClone(cached.value);
-
     const params = new URLSearchParams({ date, durationHours: String(duration), serviceId });
     const result = await request(`/api/availability?${params}`);
     const availability = result.availability || { date, closed: true, slots: [] };
@@ -120,12 +124,10 @@ window.KrugData = (() => {
     writeCache(rows);
   }
 
-  function localForRequest(requestId) {
-    return readCache().find(row => row.requestId === requestId) || null;
-  }
-
   function mergeRemoteBooking(remote, local = null) {
     const durationHours = Number(remote.durationHours);
+    const bonusReserved = Number(remote.bonusReserved ?? local?.bonusReserved ?? 0);
+    const bonusSpentActual = Number(remote.bonusSpent ?? 0);
     return {
       ...(local || {}),
       ...remote,
@@ -135,16 +137,18 @@ window.KrugData = (() => {
       client: local?.client || null,
       comment: local?.comment || '',
       priceSnapshot: local?.priceSnapshot ? { ...local.priceSnapshot, totalPrice: Number(remote.price) } : null,
-      useBonuses: false,
-      bonusSpent: 0,
-      bonusEarned: Number(local?.bonusEarned || 0),
+      useBonuses: bonusReserved > 0 || bonusSpentActual > 0 || !!local?.useBonuses,
+      bonusReserved,
+      // Existing UI reads bonusSpent while a request is pending; expose the active
+      // reservation there until the session is actually paid and settled.
+      bonusSpent: bonusSpentActual || bonusReserved,
+      bonusEarned: Number(remote.bonusEarned ?? local?.bonusEarned ?? 0),
       paymentMode: 'on_site_only'
     };
   }
 
-  function invalidateAvailability() {
-    availabilityCache.clear();
-  }
+  function invalidateAvailability() { availabilityCache.clear(); }
+  function invalidateLoyalty() { window.KrugLoyalty?.invalidate?.(); }
 
   async function createBooking(data) {
     const service = await getService(data.serviceId);
@@ -174,7 +178,8 @@ window.KrugData = (() => {
         startTime: data.startTime,
         durationHours,
         client: { ...client, telegramUserId },
-        comment
+        comment,
+        useBonuses: data.useBonuses === true
       })
     });
 
@@ -183,6 +188,7 @@ window.KrugData = (() => {
       requestId,
       client,
       comment,
+      useBonuses: data.useBonuses === true,
       priceSnapshot: {
         ...localQuote,
         totalPrice: Number(remote.price ?? localQuote.totalPrice),
@@ -195,6 +201,7 @@ window.KrugData = (() => {
 
     cacheBooking(booking);
     invalidateAvailability();
+    invalidateLoyalty();
     return structuredClone(booking);
   }
 
@@ -202,7 +209,6 @@ window.KrugData = (() => {
     const localRows = readCache();
     const requestIds = [...new Set(localRows.map(row => row.requestId))].slice(0, MAX_CAPABILITIES);
     if (!requestIds.length) return [];
-
     try {
       const result = await request('/api/bookings/sync', {
         method: 'POST',
@@ -214,7 +220,6 @@ window.KrugData = (() => {
       writeCache(merged);
       return structuredClone(merged.sort((a, b) => `${b.date}${b.startTime}`.localeCompare(`${a.date}${a.startTime}`)));
     } catch (error) {
-      // Cached snapshots keep the account screen usable during a short outage.
       if (localRows.length) return structuredClone(localRows.sort((a, b) => `${b.date}${b.startTime}`.localeCompare(`${a.date}${a.startTime}`)));
       throw error;
     }
@@ -224,16 +229,15 @@ window.KrugData = (() => {
     const rows = readCache();
     const local = rows.find(row => row.id === id || row.requestId === id);
     if (!local?.requestId) throw new Error('Запись не найдена.');
-
     const result = await request('/api/bookings/cancel', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ requestId: local.requestId })
     });
-
     const booking = mergeRemoteBooking({ ...local, ...(result.booking || {}) }, local);
     cacheBooking(booking);
     invalidateAvailability();
+    invalidateLoyalty();
     return structuredClone(booking);
   }
 
