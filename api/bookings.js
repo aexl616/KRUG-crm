@@ -3,6 +3,7 @@
 const { supabaseServer } = require('./_lib/supabase-server');
 const { applyPublicCors, readJsonBody, apiError } = require('./_lib/http');
 const { resolveTelegramUser, mapTelegramAuthError } = require('./_lib/telegram-auth');
+const { processDueNotifications } = require('./_lib/telegram');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -80,6 +81,7 @@ module.exports = async function handler(req, res) {
         p_use_bonuses: useBonuses
       })
     });
+    processDueNotifications(10).catch(error => console.warn('[KRUG API] telegram booking notice delayed', error.message || error));
     return res.status(201).json({ ok: true, booking });
   } catch (error) {
     const [status, code, message] = mapBookingError(error);
