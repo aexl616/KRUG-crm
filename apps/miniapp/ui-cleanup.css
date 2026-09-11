@@ -236,6 +236,169 @@ h3,
   min-height: 52px;
 }
 
+/* Telegram Desktop / wide webview.
+   Mobile stays untouched; on desktop the app uses the available Telegram pane
+   instead of rendering as a narrow phone mockup inside a large black canvas. */
+@media (min-width: 800px) {
+  html,
+  body {
+    background: #0b0c0b;
+  }
+
+  .shell {
+    width: 100%;
+    max-width: none !important;
+    height: var(--app-height, 100dvh) !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 20px clamp(28px, 5vw, 72px) max(16px, env(safe-area-inset-bottom), var(--tg-inset-bottom)) !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+  }
+
+  .shell .header,
+  .shell > main,
+  .shell > .demo-indicator,
+  .shell > .main-navigation {
+    width: min(100%, 1120px);
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .shell .header {
+    min-height: 72px;
+    padding: 14px 18px;
+    margin-top: 0;
+    border-radius: 18px;
+  }
+
+  .shell .brand-wordmark {
+    width: 170px;
+  }
+
+  .screen-content {
+    padding: 28px 2px 24px;
+  }
+
+  h1 {
+    font-size: clamp(42px, 5vw, 64px);
+    letter-spacing: -2px;
+  }
+
+  .home-hero h1 {
+    max-width: 720px;
+    font-size: clamp(48px, 6vw, 72px) !important;
+    line-height: 1.02;
+  }
+
+  #app[data-screen="home"] .quick-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  #app[data-screen="home"] .quick-card {
+    height: 132px;
+    min-height: 132px;
+    padding: 18px;
+  }
+
+  #app[data-screen="home"] .quick-card strong {
+    max-width: none;
+    font-size: 18px;
+  }
+
+  .service-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .service-card {
+    min-height: 116px;
+    padding: 20px 18px;
+  }
+
+  .duration-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .date-grid {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .time-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .summary,
+  .price-panel,
+  .booking-card,
+  .empty {
+    border-radius: 18px;
+  }
+
+  .summary {
+    padding: 26px 28px;
+  }
+
+  .price-panel {
+    padding: 28px;
+  }
+
+  form {
+    max-width: 760px;
+  }
+
+  .main-navigation {
+    margin-top: 14px !important;
+    padding-top: 8px;
+  }
+
+  .main-navigation button {
+    min-height: 58px;
+    font-size: 12px;
+  }
+
+  .main-navigation button > span {
+    font-size: 24px;
+  }
+
+  .krug-confirm {
+    width: min(460px, calc(100vw - 48px));
+  }
+}
+
+@media (min-width: 1180px) {
+  #app[data-screen="home"] .screen-content {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(420px, .95fr);
+    column-gap: 36px;
+    align-content: start;
+  }
+
+  #app[data-screen="home"] .home-userbar,
+  #app[data-screen="home"] .home-bonus,
+  #app[data-screen="home"] .home-next {
+    grid-column: 1 / -1;
+  }
+
+  #app[data-screen="home"] .home-hero {
+    grid-column: 1;
+  }
+
+  #app[data-screen="home"] .home-services {
+    grid-column: 2;
+    align-self: start;
+    padding-top: 12px;
+  }
+
+  #app[data-screen="home"] .home-services .quick-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 374px) {
   .duration-grid {
     gap: 7px;
