@@ -1,131 +1,248 @@
-/* Replace this adapter with HTTP calls in 0.2; UI only uses the async API. */
+/* Real Mini App data adapter. Supabase is authoritative through the KRUG Vercel API. */
 window.KrugData = (() => {
   const B = window.KrugBooking;
-  const STORAGE_KEY = 'krug_mini_app_bookings_v1';
-  const CLIENT_ID = 'krug-mock-client';
-  const tiers = values => values.flatMap((price, i) => price === null ? [] : [{ durationHours: i + 1, totalPrice: price }]);
-  const services = [
-    { id: 'recording', name: 'Запись', description: 'Запись звука в студии. Запись со сведением — отдельная услуга.', pricingType: 'hourly', priceTiers: tiers([1200,2400,3600,4800,6000,7200,8400,9600]), active: true },
-    { id: 'morning', name: 'Запись утром', description: 'Архивная услуга. Только для истории записей.', pricingType: 'hourly', priceTiers: tiers([1000,null,2800,3600,4400,5200,6000,6800]), legacyOnly: true, active: true },
-    { id: 'recording-mix', minDurationHours: 2, name: 'Запись + сведение', description: 'Запись звука и сведение в одном формате.', pricingType: 'hourly', priceTiers: tiers([1800,3600,4800,6000,7200,8400,9600,10800]), active: true },
-    { id: 'rental', name: 'Аренда', description: 'Студия для твоей самостоятельной работы', pricingType: 'hourly', priceTiers: tiers([1000,null,2800,3600,4400,5100,5800,6500]), active: true }
-  ];
-  for (const service of services) Object.assign(service, { publicVisible: service.id !== 'morning', publicCategory: 'primary', publicName: service.name, publicDescription: service.description, price: null, duration: null, defaultDuration: null });
-  // Values from CRM migrationServiceCatalog; minimum prices remain estimates.
-  services.push(...[
-    ['studio-mixing', 'Сведение на студии', 4000, 2, 'minimum'],
-    ['studio-beatmaking', 'Написание бита на студии', 5000, 1, 'minimum'],
-    ['studio-mix-master', 'Сведение + мастер на студии', 3000, null, 'fixed']
-  ].map(([id,name,price,duration,pricingType]) => ({id,name,publicName:name,description:'Работа в студии КРУГ.',publicDescription:'Работа в студии КРУГ.',price,pricingType,duration,defaultDuration:duration,defaultDurationHours:duration,active:true,publicVisible:true,publicCategory:'other'})));
-  for (const service of services.filter(s => s.publicCategory === 'other')) Object.assign(service, {minDurationHours:2,selectDuration:true,defaultDurationHours:null,defaultDuration:null,duration:null});
-  const rentalPackages = [
-    {id:'rental-day',name:'Аренда · 12 часов · День',price:9000,fixedStart:'10:00'},
-    {id:'rental-night',name:'Аренда · 12 часов · Ночь',price:7500,fixedStart:'22:00'}
-  ].map(s=>({...s,pricingType:'fixed',defaultDurationHours:12,active:true,publicVisible:false,isRentalPackage:true}));
-  services.push(...rentalPackages);
-  services.find(s=>s.id==='rental').packages = rentalPackages;
-  // Retain the legacy service for existing records; expose only one recording choice.
-  services.find(s => s.id === 'recording').morningPricing = {
-    startMinute: 9 * 60, endMinute: 15 * 60,
-    hourlyRate: 1000, regularHourlyRate: 1200
-  };
-  services.find(s => s.id === 'recording').description = 'Каждый час с 09:00 до 15:00 — 1 000 ₽. После 15:00 — 1 200 ₽. Стоимость складывается по времени сессии.';
-  function readBookings() {
+  const API_BASE = String(window.KrugConfig?.API_BASE || '').replace(/\/$/, '');
+  const BOOKING_CACHE_KEY = 'krug_mini_booking_cache_v2';
+  const MAX_CAPABILITIES = 50;
+  const availabilityCache = new Map();
+  let servicesCache = null;
+
+  function apiUrl(path) {
+    if (!API_BASE) throw new Error('Сервис КРУГ временно недоступен.');
+    return `${API_BASE}${path}`;
+  }
+
+  async function request(path, options = {}) {
+    let response;
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw === null) return [];
-      const rows = JSON.parse(raw);
-      if (!Array.isArray(rows) || rows.some(b => !b || typeof b.id !== 'string' || typeof b.clientId !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(b.date) || !/^\d{2}:\d{2}$/.test(b.startTime) || !Number.isFinite(b.durationHours) || b.durationHours <= 0)) throw new Error();
-      return rows;
+      response = await fetch(apiUrl(path), options);
     } catch {
-      throw new Error('Не удалось открыть твои записи. Попробуй ещё раз. Сохранённые заявки не изменены.');
+      throw Object.assign(new Error('Не удалось связаться со студией. Проверь интернет и попробуй ещё раз.'), { code: 'NETWORK_ERROR' });
     }
+
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.ok) {
+      const error = new Error(result.message || 'Сервис КРУГ временно недоступен. Попробуй ещё раз.');
+      error.code = result.error || `HTTP_${response.status}`;
+      error.status = response.status;
+      throw error;
+    }
+    return result;
   }
-  const getServices = async () => structuredClone(services.filter(s => s.active && s.publicVisible));
+
+  function normalizeService(service) {
+    const row = structuredClone(service);
+    row.priceTiers = (row.priceTiers || [])
+      .map(tier => ({ ...tier, durationHours: Number(tier.durationHours), totalPrice: Number(tier.totalPrice) }))
+      .sort((a, b) => a.durationHours - b.durationHours || a.totalPrice - b.totalPrice);
+    row.minDurationHours = row.minDurationHours == null ? null : Number(row.minDurationHours);
+    row.defaultDurationHours = row.defaultDurationHours == null ? null : Number(row.defaultDurationHours);
+    row.isRentalPackage = !!row.isRentalPackage || row.publicCategory === 'rental_package';
+
+    if (row.isRentalPackage) {
+      row.selectDuration = false;
+    } else if (row.pricingType === 'hourly') {
+      const hasDynamicRule = Number.isFinite(Number(row.pricingRules?.hourlyRate)) || Number.isFinite(Number(row.pricingRules?.regular?.extraHour));
+      // Without a server-supplied extrapolation rule only explicit package tiers are selectable.
+      row.selectDuration = hasDynamicRule;
+    } else if (row.pricingType === 'minimum') {
+      row.selectDuration = true;
+    }
+
+    return row;
+  }
+
+  async function getServices({ force = false } = {}) {
+    if (servicesCache && !force) return structuredClone(servicesCache);
+    const result = await request('/api/services');
+    servicesCache = (result.services || []).map(normalizeService);
+    return structuredClone(servicesCache);
+  }
+
   async function getService(id) {
-    const service = services.find(s => s.id === id && s.active);
+    const services = await getServices();
+    const service = services.find(item => item.id === id && item.active !== false);
     if (!service) throw new Error('Эта услуга сейчас недоступна. Выбери другую.');
-    return structuredClone(service);
+    return service;
   }
-  async function getAvailability(date) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < B.today() || date > B.addDays(B.today(), 20)) return { date, closed: true, busy: [] };
-    const day = new Date(`${date}T12:00:00Z`).getUTCDay();
-    // One studio, shared busy intervals. Sundays are closed in this mock.
-    const busy = [1,2,4].includes(day) ? [] : day % 2 === 0 ? [{ start: 13 * 60, end: 15 * 60 }] : [{ start: 17 * 60, end: 19 * 60 }];
-    for (const booking of readBookings()) {
-      if (booking.status === 'cancelled') continue;
-      const offset = (Date.parse(booking.date+'T00:00:00Z')-Date.parse(date+'T00:00:00Z'))/60000;
-      const start = offset+B.toMinutes(booking.startTime), end=start+booking.durationHours*60;
-      if (start < 1440 && end > 0) busy.push({start:Math.max(0,start),end:Math.min(1440,end)});
-    }
-    return { date, open: 9 * 60, close: 23 * 60, closed: day === 0, busy };
+
+  function availabilityKey(date, durationHours, serviceId) {
+    return `${date}|${Number(durationHours)}|${serviceId}`;
   }
+
+  async function getAvailability(date, durationHours, serviceId, { force = false } = {}) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) return { date, closed: true, slots: [] };
+    const duration = Number(durationHours);
+    if (!Number.isFinite(duration) || duration <= 0 || !serviceId) return { date, closed: true, slots: [] };
+
+    const key = availabilityKey(date, duration, serviceId);
+    const cached = availabilityCache.get(key);
+    if (!force && cached && Date.now() - cached.at < 15000) return structuredClone(cached.value);
+
+    const params = new URLSearchParams({ date, durationHours: String(duration), serviceId });
+    const result = await request(`/api/availability?${params}`);
+    const availability = result.availability || { date, closed: true, slots: [] };
+    availability.slots = Array.isArray(availability.slots) ? availability.slots : [];
+    availabilityCache.set(key, { at: Date.now(), value: availability });
+    return structuredClone(availability);
+  }
+
   async function getAvailableSlots(date, durationHours, serviceId) {
-    const selected = serviceId ? await getService(serviceId) : null;
-    if (selected?.legacyOnly) return [];
-    if (selected?.isRentalPackage) {
-      if (durationHours !== 12 || new Date(date+'T'+selected.fixedStart+':00+03:00') <= new Date()) return [];
-      const start=B.toMinutes(selected.fixedStart), end=start+720;
-      for (let offset=0; offset<=Math.floor((end-1)/1440); offset++) {
-        const day=await getAvailability(B.addDays(date,offset));
-        const from=Math.max(0,start-offset*1440), to=Math.min(1440,end-offset*1440);
-        if(day.closed || day.busy.some(b=>from<b.end && to>b.start)) return [];
-      }
-      return [selected.fixedStart];
+    const service = await getService(serviceId);
+    if (service.legacyOnly || !B.canBookDuration(service, Number(durationHours))) return [];
+    const availability = await getAvailability(date, durationHours, serviceId);
+    return availability.closed ? [] : [...availability.slots];
+  }
+
+  function readCache() {
+    try {
+      const raw = localStorage.getItem(BOOKING_CACHE_KEY);
+      if (!raw) return [];
+      const rows = JSON.parse(raw);
+      return Array.isArray(rows) ? rows.filter(row => row && typeof row.requestId === 'string') : [];
+    } catch {
+      return [];
     }
-    if (selected?.minDurationHours && durationHours < selected.minDurationHours) return [];
-    let slots = B.availableSlots(await getAvailability(date), durationHours);
-    return slots;
   }
+
+  function writeCache(rows) {
+    const compact = [...rows]
+      .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
+      .slice(0, MAX_CAPABILITIES);
+    localStorage.setItem(BOOKING_CACHE_KEY, JSON.stringify(compact));
+  }
+
+  function cacheBooking(booking) {
+    const rows = readCache();
+    const index = rows.findIndex(row => row.requestId === booking.requestId);
+    if (index >= 0) rows[index] = { ...rows[index], ...booking };
+    else rows.push(booking);
+    writeCache(rows);
+  }
+
+  function localForRequest(requestId) {
+    return readCache().find(row => row.requestId === requestId) || null;
+  }
+
+  function mergeRemoteBooking(remote, local = null) {
+    const durationHours = Number(remote.durationHours);
+    return {
+      ...(local || {}),
+      ...remote,
+      durationHours,
+      price: Number(remote.price),
+      amountDue: Number(remote.amountDue ?? remote.price),
+      client: local?.client || null,
+      comment: local?.comment || '',
+      priceSnapshot: local?.priceSnapshot ? { ...local.priceSnapshot, totalPrice: Number(remote.price) } : null,
+      useBonuses: false,
+      bonusSpent: 0,
+      bonusEarned: Number(local?.bonusEarned || 0),
+      paymentMode: 'on_site_only'
+    };
+  }
+
+  function invalidateAvailability() {
+    availabilityCache.clear();
+  }
+
   async function createBooking(data) {
-    // Serializes cooperating tabs where Web Locks is available. A real server must
-    // enforce uniqueness and interval conflicts transactionally in 0.2.
-    const save = async () => {
-      if ((await getService(data.serviceId)).legacyOnly) throw new Error('Архивная услуга недоступна для новых записей. Выбери «Запись».');
-      const rows = readBookings();
-      const existing = rows.find(b => b.requestId === data.requestId && b.clientId === CLIENT_ID);
-      if (existing) return structuredClone(existing);
-      const service = await getService(data.serviceId);
-      const durationHours = B.durationFor(service, data.durationHours);
-      if (service.isRentalPackage && data.startTime !== service.fixedStart) throw new Error('Время пакета фиксировано.');
-      if (service.minDurationHours && durationHours < service.minDurationHours) throw new Error('Минимальная длительность этой услуги — 2 часа.');
-      if (!Number.isFinite(durationHours) || durationHours <= 0) throw new Error('Длительность уточняется. Онлайн-запись пока недоступна.');
-      const priceSnapshot = { ...B.quoteFor(service, durationHours, data.startTime), serviceId: service.id, date: data.date, pricingType: service.pricingType, isEstimate: service.pricingType === 'minimum' };
-      const price = priceSnapshot.totalPrice;
-      const client = { name: String(data.client?.name || '').trim(), phone: String(data.client?.phone || '').trim(), telegram: String(data.client?.telegram || '').trim() };
-      const fields = B.validateClient(client);
-      if (Object.keys(fields).length) throw Object.assign(new Error('Проверь выделенные поля.'), { fields });
-      if (!(await getAvailableSlots(data.date, durationHours, service.id)).includes(data.startTime)) throw Object.assign(new Error('Это время уже заняли. Выбери другое время.'), { code: 'SLOT_UNAVAILABLE' });
-      const bonusQuote=data.useBonuses ? await window.KrugLoyalty.getRedemptionQuote(price,true) : {applied:0,payable:price};
-      const booking = { useBonuses:!!data.useBonuses, bonusSpent:bonusQuote.applied, amountDue:bonusQuote.payable, bonusEarned:0, id: crypto.randomUUID(), requestId: data.requestId || crypto.randomUUID(), clientId: CLIENT_ID, serviceId: service.id, serviceName: service.name, durationHours, date: data.date, startTime: data.startTime, price, priceSnapshot, client, comment: String(data.comment || '').trim().slice(0, 1000), status: 'request', createdAt: new Date().toISOString() };
-      try { localStorage.setItem(STORAGE_KEY, JSON.stringify([...rows, booking])); }
-      catch { throw new Error('Не удалось сохранить заявку на устройстве. Попробуй ещё раз.'); }
-      return structuredClone(booking);
+    const service = await getService(data.serviceId);
+    const durationHours = B.durationFor(service, data.durationHours);
+    if (!B.canBookDuration(service, durationHours)) throw new Error('Эта длительность недоступна. Выбери другую.');
+
+    const client = {
+      name: String(data.client?.name || '').trim(),
+      phone: String(data.client?.phone || '').trim(),
+      telegram: String(data.client?.telegram || '').trim()
     };
-    return navigator.locks?.request ? navigator.locks.request('krug-mini-booking', save) : save();
+    const fields = B.validateClient(client);
+    if (Object.keys(fields).length) throw Object.assign(new Error('Проверь выделенные поля.'), { fields });
+
+    const telegramUserId = window.KrugTelegram?.getTelegramUser?.()?.id || null;
+    const requestId = data.requestId || crypto.randomUUID();
+    const comment = String(data.comment || '').trim().slice(0, 1000);
+    const localQuote = B.quoteFor(service, durationHours, data.startTime);
+
+    const result = await request('/api/bookings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        requestId,
+        serviceId: service.id,
+        date: data.date,
+        startTime: data.startTime,
+        durationHours,
+        client: { ...client, telegramUserId },
+        comment
+      })
+    });
+
+    const remote = result.booking || {};
+    const booking = mergeRemoteBooking(remote, {
+      requestId,
+      client,
+      comment,
+      priceSnapshot: {
+        ...localQuote,
+        totalPrice: Number(remote.price ?? localQuote.totalPrice),
+        serviceId: service.id,
+        date: data.date,
+        pricingType: service.pricingType,
+        isEstimate: service.pricingType === 'minimum'
+      }
+    });
+
+    cacheBooking(booking);
+    invalidateAvailability();
+    return structuredClone(booking);
   }
+
+  async function getMyBookings() {
+    const localRows = readCache();
+    const requestIds = [...new Set(localRows.map(row => row.requestId))].slice(0, MAX_CAPABILITIES);
+    if (!requestIds.length) return [];
+
+    try {
+      const result = await request('/api/bookings/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requestIds })
+      });
+      const remoteRows = Array.isArray(result.bookings) ? result.bookings : [];
+      const merged = remoteRows.map(remote => mergeRemoteBooking(remote, localRows.find(local => local.requestId === remote.requestId)));
+      writeCache(merged);
+      return structuredClone(merged.sort((a, b) => `${b.date}${b.startTime}`.localeCompare(`${a.date}${a.startTime}`)));
+    } catch (error) {
+      // Cached snapshots keep the account screen usable during a short outage.
+      if (localRows.length) return structuredClone(localRows.sort((a, b) => `${b.date}${b.startTime}`.localeCompare(`${a.date}${a.startTime}`)));
+      throw error;
+    }
+  }
+
   async function cancelBooking(id) {
-    const update=async()=>{
-      const rows=readBookings(), row=rows.find(b=>b.id===id && b.clientId===CLIENT_ID);
-      if(!row)throw new Error('Запись не найдена.');
-      if(row.status==='cancelled')return structuredClone(row);
-      if(!['request','confirmed'].includes(row.status))throw new Error('Эту запись уже нельзя отменить.');
-      const now=new Date();row.status='cancelled';row.cancelledAt=now.toISOString();
-      row.cancelledAfterStart=now.getTime()>=new Date(row.date+'T'+row.startTime+':00+03:00').getTime();
-      localStorage.setItem(STORAGE_KEY,JSON.stringify(rows));return structuredClone(row);
-    };
-    return navigator.locks?.request ? navigator.locks.request('krug-mini-booking',update) : update();
+    const rows = readCache();
+    const local = rows.find(row => row.id === id || row.requestId === id);
+    if (!local?.requestId) throw new Error('Запись не найдена.');
+
+    const result = await request('/api/bookings/cancel', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requestId: local.requestId })
+    });
+
+    const booking = mergeRemoteBooking({ ...local, ...(result.booking || {}) }, local);
+    cacheBooking(booking);
+    invalidateAvailability();
+    return structuredClone(booking);
   }
-  // Local adapter event for a paid, finished session. No payment UI or real charge.
-  async function completePaidBooking(id){
-    const update=async()=>{const rows=readBookings(),row=rows.find(b=>b.id===id && b.clientId===CLIENT_ID);
-      if(!row)throw new Error('Запись не найдена.');if(row.status==='cancelled')throw new Error('Отменённую запись нельзя завершить.');
-      if(row.paidCompletedAt)return structuredClone(row);
-      const end=new Date(row.date+'T'+row.startTime+':00+03:00').getTime()+row.durationHours*3600000;if(Date.now()<end)throw new Error('Сессия ещё не завершилась.');
-      row.status='completed';row.paymentStatus='paid';row.paidCompletedAt=new Date().toISOString();row.bonusEarned=row.useBonuses?0:Math.floor(row.price*.1);
-      localStorage.setItem(STORAGE_KEY,JSON.stringify(rows));return structuredClone(row);};
-    return navigator.locks?.request?navigator.locks.request('krug-mini-booking',update):update();
+
+  async function completePaidBooking() {
+    throw new Error('Оплата и завершение сессии фиксируются сотрудником на студии.');
   }
-  const getMyBookings = async () => structuredClone(readBookings().filter(b => b.clientId === CLIENT_ID).sort((a, b) => `${b.date}${b.startTime}`.localeCompare(`${a.date}${a.startTime}`)));
-  return { getServices, getService, getAvailability, getAvailableSlots, createBooking, getMyBookings, cancelBooking, completePaidBooking };
+
+  return {
+    getServices, getService, getAvailability, getAvailableSlots,
+    createBooking, getMyBookings, cancelBooking, completePaidBooking
+  };
 })();
