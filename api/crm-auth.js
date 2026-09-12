@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('node:crypto');
 const { supabaseServer } = require('./_lib/supabase-server');
 const { readJsonBody, apiError } = require('./_lib/http');
 
@@ -16,9 +17,18 @@ async function rpc(name, payload) {
   return supabaseServer(`rpc/${name}`, { method: 'POST', body: JSON.stringify(payload) });
 }
 
+async function table(path, method, body) {
+  return supabaseServer(path, {
+    method,
+    headers: { Prefer: 'return=representation' },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) })
+  });
+}
+
 function mapError(error) {
   const message = String(error?.message || error?.details?.message || '');
   if (message.includes('SUPABASE_SERVER_SECRET_REQUIRED')) return [503, 'SERVER_SECRET_REQUIRED', 'Серверная авторизация CRM ещё не настроена.'];
+  if (message.includes('ADMIN_UNAUTHORIZED')) return [401, 'BOOTSTRAP_UNAUTHORIZED', 'Неверный ключ управления Mini App.'];
   if (message.includes('CRM_AUTH_INVALID')) return [401, 'CRM_AUTH_INVALID', 'Неверный логин или пароль.'];
   if (message.includes('CRM_SESSION_INVALID')) return [401, 'CRM_SESSION_INVALID', 'Сессия истекла. Войди снова.'];
   if (message.includes('CRM_PASSWORD_WEAK')) return [400, 'CRM_PASSWORD_WEAK', 'Пароль должен быть не короче 10 символов.'];
@@ -32,6 +42,48 @@ function mapError(error) {
   if (message.includes('CRM_OWNER_DELETE')) return [409, 'CRM_OWNER_DELETE', 'Владельца нельзя удалить.'];
   if (message.includes('CRM_FORBIDDEN')) return [403, 'CRM_FORBIDDEN', 'Недостаточно прав.'];
   return [502, 'CRM_AUTH_UNAVAILABLE', 'Авторизация CRM временно недоступна.'];
+}
+
+async function bootstrapOwner(adminToken) {
+  // Reuse the already deployed, server-side Mini App admin authority. The key
+  // is never persisted by this endpoint and never becomes a CRM session token.
+  await rpc('krug_admin_app_overview', { p_token: adminToken });
+  let activated = false;
+  try {
+    const userRows = await table('crm_staff_users?user_id=eq.u1', 'PATCH', {
+      active: true,
+      name: 'AE XL',
+      role: 'owner',
+      must_change_password: true,
+      updated_at: new Date().toISOString()
+    });
+    const user = Array.isArray(userRows) ? userRows[0] : null;
+    if (!user) throw new Error('CRM_STAFF_NOT_FOUND');
+    activated = true;
+
+    await table('crm_staff_sessions?user_id=eq.u1', 'DELETE');
+    const sessionRows = await table('crm_staff_sessions', 'POST', { user_id: 'u1' });
+    const session = Array.isArray(sessionRows) ? sessionRows[0] : null;
+    if (!session?.token) throw new Error('CRM_SESSION_INVALID');
+
+    // Replace the old public demo password immediately with an unknowable server
+    // secret, then mark rotation required so the UI asks the owner for a new one.
+    const randomPassword = crypto.randomBytes(36).toString('base64url');
+    await rpc('krug_crm_change_password', { p_token: session.token, p_password: randomPassword });
+    await table('crm_staff_users?user_id=eq.u1', 'PATCH', { must_change_password: true, updated_at: new Date().toISOString() });
+
+    return {
+      token: session.token,
+      expiresAt: session.expires_at,
+      user: { id: 'u1', name: 'AE XL', login: user.login || 'admin', role: 'owner', mustChangePassword: true }
+    };
+  } catch (error) {
+    if (activated) {
+      await table('crm_staff_users?user_id=eq.u1', 'PATCH', { active: false, updated_at: new Date().toISOString() }).catch(() => {});
+      await table('crm_staff_sessions?user_id=eq.u1', 'DELETE').catch(() => {});
+    }
+    throw error;
+  }
 }
 
 module.exports = async function handler(req, res) {
@@ -50,6 +102,10 @@ module.exports = async function handler(req, res) {
       const password = String(body.password || '');
       if (!login || !password || login.length > 120 || password.length > 300) return apiError(res, 400, 'INVALID_CREDENTIALS');
       data = await rpc('krug_crm_login', { p_login: login, p_password: password });
+    } else if (action === 'bootstrapOwner') {
+      const adminToken = String(body.adminToken || '').trim();
+      if (adminToken.length < 12 || adminToken.length > 500) return apiError(res, 400, 'INVALID_BOOTSTRAP_TOKEN');
+      data = await bootstrapOwner(adminToken);
     } else {
       const token = bearer(req);
       if (!UUID_RE.test(token)) return apiError(res, 401, 'CRM_SESSION_REQUIRED', 'Войди в CRM.');
