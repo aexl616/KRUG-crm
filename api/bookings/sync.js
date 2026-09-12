@@ -4,8 +4,6 @@ const { supabaseServer } = require('../_lib/supabase-server');
 const { applyPublicCors, readJsonBody, apiError } = require('../_lib/http');
 const { resolveTelegramUser, mapTelegramAuthError } = require('../_lib/telegram-auth');
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
 module.exports = async function handler(req, res) {
   if (applyPublicCors(req, res)) return;
   if (req.method !== 'POST') {
@@ -16,17 +14,18 @@ module.exports = async function handler(req, res) {
   const body = readJsonBody(req);
   if (!body) return apiError(res, 400, 'INVALID_JSON');
 
-  const requestIds = Array.isArray(body.requestIds)
-    ? [...new Set(body.requestIds.map(value => String(value)).filter(value => UUID_RE.test(value)))].slice(0, 50)
-    : [];
-  if (!requestIds.length) return res.status(200).json({ ok: true, bookings: [] });
-
   try {
-    resolveTelegramUser(req);
-    const bookings = await supabaseServer('rpc/krug_sync_bookings', {
+    const telegramUser = resolveTelegramUser(req);
+    const telegramUserId = Number(telegramUser?.id);
+    if (!Number.isSafeInteger(telegramUserId) || telegramUserId <= 0) {
+      return apiError(res, 401, 'TELEGRAM_AUTH_REQUIRED', 'Открой Mini App через Telegram и попробуй ещё раз.');
+    }
+
+    const bookings = await supabaseServer('rpc/krug_list_bookings_for_telegram', {
       method: 'POST',
-      body: JSON.stringify({ p_request_ids: requestIds })
+      body: JSON.stringify({ p_telegram_user_id: telegramUserId })
     });
+
     return res.status(200).json({ ok: true, bookings: Array.isArray(bookings) ? bookings : [] });
   } catch (error) {
     const auth = mapTelegramAuthError(error);
