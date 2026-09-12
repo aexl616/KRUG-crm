@@ -81,7 +81,7 @@ test('staff scheduling SQL: migrations, schedules, qualification, room, assignme
   await assert.rejects(db.query('update public.crm_shared_state set data=$1',[JSON.stringify(crm)]),/SLOT_UNAVAILABLE/);
   await db.exec("update public.crm_shared_state set data='{}'");
   await db.exec("update public.staff_booking_profiles set published=false");
-  a=await availability();assert.ok(a.slots.length);assert.deepEqual(a.staffBySlot['10:00'].staff,[]);
+  a=await availability();assert.ok(a.slots.length);assert.equal(Object.values(a.staffBySlot).every(choice=>choice.staff.length===0),true);
   await db.exec("update public.services set staff_selection='required' where id='recording'");
   assert.equal((await availability()).slots.length,0);
   await db.exec("update public.services set staff_selection='optional' where id='recording'");
