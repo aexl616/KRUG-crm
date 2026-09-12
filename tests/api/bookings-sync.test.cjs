@@ -2,10 +2,10 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const path=require('node:path');
 
-const syncPath=path.resolve(__dirname,'../bookings/sync.js');
-const supabasePath=path.resolve(__dirname,'../_lib/supabase-server.js');
-const httpPath=path.resolve(__dirname,'../_lib/http.js');
-const authPath=path.resolve(__dirname,'../_lib/telegram-auth.js');
+const syncPath=path.resolve(__dirname,'../../api/bookings/sync.js');
+const supabasePath=path.resolve(__dirname,'../../api/_lib/supabase-server.js');
+const httpPath=path.resolve(__dirname,'../../api/_lib/http.js');
+const authPath=path.resolve(__dirname,'../../api/_lib/telegram-auth.js');
 
 function loadHandler({telegramUser={id:123},supabaseReply=[]}={}){
   const calls=[];
