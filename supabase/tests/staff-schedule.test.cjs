@@ -47,7 +47,8 @@ test('staff scheduling SQL: migrations, schedules, qualification, room, assignme
   const availability=()=>value('select public.krug_available_slots($1,1,$2)',[date,'recording']);
   let a=await availability();assert.equal(a.staffBySlot['10:00'].defaultStaffId,'u1');
   assert.deepEqual(a.staffBySlot['10:00'].staff.map(s=>s.id),['u1','u2']);
-  assert.equal(a.slots.includes('18:00'),false);
+  assert.equal(a.slots.includes('18:00'),true);
+  assert.deepEqual(a.staffBySlot['18:00'].staff,[]);
   await db.exec("delete from public.staff_service_qualifications where staff_id='u1'");
   assert.equal((await availability()).staffBySlot['10:00'].defaultStaffId,'u2');
   await db.exec("insert into public.staff_service_qualifications values('u1','recording')");
@@ -80,7 +81,10 @@ test('staff scheduling SQL: migrations, schedules, qualification, room, assignme
   await assert.rejects(db.query('update public.crm_shared_state set data=$1',[JSON.stringify(crm)]),/SLOT_UNAVAILABLE/);
   await db.exec("update public.crm_shared_state set data='{}'");
   await db.exec("update public.staff_booking_profiles set published=false");
+  a=await availability();assert.ok(a.slots.length);assert.deepEqual(a.staffBySlot['10:00'].staff,[]);
+  await db.exec("update public.services set staff_selection='required' where id='recording'");
   assert.equal((await availability()).slots.length,0);
+  await db.exec("update public.services set staff_selection='optional' where id='recording'");
   const rental=await value('select public.krug_available_slots($1,1,$2)',[date,'rental']);
   assert.equal(rental.staffSelection,'none');assert.ok(rental.slots.length);
   for(const role of ['anon','authenticated']) {
@@ -89,6 +93,6 @@ test('staff scheduling SQL: migrations, schedules, qualification, room, assignme
   }
   assert.equal(await value("select has_function_privilege('service_role','public.krug_create_booking_v3(uuid,text,date,time,numeric,text,text,text,bigint,text,boolean)','execute')"),false);
   assert.equal(await value("select bool_and(relrowsecurity) from pg_class where oid in ('public.staff_booking_profiles'::regclass,'public.staff_service_qualifications'::regclass)"),true);
-  console.log('PASS SQL: migration chain, overnight/leave, qualification, assignment, retries, CRM room and grants');
+  console.log('PASS SQL: migration chain, overnight/leave, qualification, optional/required assignment, retries, CRM room and grants');
  } finally {await db.close();}
 });
