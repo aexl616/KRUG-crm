@@ -38,6 +38,7 @@
     } else {
       user.name = remote.name || user.name;
       user.login = remote.login || user.login;
+      user.password = '';
       user.role = remote.role || user.role;
       user.position = rolePosition(user.role);
       user.active = true;
@@ -85,6 +86,22 @@
     node.hidden = !message;
   }
 
+  function authStyle() {
+    if (document.getElementById('crmServerAuthStyle')) return;
+    const style = document.createElement('style');
+    style.id = 'crmServerAuthStyle';
+    style.textContent = `
+      #crmPasswordRotateDialog,#crmOwnerBootstrapDialog{width:min(440px,calc(100vw - 32px));border:1px solid #3a3a3a;border-radius:18px;background:#171717;color:#f2f2f2;padding:0;box-shadow:0 24px 80px #000b}
+      #crmPasswordRotateDialog::backdrop,#crmOwnerBootstrapDialog::backdrop{background:#000c;backdrop-filter:blur(6px)}
+      .crm-password-card{padding:24px;display:grid;gap:16px}.crm-password-card h2{margin:0;font-size:24px}.crm-password-card p{margin:0;color:#9a9a9a;line-height:1.5}
+      .crm-password-card label{display:grid;gap:8px;font-size:13px;color:#b7b7b7}.crm-password-card input{width:100%;min-height:48px;border:1px solid #383838;border-radius:12px;background:#111;color:#fff;padding:0 14px}
+      .crm-password-error{min-height:20px;color:#ff9476;font-size:13px}.crm-password-card .btn{width:100%}
+      .crm-bootstrap-link{width:100%;margin-top:8px;background:transparent;color:#8d8d8d;font-size:12px;text-decoration:underline;text-underline-offset:3px}
+      .crm-bootstrap-cancel{width:100%;min-height:42px;background:transparent;color:#aaa}
+    `;
+    document.head.append(style);
+  }
+
   function hardenLoginForm() {
     if (STATIC_PREVIEW) return;
     const form = document.querySelector('#loginForm');
@@ -98,28 +115,70 @@
     if (password) password.setAttribute('autocomplete', 'current-password');
     const muted = form.querySelector('.muted');
     if (muted) muted.textContent = 'Вход для сотрудников КРУГ.';
+    authStyle();
+    const submit = form.querySelector('[type="submit"]');
+    if (submit && !form.querySelector('[data-crm-bootstrap]')) {
+      const bootstrap = document.createElement('button');
+      bootstrap.type = 'button';
+      bootstrap.className = 'crm-bootstrap-link';
+      bootstrap.dataset.crmBootstrap = 'true';
+      bootstrap.textContent = 'Первичная настройка владельца';
+      submit.insertAdjacentElement('afterend', bootstrap);
+    }
+  }
+
+  function ensureBootstrapDialog() {
+    authStyle();
+    let dialog = document.getElementById('crmOwnerBootstrapDialog');
+    if (dialog) return dialog;
+    dialog = document.createElement('dialog');
+    dialog.id = 'crmOwnerBootstrapDialog';
+    dialog.innerHTML = `
+      <form class="crm-password-card">
+        <div><h2>Первичная настройка</h2><p>Введи ключ управления Mini App. Он нужен один раз, чтобы безопасно перенести владельца на серверную авторизацию.</p></div>
+        <label>Ключ управления<input name="adminToken" type="password" autocomplete="off" required minlength="12" maxlength="500"></label>
+        <div class="crm-password-error" role="alert"></div>
+        <button class="btn" type="submit">Активировать владельца</button>
+        <button class="crm-bootstrap-cancel" type="button" data-bootstrap-cancel>Отмена</button>
+      </form>`;
+    dialog.querySelector('[data-bootstrap-cancel]').addEventListener('click', () => dialog.close());
+    dialog.addEventListener('submit', async event => {
+      event.preventDefault();
+      const form = event.target;
+      const key = String(form.elements.adminToken.value || '').trim();
+      const errorNode = form.querySelector('.crm-password-error');
+      const button = form.querySelector('[type="submit"]');
+      errorNode.textContent = '';
+      button.disabled = true;
+      button.textContent = 'Проверяем…';
+      try {
+        const data = await request('bootstrapOwner', { adminToken: key }, { auth: false });
+        if (!data?.token || !data?.user) throw new Error('Не удалось создать сессию владельца.');
+        sessionStorage.setItem(SESSION_KEY, String(data.token));
+        sessionStorage.setItem(SESSION_USER_KEY, JSON.stringify(data.user));
+        sessionStorage.removeItem(VERSION_KEY);
+        dialog.close();
+        form.reset();
+        await finishLogin(data.user);
+      } catch (error) {
+        errorNode.textContent = error.message || 'Не удалось активировать владельца.';
+      } finally {
+        if (button.isConnected) { button.disabled = false; button.textContent = 'Активировать владельца'; }
+      }
+    });
+    document.body.append(dialog);
+    return dialog;
   }
 
   function ensurePasswordDialog() {
+    authStyle();
     let dialog = document.getElementById('crmPasswordRotateDialog');
     if (dialog) return dialog;
-
-    const style = document.createElement('style');
-    style.textContent = `
-      #crmPasswordRotateDialog{width:min(440px,calc(100vw - 32px));border:1px solid #3a3a3a;border-radius:18px;background:#171717;color:#f2f2f2;padding:0;box-shadow:0 24px 80px #000b}
-      #crmPasswordRotateDialog::backdrop{background:#000c;backdrop-filter:blur(6px)}
-      .crm-password-card{padding:24px;display:grid;gap:16px}
-      .crm-password-card h2{margin:0;font-size:24px}.crm-password-card p{margin:0;color:#9a9a9a;line-height:1.5}
-      .crm-password-card label{display:grid;gap:8px;font-size:13px;color:#b7b7b7}.crm-password-card input{width:100%;min-height:48px;border:1px solid #383838;border-radius:12px;background:#111;color:#fff;padding:0 14px}
-      .crm-password-error{min-height:20px;color:#ff9476;font-size:13px}.crm-password-card .btn{width:100%}
-    `;
-    document.head.append(style);
-
     dialog = document.createElement('dialog');
     dialog.id = 'crmPasswordRotateDialog';
     dialog.innerHTML = `
       <form class="crm-password-card" method="dialog">
-        <div><h2>Смени временный пароль</h2><p>Первый вход использует старый пароль из локальной CRM. Задай новый — он будет храниться только как серверный хеш.</p></div>
+        <div><h2>Задай новый пароль</h2><p>Пароль хранится на сервере только в виде стойкого хеша и больше не сохраняется в localStorage.</p></div>
         <label>Новый пароль<input name="password" type="password" autocomplete="new-password" minlength="10" maxlength="200" required></label>
         <label>Повтори пароль<input name="repeat" type="password" autocomplete="new-password" minlength="10" maxlength="200" required></label>
         <div class="crm-password-error" role="alert"></div>
@@ -155,9 +214,9 @@
           const result = await request('changePassword', { password });
           const nextUser = result?.user || { ...user, mustChangePassword: false };
           sessionStorage.setItem(SESSION_USER_KEY, JSON.stringify(nextUser));
-          dialog.close();
           form.removeEventListener('submit', submit);
           passwordDialogPromise = null;
+          dialog.close();
           resolve(nextUser);
         } catch (error) {
           errorNode.textContent = error.message || 'Не удалось сменить пароль.';
@@ -167,10 +226,7 @@
       };
       form.addEventListener('submit', submit);
       dialog.addEventListener('close', () => {
-        if (user?.mustChangePassword && passwordDialogPromise) {
-          // Closing is normally only possible after a successful change.
-          if (dialog.returnValue === 'cancel') reject(new Error('Смена пароля обязательна.'));
-        }
+        if (user?.mustChangePassword && passwordDialogPromise && dialog.returnValue === 'cancel') reject(new Error('Смена пароля обязательна.'));
       }, { once: true });
     });
     return passwordDialogPromise;
@@ -210,12 +266,8 @@
     sessionStorage.setItem(SESSION_KEY, String(data.token));
     sessionStorage.setItem(SESSION_USER_KEY, JSON.stringify(data.user));
     sessionStorage.removeItem(VERSION_KEY);
-    try {
-      return await finishLogin(data.user);
-    } catch (error) {
-      clearSession();
-      throw error;
-    }
+    try { return await finishLogin(data.user); }
+    catch (error) { clearSession(); throw error; }
   }
 
   async function validateSession() {
@@ -258,13 +310,17 @@
     showLoginError('');
     login(String(data.login || '').trim(), String(data.password || ''))
       .catch(error => showLoginError(error.message || 'Не удалось войти.'))
-      .finally(() => {
-        if (button?.isConnected) { button.disabled = false; button.textContent = button.dataset.originalText || 'Войти'; }
-      });
+      .finally(() => { if (button?.isConnected) { button.disabled = false; button.textContent = button.dataset.originalText || 'Войти'; } });
   }, true);
 
   document.addEventListener('click', event => {
     if (STATIC_PREVIEW) return;
+    const bootstrap = event.target.closest?.('[data-crm-bootstrap]');
+    if (bootstrap) {
+      event.preventDefault();
+      ensureBootstrapDialog().showModal();
+      return;
+    }
     const ownerReturn = event.target.closest?.('[data-action="returnOwner"]');
     if (ownerReturn) {
       event.preventDefault();
@@ -286,13 +342,7 @@
   });
   observer.observe(document.getElementById('app') || document.body, { childList: true, subtree: true });
 
-  window.KrugCrmAuth = {
-    sessionToken,
-    login,
-    validateSession,
-    logout: () => clearSession(),
-    preview: STATIC_PREVIEW
-  };
+  window.KrugCrmAuth = { sessionToken, login, validateSession, logout: () => clearSession(), preview: STATIC_PREVIEW };
 
   hardenLoginForm();
   setTimeout(validateSession, 0);
