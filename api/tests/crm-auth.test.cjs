@@ -8,7 +8,7 @@ const httpPath=path.resolve(__dirname,'../_lib/http.js');
 const session='11111111-1111-4111-8111-111111111111';
 
 function response(){return {statusCode:200,body:null,headers:{},setHeader(name,value){this.headers[name]=value;},status(code){this.statusCode=code;return this;},json(body){this.body=body;return this;}};}
-function load({rpcResult={token:session,user:{id:'u1',name:'AE XL',login:'admin',role:'owner'}},rpcError=null}={}){
+function load({rpcResult={token:session,user:{id:'u1',name:'AE XL',login:'admin',role:'owner',mustChangePassword:true}},rpcError=null}={}){
   const calls=[];for(const p of [handlerPath,supabasePath,httpPath])delete require.cache[p];
   require.cache[supabasePath]={id:supabasePath,filename:supabasePath,loaded:true,exports:{supabaseServer:async(route,options)=>{calls.push({route,body:options?.body?JSON.parse(options.body):null});if(rpcError)throw rpcError;return rpcResult;}}};
   require.cache[httpPath]={id:httpPath,filename:httpPath,loaded:true,exports:{readJsonBody:req=>req.body,apiError:(res,status,error,message)=>res.status(status).json({ok:false,error,message})}};
@@ -31,10 +31,24 @@ test('invalid login is returned as 401 without leaking details',async()=>{
 });
 
 test('session validation uses bearer UUID and session RPC',async()=>{
-  const {handler,calls}=load({rpcResult:{user:{id:'u2',name:'Сотрудник',login:'staff',role:'engineer'}}});const res=response();
+  const {handler,calls}=load({rpcResult:{user:{id:'u2',name:'Сотрудник',login:'staff',role:'engineer',mustChangePassword:false}}});const res=response();
   await handler(req({action:'session'},session),res);
   assert.equal(res.statusCode,200);assert.equal(calls[0].route,'rpc/krug_crm_session_get');
   assert.deepEqual(calls[0].body,{p_token:session});
+});
+
+test('password rotation is session-bound and never accepts a short password',async()=>{
+  {
+    const {handler,calls}=load();const res=response();
+    await handler(req({action:'changePassword',password:'short'},session),res);
+    assert.equal(res.statusCode,400);assert.equal(res.body.error,'CRM_PASSWORD_WEAK');assert.equal(calls.length,0);
+  }
+  {
+    const {handler,calls}=load({rpcResult:{user:{id:'u1',name:'AE XL',login:'admin',role:'owner',mustChangePassword:false}}});const res=response();
+    await handler(req({action:'changePassword',password:'new-secure-password'},session),res);
+    assert.equal(res.statusCode,200);assert.equal(calls[0].route,'rpc/krug_crm_change_password');
+    assert.deepEqual(calls[0].body,{p_token:session,p_password:'new-secure-password'});
+  }
 });
 
 test('logout invalidates the server session',async()=>{
