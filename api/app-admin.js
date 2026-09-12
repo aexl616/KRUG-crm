@@ -61,6 +61,10 @@ module.exports = async function handler(req, res) {
       const bookingId = String(body.bookingId || '');
       if (!UUID_RE.test(bookingId)) return apiError(res, 400, 'INVALID_BOOKING_ID');
       data = await rpc('krug_admin_confirm_booking', { p_token: token, p_booking_id: bookingId });
+    } else if (action === 'startBooking') {
+      const bookingId = String(body.bookingId || '');
+      if (!UUID_RE.test(bookingId)) return apiError(res, 400, 'INVALID_BOOKING_ID');
+      data = await rpc('krug_admin_start_booking', { p_token: token, p_booking_id: bookingId });
     } else if (action === 'settleBooking') {
       const bookingId = String(body.bookingId || '');
       const paidAmount = body.paidAmount == null || body.paidAmount === '' ? null : Number(body.paidAmount);
