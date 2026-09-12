@@ -181,8 +181,8 @@ window.KrugData = (() => {
     const requestId = data.requestId || (data.requestId = crypto.randomUUID());
     if (!UUID_RE.test(requestId)) throw new Error('Не удалось идентифицировать заявку. Начни новую запись.');
     const comment = String(data.comment || '').trim().slice(0, 1000);
-    // Save the capability before sending: sync can recover a committed booking
-    // even if its HTTP response is lost. This is not a locally created booking.
+    // Save the capability before sending so a lost HTTP response can still be retried
+    // with the same idempotency key. Server history no longer depends on this cache.
     cacheBooking({ requestId, client, comment, createdAt: new Date().toISOString() });
 
     const result = await request('/api/bookings', {
@@ -201,7 +201,6 @@ window.KrugData = (() => {
     });
 
     const booking = mergeRemoteBooking(result.booking, { client, comment });
-
     cacheBooking(booking);
     invalidateAvailability();
     invalidateLoyalty();
@@ -210,23 +209,25 @@ window.KrugData = (() => {
 
   async function getMyBookings() {
     const localRows = readCache();
-    const requestIds = [...new Set(localRows.map(row => row.requestId))].slice(0, MAX_CAPABILITIES);
-    if (!requestIds.length) return [];
-    try {
-      const result = await request('/api/bookings/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requestIds })
-      });
-      if (!Array.isArray(result.bookings)) throw new Error('Не удалось загрузить историю записей.');
-      const remoteRows = result.bookings;
-      const merged = remoteRows.map(remote => mergeRemoteBooking(remote, localRows.find(local => local.requestId === remote.requestId)));
-      // Keep request IDs not yet visible to sync (in-flight POST / delayed commit).
-      writeCache([...localRows.filter(local => !merged.some(row => row.requestId === local.requestId)), ...merged]);
-      return structuredClone(merged.sort((a, b) => `${b.date}${b.startTime}`.localeCompare(`${a.date}${a.startTime}`)));
-    } catch (error) {
-      throw error;
-    }
+    const result = await request('/api/bookings/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    if (!Array.isArray(result.bookings)) throw new Error('Не удалось загрузить историю записей.');
+
+    const merged = result.bookings.map(remote =>
+      mergeRemoteBooking(remote, localRows.find(local => local.requestId === remote.requestId))
+    );
+
+    // Keep only unresolved local idempotency keys alongside authoritative server rows.
+    // They are recovery metadata, never offline booking history.
+    const unresolved = localRows.filter(local =>
+      UUID_RE.test(local.requestId) && !local.id && !merged.some(row => row.requestId === local.requestId)
+    );
+    writeCache([...unresolved, ...merged]);
+
+    return structuredClone(merged.sort((a, b) => `${b.date}${b.startTime}`.localeCompare(`${a.date}${a.startTime}`)));
   }
 
   async function cancelBooking(id) {
