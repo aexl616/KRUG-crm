@@ -7,6 +7,7 @@ on:
       - 'api/**'
       - 'apps/miniapp/**'
       - 'supabase/migrations/**'
+      - 'crm-auth.js'
       - 'crm-cloud-sync.js'
       - 'crm-miniapp-sync.js'
       - 'crm-remote-booking-actions.js'
@@ -28,6 +29,7 @@ jobs:
           node-version: '22'
       - name: Check CRM integration scripts
         run: |
+          node --check crm-auth.js
           node --check crm-cloud-sync.js
           node --check crm-miniapp-sync.js
           node --check crm-remote-booking-actions.js
