@@ -2,9 +2,9 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const path=require('node:path');
 
-const handlerPath=path.resolve(__dirname,'../crm-auth.js');
-const supabasePath=path.resolve(__dirname,'../_lib/supabase-server.js');
-const httpPath=path.resolve(__dirname,'../_lib/http.js');
+const handlerPath=path.resolve(__dirname,'../../api/crm-auth.js');
+const supabasePath=path.resolve(__dirname,'../../api/_lib/supabase-server.js');
+const httpPath=path.resolve(__dirname,'../../api/_lib/http.js');
 const session='11111111-1111-4111-8111-111111111111';
 
 function response(){return {statusCode:200,body:null,headers:{},setHeader(name,value){this.headers[name]=value;},status(code){this.statusCode=code;return this;},json(body){this.body=body;return this;}};}
