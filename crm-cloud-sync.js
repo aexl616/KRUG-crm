@@ -9,7 +9,7 @@
   let syncing = false;
   let bootstrapped = false;
   let pushTimer = null;
-  let baseSaveState = typeof saveState === 'function' ? saveState : null;
+  const baseSaveState = typeof saveState === 'function' ? saveState : null;
 
   const clone = value => JSON.parse(JSON.stringify(value));
   const token = () => sessionStorage.getItem(TOKEN_KEY) || '';
@@ -90,7 +90,7 @@
         if (error.code !== 'CRM_STATE_CONFLICT') throw error;
         const latest = await request('get');
         rememberVersion(latest.version);
-        // Server wins on conflicts in 0.10.0. This avoids silent last-write-wins corruption.
+        // Server wins on conflicts in 0.10.0. Explicitly prefer consistency over silent last-write-wins.
         const changed = applySnapshot(latest.data);
         if (changed && baseSaveState) baseSaveState();
         if (changed && typeof render === 'function') render();
@@ -119,6 +119,7 @@
       } else {
         await push();
       }
+      document.dispatchEvent(new CustomEvent('krug:cloud-state', {detail:{direction:'bootstrap',version:cloudVersion,changed:false}}));
     } catch (error) {
       bootstrapped = false;
       console.warn('[KRUG CRM] cloud bootstrap failed', error?.code || error?.message || error);
@@ -133,10 +134,14 @@
     };
   }
 
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) pull().catch(() => {}); });
-  window.addEventListener('storage', event => { if (event.key === TOKEN_KEY) bootstrap(); });
-  document.addEventListener('krug:cloud-sync', () => pull().catch(() => {}));
-  setInterval(() => pull({renderAfter:true}).catch(() => {}), 30000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) (bootstrapped ? pull() : bootstrap()).catch(() => {}); });
+  document.addEventListener('krug:cloud-sync', () => (bootstrapped ? pull() : bootstrap()).catch(() => {}));
+  setInterval(() => {
+    if (!token()) return;
+    (bootstrapped ? pull({renderAfter:true}) : bootstrap()).catch(() => {});
+  }, 30000);
+  // The admin token may be entered after initial page load. Retry bootstrap cheaply until it exists.
+  setInterval(() => { if (!bootstrapped && token()) bootstrap().catch(() => {}); }, 3000);
   setTimeout(bootstrap, 500);
 
   window.KrugCloudState = { pull, push, bootstrap, enabled: () => Boolean(token()), version: () => cloudVersion };
