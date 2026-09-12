@@ -1,4 +1,4 @@
-/* 0.8.2 — screenshot-driven responsive fixes */
+/* 0.8.4 — screenshot-driven responsive fixes */
 
 /* Never let a page-level workspace become wider than the CRM content column. */
 .content,
@@ -12,37 +12,65 @@
   max-width: 100% !important;
 }
 
-/* CALENDAR — keep the period controls inside the viewport at every desktop width. */
+/* CALENDAR — stable title/actions composition instead of a viewport-clipped toolbar. */
 .calendar-page {
   overflow-x: hidden !important;
 }
 .calendar-toolbar {
+  display: grid !important;
+  grid-template-columns: minmax(0,1fr) auto !important;
+  align-items: start !important;
+  gap: 18px !important;
   width: 100% !important;
   min-width: 0 !important;
-  overflow: hidden !important;
+  overflow: visible !important;
 }
 .calendar-toolbar > div:first-child {
+  display: grid !important;
+  gap: 6px !important;
   min-width: 0 !important;
+  align-content: start !important;
 }
-.calendar-toolbar h2,
-.calendar-toolbar p {
+.calendar-toolbar h2 {
+  margin: 0 !important;
   max-width: 100% !important;
+  line-height: 1.08 !important;
+}
+.calendar-toolbar p {
+  margin: 0 !important;
+  max-width: 100% !important;
+  line-height: 1.4 !important;
 }
 .calendar-toolbar .actions {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  gap: 7px !important;
   min-width: 0 !important;
   max-width: 100% !important;
 }
 .calendar-toolbar .actions > * {
+  flex: 0 1 auto !important;
+  width: auto !important;
   min-width: 0 !important;
   max-width: 100% !important;
+  white-space: nowrap !important;
 }
 .calendar-filters {
+  display: grid !important;
+  grid-template-columns: repeat(3,minmax(0,1fr)) !important;
+  align-items: end !important;
+  gap: 10px !important;
+  width: 100% !important;
   min-width: 0 !important;
   max-width: 100% !important;
+  margin-top: 0 !important;
 }
 .calendar-filters > * {
   min-width: 0 !important;
   max-width: 100% !important;
+  width: 100% !important;
 }
 .calendar-workspace,
 .calendar-workspace > * {
@@ -55,22 +83,55 @@
   overflow-x: auto !important;
 }
 
-/* BOOKINGS — filters should reflow instead of pushing the date/status controls off-screen. */
+/* BOOKINGS — title/count is a compact block; filters form one predictable row. */
 .crm-bookings-clean .crm-clean-section {
+  display: grid !important;
+  gap: 14px !important;
   width: 100% !important;
   min-width: 0 !important;
 }
+.crm-bookings-clean .crm-section-head {
+  display: flex !important;
+  align-items: flex-start !important;
+  justify-content: space-between !important;
+  gap: 12px !important;
+  margin: 0 !important;
+}
+.crm-bookings-clean .crm-section-head > div {
+  display: grid !important;
+  gap: 4px !important;
+  min-width: 0 !important;
+}
+.crm-bookings-clean .crm-section-head h2,
+.crm-bookings-clean .crm-section-head p {
+  margin: 0 !important;
+}
 .crm-filterbar {
+  display: grid !important;
+  grid-template-columns: minmax(260px,1.7fr) 180px minmax(180px,1fr) minmax(180px,1fr) minmax(180px,1fr) !important;
+  align-items: end !important;
+  gap: 10px !important;
   width: 100% !important;
   min-width: 0 !important;
+  margin: 0 !important;
 }
 .crm-filterbar > * {
   min-width: 0 !important;
   max-width: 100% !important;
   width: 100% !important;
+  margin: 0 !important;
+}
+.crm-filterbar input,
+.crm-filterbar select {
+  height: 40px !important;
+  min-height: 40px !important;
 }
 .crm-filterbar input[type="date"] {
   min-width: 0 !important;
+}
+.crm-booking-list {
+  min-width: 0 !important;
+  margin: 0 !important;
 }
 
 /* CLIENTS — same rule as bookings: never sacrifice the last filters. */
@@ -84,7 +145,7 @@
   width: 100% !important;
 }
 
-/* SETTINGS / SERVICE CATALOG — compact rows, icon actions, no clipped "Save/Delete" buttons. */
+/* SETTINGS / SERVICE CATALOG — compact rows, icon actions, no clipped Save/Delete buttons. */
 .settings-shell,
 .settings-v2,
 .settings-grid,
@@ -92,8 +153,6 @@
 .settings-shell .two-col {
   min-width: 0 !important;
 }
-
-/* Both the legacy and v0.8 category editors use these data attributes. */
 form[data-service-group-row],
 .krug-category-row {
   display: grid !important;
@@ -108,7 +167,6 @@ form[data-service-group-row] > input,
   min-width: 0 !important;
   width: 100% !important;
 }
-
 form[data-service-group-row] button[data-save-service-group],
 form[data-service-group-row] button[data-delete-service-group],
 .krug-category-actions button {
@@ -134,15 +192,12 @@ form[data-service-group-row] button[data-delete-service-group]::before,
   font-size: 18px;
   line-height: 1;
 }
-
 .krug-category-actions {
   display: grid !important;
   grid-template-columns: 32px 32px !important;
   gap: 5px !important;
   justify-content: end !important;
 }
-
-/* The service catalog should stack before either column becomes cramped. */
 .krug-service-settings,
 .settings-service-layout,
 .service-settings-layout {
@@ -156,32 +211,20 @@ form[data-service-group-row] button[data-delete-service-group]::before,
   max-width: 100% !important;
 }
 
-@media (max-width: 1380px) {
+@media (max-width: 1250px) {
   .calendar-toolbar {
-    grid-template-columns: 1fr !important;
-    align-items: start !important;
-    gap: 10px !important;
+    grid-template-columns: minmax(0,1fr) !important;
+    gap: 11px !important;
   }
   .calendar-toolbar .actions {
-    display: grid !important;
-    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
-    width: 100% !important;
-    justify-content: stretch !important;
+    justify-content: flex-start !important;
   }
-  .calendar-toolbar .actions > .btn,
-  .calendar-toolbar .actions > button {
-    width: 100% !important;
-    white-space: normal !important;
-    line-height: 1.2 !important;
-  }
-
   .crm-filterbar {
-    grid-template-columns: minmax(0, 1fr) 150px minmax(0, 1fr) !important;
+    grid-template-columns: minmax(0,1fr) 180px minmax(0,1fr) !important;
   }
-  .crm-filterbar > input:first-child {
+  .crm-filterbar > :first-child {
     grid-column: 1 / -1 !important;
   }
-
   .krug-service-settings,
   .settings-service-layout,
   .service-settings-layout {
@@ -189,54 +232,50 @@ form[data-service-group-row] button[data-delete-service-group]::before,
   }
 }
 
-@media (max-width: 1100px) {
-  .calendar-toolbar .actions {
+@media (max-width: 900px) {
+  .calendar-filters {
     grid-template-columns: 1fr 1fr !important;
   }
-  .calendar-toolbar .actions > :last-child:nth-child(odd) {
+  .calendar-filters > :last-child:nth-child(odd) {
     grid-column: 1 / -1 !important;
   }
-  .calendar-toolbar h2 {
-    font-size: 16px !important;
-  }
-  .calendar-toolbar p {
-    font-size: 11px !important;
-  }
-
   .crm-filterbar,
   .crm-client-filterbar {
     grid-template-columns: 1fr 1fr !important;
   }
-  .crm-filterbar > input:first-child,
-  .crm-client-filterbar > input:first-child {
+  .crm-filterbar > :first-child,
+  .crm-client-filterbar > :first-child {
     grid-column: 1 / -1 !important;
   }
-  .crm-filterbar > *:last-child:nth-child(odd),
-  .crm-client-filterbar > *:last-child:nth-child(even) {
-    grid-column: 1 / -1 !important;
-  }
-
   .krug-service-group .service-edit-row,
   .service-edit-row {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 84px 96px !important;
+    grid-template-columns: minmax(0,1fr) minmax(0,1fr) 84px 96px !important;
   }
 }
 
-@media (max-width: 760px) {
-  .calendar-toolbar .actions,
+@media (max-width: 620px) {
+  .calendar-toolbar .actions {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    width: 100% !important;
+  }
+  .calendar-toolbar .actions > * {
+    width: 100% !important;
+    white-space: normal !important;
+  }
+  .calendar-filters,
   .crm-filterbar,
   .crm-client-filterbar {
     grid-template-columns: 1fr !important;
   }
-  .calendar-toolbar .actions > *,
+  .calendar-filters > *,
   .crm-filterbar > *,
   .crm-client-filterbar > * {
     grid-column: 1 !important;
   }
-
   form[data-service-group-row],
   .krug-category-row {
-    grid-template-columns: minmax(0, 1fr) 58px 69px !important;
+    grid-template-columns: minmax(0,1fr) 58px 69px !important;
   }
   .krug-service-group .service-edit-row,
   .service-edit-row {
