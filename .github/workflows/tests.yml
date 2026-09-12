@@ -7,6 +7,9 @@ on:
       - 'api/**'
       - 'apps/miniapp/**'
       - 'supabase/migrations/**'
+      - 'crm-miniapp-sync.js'
+      - 'crm-remote-booking-actions.js'
+      - 'index.html'
       - '.github/workflows/tests.yml'
   workflow_dispatch:
 
@@ -22,6 +25,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Check CRM integration scripts
+        run: |
+          node --check crm-miniapp-sync.js
+          node --check crm-remote-booking-actions.js
       - name: Run Mini App tests
         run: node --test apps/miniapp/tests/*.test.cjs
       - name: Run API unit tests
