@@ -6,6 +6,9 @@ window.KrugData = (() => {
   const MAX_CAPABILITIES = 50;
   const availabilityCache = new Map();
   let servicesCache = null;
+  let servicesFetchedAt = 0;
+  let memoryRows = null;
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
   function apiUrl(path) {
     if (!API_BASE) throw new Error('Сервис КРУГ временно недоступен.');
@@ -18,11 +21,15 @@ window.KrugData = (() => {
   }
 
   async function request(path, options = {}) {
+    const headers = telegramHeaders();
+    if (path.startsWith('/api/bookings') && !headers['X-Telegram-Init-Data']) {
+      throw Object.assign(new Error('Открой Mini App через Telegram и попробуй ещё раз.'), { code: 'TELEGRAM_AUTH_REQUIRED' });
+    }
     let response;
     try {
       response = await fetch(apiUrl(path), {
         ...options,
-        headers: { ...telegramHeaders(), ...(options.headers || {}) }
+        headers: { ...headers, ...(options.headers || {}) }
       });
     } catch {
       throw Object.assign(new Error('Не удалось связаться со студией. Проверь интернет и попробуй ещё раз.'), { code: 'NETWORK_ERROR' });
@@ -33,6 +40,8 @@ window.KrugData = (() => {
       const error = new Error(result.message || 'Сервис КРУГ временно недоступен. Попробуй ещё раз.');
       error.code = result.error || `HTTP_${response.status}`;
       error.status = response.status;
+      if (error.code === 'SLOT_UNAVAILABLE') invalidateAvailability();
+      if (['SERVICE_UNAVAILABLE', 'DURATION_UNAVAILABLE'].includes(error.code)) servicesCache = null;
       throw error;
     }
     return result;
@@ -59,9 +68,11 @@ window.KrugData = (() => {
   }
 
   async function getServices({ force = false } = {}) {
-    if (servicesCache && !force) return structuredClone(servicesCache);
+    if (servicesCache && !force && Date.now() - servicesFetchedAt < 60000) return structuredClone(servicesCache);
     const result = await request('/api/services');
-    servicesCache = (result.services || []).map(normalizeService);
+    if (!Array.isArray(result.services)) throw new Error('Не удалось загрузить каталог студии.');
+    servicesCache = result.services.filter(row => row.active !== false && !row.legacyOnly).map(normalizeService);
+    servicesFetchedAt = Date.now();
     return structuredClone(servicesCache);
   }
 
@@ -85,8 +96,8 @@ window.KrugData = (() => {
     if (!force && cached && Date.now() - cached.at < 15000) return structuredClone(cached.value);
     const params = new URLSearchParams({ date, durationHours: String(duration), serviceId });
     const result = await request(`/api/availability?${params}`);
-    const availability = result.availability || { date, closed: true, slots: [] };
-    availability.slots = Array.isArray(availability.slots) ? availability.slots : [];
+    const availability = result.availability;
+    if (!availability || !Array.isArray(availability.slots)) throw new Error('Не удалось загрузить расписание студии.');
     availabilityCache.set(key, { at: Date.now(), value: availability });
     return structuredClone(availability);
   }
@@ -99,11 +110,12 @@ window.KrugData = (() => {
   }
 
   function readCache() {
+    if (memoryRows) return structuredClone(memoryRows);
     try {
       const raw = localStorage.getItem(BOOKING_CACHE_KEY);
       if (!raw) return [];
       const rows = JSON.parse(raw);
-      return Array.isArray(rows) ? rows.filter(row => row && typeof row.requestId === 'string') : [];
+      return Array.isArray(rows) ? rows.filter(row => row && UUID_RE.test(row.requestId)) : [];
     } catch {
       return [];
     }
@@ -113,7 +125,9 @@ window.KrugData = (() => {
     const compact = [...rows]
       .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')))
       .slice(0, MAX_CAPABILITIES);
-    localStorage.setItem(BOOKING_CACHE_KEY, JSON.stringify(compact));
+    memoryRows = structuredClone(compact);
+    // A storage quota failure must never turn a successful server booking into an error.
+    try { localStorage.setItem(BOOKING_CACHE_KEY, JSON.stringify(compact)); } catch {}
   }
 
   function cacheBooking(booking) {
@@ -125,24 +139,24 @@ window.KrugData = (() => {
   }
 
   function mergeRemoteBooking(remote, local = null) {
-    const durationHours = Number(remote.durationHours);
-    const bonusReserved = Number(remote.bonusReserved ?? local?.bonusReserved ?? 0);
-    const bonusSpentActual = Number(remote.bonusSpent ?? 0);
+    if (!remote || !remote.id || !UUID_RE.test(remote.requestId) ||
+        !remote.status || remote.price == null || !Number.isFinite(Number(remote.price))) {
+      throw new Error('Студия вернула неполные данные записи. Обнови историю перед повторной отправкой.');
+    }
+    // Only presentation fields may come from the device. Status, price and all
+    // settlement fields must come from this server response, even when absent.
     return {
-      ...(local || {}),
       ...remote,
-      durationHours,
+      durationHours: Number(remote.durationHours),
       price: Number(remote.price),
       amountDue: Number(remote.amountDue ?? remote.price),
       client: local?.client || null,
       comment: local?.comment || '',
-      priceSnapshot: local?.priceSnapshot ? { ...local.priceSnapshot, totalPrice: Number(remote.price) } : null,
-      useBonuses: bonusReserved > 0 || bonusSpentActual > 0 || !!local?.useBonuses,
-      bonusReserved,
-      // Existing UI reads bonusSpent while a request is pending; expose the active
-      // reservation there until the session is actually paid and settled.
-      bonusSpent: bonusSpentActual || bonusReserved,
-      bonusEarned: Number(remote.bonusEarned ?? local?.bonusEarned ?? 0),
+      priceSnapshot: remote.priceSnapshot || null,
+      useBonuses: Number(remote.bonusReserved || 0) > 0 || Number(remote.bonusSpent || 0) > 0,
+      bonusReserved: Number(remote.bonusReserved || 0),
+      bonusSpent: Number(remote.bonusSpent || 0),
+      bonusEarned: Number(remote.bonusEarned || 0),
       paymentMode: 'on_site_only'
     };
   }
@@ -164,9 +178,12 @@ window.KrugData = (() => {
     if (Object.keys(fields).length) throw Object.assign(new Error('Проверь выделенные поля.'), { fields });
 
     const telegramUserId = window.KrugTelegram?.getTelegramUser?.()?.id || null;
-    const requestId = data.requestId || crypto.randomUUID();
+    const requestId = data.requestId || (data.requestId = crypto.randomUUID());
+    if (!UUID_RE.test(requestId)) throw new Error('Не удалось идентифицировать заявку. Начни новую запись.');
     const comment = String(data.comment || '').trim().slice(0, 1000);
-    const localQuote = B.quoteFor(service, durationHours, data.startTime);
+    // Save the capability before sending: sync can recover a committed booking
+    // even if its HTTP response is lost. This is not a locally created booking.
+    cacheBooking({ requestId, client, comment, createdAt: new Date().toISOString() });
 
     const result = await request('/api/bookings', {
       method: 'POST',
@@ -183,21 +200,7 @@ window.KrugData = (() => {
       })
     });
 
-    const remote = result.booking || {};
-    const booking = mergeRemoteBooking(remote, {
-      requestId,
-      client,
-      comment,
-      useBonuses: data.useBonuses === true,
-      priceSnapshot: {
-        ...localQuote,
-        totalPrice: Number(remote.price ?? localQuote.totalPrice),
-        serviceId: service.id,
-        date: data.date,
-        pricingType: service.pricingType,
-        isEstimate: service.pricingType === 'minimum'
-      }
-    });
+    const booking = mergeRemoteBooking(result.booking, { client, comment });
 
     cacheBooking(booking);
     invalidateAvailability();
@@ -215,18 +218,19 @@ window.KrugData = (() => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ requestIds })
       });
-      const remoteRows = Array.isArray(result.bookings) ? result.bookings : [];
+      if (!Array.isArray(result.bookings)) throw new Error('Не удалось загрузить историю записей.');
+      const remoteRows = result.bookings;
       const merged = remoteRows.map(remote => mergeRemoteBooking(remote, localRows.find(local => local.requestId === remote.requestId)));
-      writeCache(merged);
+      // Keep request IDs not yet visible to sync (in-flight POST / delayed commit).
+      writeCache([...localRows.filter(local => !merged.some(row => row.requestId === local.requestId)), ...merged]);
       return structuredClone(merged.sort((a, b) => `${b.date}${b.startTime}`.localeCompare(`${a.date}${a.startTime}`)));
     } catch (error) {
-      if (localRows.length) return structuredClone(localRows.sort((a, b) => `${b.date}${b.startTime}`.localeCompare(`${a.date}${a.startTime}`)));
       throw error;
     }
   }
 
   async function cancelBooking(id) {
-    const rows = readCache();
+    const rows = await getMyBookings();
     const local = rows.find(row => row.id === id || row.requestId === id);
     if (!local?.requestId) throw new Error('Запись не найдена.');
     const result = await request('/api/bookings/cancel', {
@@ -234,7 +238,10 @@ window.KrugData = (() => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ requestId: local.requestId })
     });
-    const booking = mergeRemoteBooking({ ...local, ...(result.booking || {}) }, local);
+    if (!result.booking || result.booking.requestId !== local.requestId || result.booking.status !== 'cancelled') {
+      throw new Error('Не удалось подтвердить отмену. Обнови историю записей.');
+    }
+    const booking = mergeRemoteBooking({ ...local, ...result.booking }, local);
     cacheBooking(booking);
     invalidateAvailability();
     invalidateLoyalty();

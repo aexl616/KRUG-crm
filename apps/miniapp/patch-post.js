@@ -98,6 +98,7 @@
   }
 
   function fixHomePrice() {
+    if (window.KrugConfig?.BOOKING_BACKEND) return;
     const card = root.querySelector('[data-service-quick="recording"]');
     const price = card?.querySelector('.service-copy b');
     if (price && price.textContent !== 'от 1 000 ₽ / час') price.textContent = 'от 1 000 ₽ / час';
@@ -125,6 +126,7 @@
   }
 
   function fixBonusCopy() {
+    if (window.KrugConfig?.BOOKING_BACKEND) return;
     if (root.dataset.screen !== 'success') return;
     root.querySelectorAll('.muted').forEach(node => {
       if (node.textContent.trim().startsWith('Списано бонусов:')) {

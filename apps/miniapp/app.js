@@ -57,7 +57,7 @@
     return `<div class="muted">${snapshot.segments.map(segment => `<div>${segment.startTime}–${segment.endTime} · ${segment.durationHours} ч × ${money(segment.hourlyRate)} = ${money(segment.totalPrice)}</div>`).join('')}</div>`;
   }
   function summary(booking, serviceName) {
-    return `<div class="summary"><strong>${escape(serviceName || booking.serviceName)}</strong><div class="session-date">${dateLabel(booking.date)}</div><div class="session-time">${booking.startTime}–${B.endTime(booking.startTime, booking.durationHours)} <small>МСК</small></div><p class="muted">${hours(booking.durationHours)}</p>${priceBreakdown(booking) ? '<details class="price-details"><summary>Как рассчитана стоимость</summary>'+priceBreakdown(booking)+'</details>' : ''}<div class="summary-total"><span>${(booking.priceSnapshot?.isEstimate || booking === bookingDraft && current()?.pricingType === 'minimum') ? 'Стоимость от' : 'Стоимость'}</span><strong>${money(booking.price)}</strong></div>${booking.bonusSpent ? '<p class="muted">Списано бонусов: '+bonusCount(booking.bonusSpent)+'</p><div class="bonus-payable"><span>К оплате</span><strong>'+money(booking.amountDue)+'</strong></div>' : ''}</div>`;
+    return `<div class="summary"><strong>${escape(serviceName || booking.serviceName)}</strong><div class="session-date">${dateLabel(booking.date)}</div><div class="session-time">${booking.startTime}–${B.endTime(booking.startTime, booking.durationHours)} <small>МСК</small></div><p class="muted">${hours(booking.durationHours)}</p>${priceBreakdown(booking) ? '<details class="price-details"><summary>Как рассчитана стоимость</summary>'+priceBreakdown(booking)+'</details>' : ''}<div class="summary-total"><span>${(booking.priceSnapshot?.isEstimate || booking === bookingDraft && current()?.pricingType === 'minimum') ? 'Стоимость от' : 'Стоимость'}</span><strong>${money(booking.price)}</strong></div>${booking.bonusSpent ? '<p class="muted">Списано бонусов: '+bonusCount(booking.bonusSpent)+'</p><div class="bonus-payable"><span>К оплате</span><strong>'+money(booking.amountDue)+'</strong></div>' : ''}<p class="muted">Оплата на студии</p>${booking.bonusReserved ? '<p class="muted">Зарезервировано бонусов: '+bonusCount(booking.bonusReserved)+'</p>' : ''}</div>`;
   }
   function contactField(name, label, options = '') {
     return `<label for="contact-${name}">${label}</label><input id="contact-${name}" name="${name}" ${options} value="${escape(bookingDraft.client[name])}" aria-invalid="${!!fieldErrors[name]}" aria-describedby="error-${name}"><p class="field-error" id="error-${name}" aria-live="polite">${escape(fieldErrors[name] || '')}</p>`;
@@ -140,7 +140,7 @@
       loading.textContent=screen==='flow' ? 'Загружаем свободное время…' : 'Загружаем…'; root.append(loading);
     },120);
     try {
-      if(!catalogLoaded) {const result=await API.getServices();services=[...result,...result.flatMap(s=>s.packages||[])];catalogLoaded=true;}
+      if(!catalogLoaded) {const result=await API.getServices({force:true});services=[...result,...result.flatMap(s=>s.packages||[])];catalogLoaded=true;}
       await renderContent();
     } catch(error) {
       root.innerHTML='<div class="screen-content">'+heading('КРУГ',screen==='flow'?'Не удалось загрузить расписание':'Не удалось загрузить данные')+'<p class="muted">Попробуй ещё раз — текущий выбор сохранён.</p>'+button('Попробовать ещё раз','retry','primary')+button('На главную','home','back')+'</div>';
@@ -154,7 +154,7 @@
     renderNavigation();
     let html = '';
     if (screen === 'other') {
-      html = button('← Назад', 'home', 'back') + heading('СТУДИЙНЫЕ УСЛУГИ', 'Прочие услуги', 'Выбери, что будем делать в студии') + '<div class="service-list">' + services.filter(s => s.publicVisible && s.publicCategory === 'other' && ['studio-mixing','studio-beatmaking','studio-mix-master'].includes(s.id)).map(s => '<button class="service-card" data-service-quick="'+escape(s.id)+'"><span class="service-copy">'+serviceCopy(s)+'</span></button>').join('') + '</div>';
+      html = button('← Назад', 'home', 'back') + heading('СТУДИЙНЫЕ УСЛУГИ', 'Прочие услуги', 'Выбери, что будем делать в студии') + '<div class="service-list">' + services.filter(s => s.publicVisible && s.publicCategory === 'other').map(s => '<button class="service-card" data-service-quick="'+escape(s.id)+'"><span class="service-copy">'+serviceCopy(s)+'</span></button>').join('') + '</div>';
     } else if (screen === 'home') {
       const [bookingResult, loyaltyResult, clientResult] = await Promise.allSettled([API.getMyBookings(), window.KrugLoyalty.getLoyaltyBalance(), window.KrugClient.getCurrentClient()]);
       const bookings = bookingResult.status === 'fulfilled' ? bookingResult.value : [];
@@ -168,7 +168,7 @@
       const photo = safePhoto(client?.avatarUrl) ? '<img src="'+escape(client.avatarUrl)+'" alt="" referrerpolicy="no-referrer">' : '';
       html = '<div class="home-userbar"><div class="home-user"><span class="home-user-avatar">'+escape(initials)+photo+'</span><strong>'+escape(nickname)+'</strong></div><button class="home-bonus" data-action="loyalty" aria-label="Бонусы — открыть историю"><strong>'+(loyalty ? bonusCount(loyalty.balance) : '—')+'</strong><small>Демо-бонусы ↗</small></button></div>';
       html += '<section class="home-hero"><p class="eyebrow">СТУДИЯ КРУГ · ГЛАВНАЯ</p><h1>Записаться</h1></section>';
-      html += '<section class="home-services" aria-label="Выбор услуги"><div class="quick-grid">' + [['recording','Запись','01'],['recording-mix','Запись + сведение','02'],['rental','Аренда','03'],['other','Прочие услуги','04']].map(([id, name, num]) => '<button class="quick-card" data-service-quick="' + escape(id) + '"><span class="card-index">' + num + '<span>↗</span></span><span class="service-copy">' + (id==='other' ? '<strong>Прочие услуги</strong><small>Сведение, бит и мастеринг в студии</small>' : serviceCopy(services.find(s=>s.id===id) || {name})) + '</span></button>').join('') + '</div></section>';
+      html += '<section class="home-services" aria-label="Выбор услуги"><div class="quick-grid">' + [...services.filter(s=>s.publicVisible && s.publicCategory !== 'other' && !s.isRentalPackage).map((s,i)=>[s.id,s.name,String(i+1).padStart(2,'0')]), ...(services.some(s=>s.publicVisible && s.publicCategory==='other') ? [['other','Прочие услуги','↗']] : [])].map(([id, name, num]) => '<button class="quick-card" data-service-quick="' + escape(id) + '"><span class="card-index">' + num + '<span>↗</span></span><span class="service-copy">' + (id==='other' ? '<strong>Прочие услуги</strong><small>Сведение, бит и мастеринг в студии</small>' : serviceCopy(services.find(s=>s.id===id) || {name})) + '</span></button>').join('') + '</div></section>';
       if(draftStarted) html += '<div class="home-actions">'+button('Продолжить запись <span aria-hidden="true">↗</span>','start')+'</div>';
       if (homeError) html += '<p class="muted">Не удалось загрузить данные главной.</p>'+button('Попробовать ещё раз','retry','secondary');
       if (nearest) html += '<button class="home-next home-shortcut" data-action="nearest"><span><small>Ближайшая запись</small><strong>'+dateLabel(nearest.date)+' · '+escape(nearest.startTime)+'</strong><small>'+escape(nearest.serviceName)+' · '+escape(account.statuses[nearest.status] || account.statuses.request)+'</small></span><span aria-hidden="true">↗</span></button>';
@@ -245,6 +245,7 @@
     if (action === 'success-bookings') action='bookings';
     if (action === 'success-home') action='home';
     if (action === 'home') screen = 'home';
+    if (action === 'home' || action === 'retry') catalogLoaded = false;
     if (action === 'other') screen = 'other';
     if (action === 'bookings') screen = 'bookings';
     if (action === 'loyalty') { openLoyalty(); return; }

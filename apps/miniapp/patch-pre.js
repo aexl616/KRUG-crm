@@ -18,7 +18,7 @@
   const rawGetBookings = API.getMyBookings.bind(API);
   const rawCancelBooking = API.cancelBooking.bind(API);
 
-  API.getMyBookings = async () => {
+  if (!window.KrugConfig?.BOOKING_BACKEND) API.getMyBookings = async () => {
     const bookings = await rawGetBookings();
     const now = Date.now();
     return bookings.map(booking => {

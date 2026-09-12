@@ -39,18 +39,14 @@ test('Telegram data prefills profile without changing identity or inventing phon
     assert.equal(profile.id,'krug-mock-client');
   }
 });
-test('loyalty ledger reconciles and reads cannot mutate it', async () => {
+test('live loyalty never invents a demo balance without Telegram', async () => {
   const {KrugLoyalty: loyalty} = setup();
   const balance = await loyalty.getLoyaltyBalance();
-  const history = await loyalty.getLoyaltyHistory();
-  assert.equal(balance.balance,740);
-  assert.equal(balance.rublesPerBonus,1);
-  assert.equal(history.reduce((sum,entry) => sum + entry.amount,balance.openingBalance),740);
-  history[0].amount = 10000; balance.balance = 0;
-  assert.equal((await loyalty.getLoyaltyBalance()).balance,740);
-  assert.equal((await loyalty.getLoyaltyHistory())[0].amount,-500);
-  assert.deepEqual(Object.keys(loyalty).sort(),['getLoyaltyBalance','getLoyaltyHistory','getRedemptionQuote']);
+  assert.equal(balance.balance,0);
+  assert.equal(balance.requiresTelegram,true);
+  assert.equal((await loyalty.getLoyaltyHistory()).length,0);
 });
+
 test('upcoming/history grouping handles ongoing, expired, cancelled, completed and Moscow time', () => {
   const {KrugAccount: account} = setup();
   const bookings = [

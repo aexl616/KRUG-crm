@@ -7,6 +7,8 @@ on:
       - '*.html'
       - '*.css'
       - '*.js'
+      - 'apps/miniapp/**'
+      - 'mini-app/index.html'
       - '.github/workflows/pages-crm.yml'
   workflow_dispatch:
 
