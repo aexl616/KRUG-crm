@@ -175,6 +175,9 @@
         durationHours: Number(remote.durationHours || 0),
         serviceCategoryId: categoryForService(remote.serviceId),
         serviceId: String(remote.serviceId || ''),
+        employeeId: remote.staffId || '',
+        employee: remote.staffName || '',
+        employeeName: remote.staffName || '',
         serviceName: String(remote.serviceName || 'Услуга Mini App'),
         service: String(remote.serviceName || 'Услуга Mini App'),
         amount: Number(remote.price || 0),
@@ -269,7 +272,7 @@
       if (!overview || !bookings) return;
       const fingerprint = JSON.stringify({
         clients: (overview.clients || []).map(row => [row.id,row.updatedAt,row.category,row.banned,row.loyaltyBalance]),
-        bookings: (bookings || []).map(row => [row.id,row.status,row.date,row.startTime,row.endTime,row.paymentStatus,row.paidAt,row.paidAmount,row.paymentMethod,row.bonusReserved,row.amountDue])
+        bookings: (bookings || []).map(row => [row.id,row.status,row.date,row.startTime,row.endTime,row.paymentStatus,row.paidAt,row.paidAmount,row.paymentMethod,row.bonusReserved,row.amountDue,row.staffId,row.staffName])
       });
       if (fingerprint === lastFingerprint) return;
 

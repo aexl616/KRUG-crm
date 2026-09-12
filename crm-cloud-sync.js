@@ -101,12 +101,13 @@
         document.dispatchEvent(new CustomEvent('krug:cloud-state', {detail:{direction:'push',version:cloudVersion,changed:true,read:[...readCollections],write:[...writeCollections]}}));
         return true;
       } catch (error) {
-        if (error.code !== 'CRM_STATE_CONFLICT') throw error;
+        if (!['CRM_STATE_CONFLICT','SLOT_UNAVAILABLE'].includes(error.code)) throw error;
         const latest = absorbRemote(await request('get'));
         // Server wins on conflicts. Only collections readable by this role are applied.
         const changed = applySnapshot(latest.data);
         if (changed && baseSaveState) baseSaveState();
         if (changed && typeof render === 'function') render();
+        if (error.code === 'SLOT_UNAVAILABLE') alert(error.message);
         document.dispatchEvent(new CustomEvent('krug:cloud-state', {detail:{direction:'conflict',version:cloudVersion,changed,read:[...readCollections],write:[...writeCollections]}}));
         return false;
       }

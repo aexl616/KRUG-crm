@@ -147,7 +147,7 @@ window.KrugBooking = (() => {
   }
 
   function newDraft() {
-    return { serviceId: null, durationHours: null, date: null, startTime: null, price: null, client: { name: '', phone: '', telegram: '' }, comment: '', requestId: crypto.randomUUID() };
+    return { staffId: null, staffName: null, staffChoice: 'auto', staffContext: null, staffInvalid: false, serviceId: null, durationHours: null, date: null, startTime: null, price: null, client: { name: '', phone: '', telegram: '' }, comment: '', requestId: crypto.randomUUID() };
   }
 
   function validateClient(client = {}) {
@@ -168,6 +168,7 @@ window.KrugBooking = (() => {
       ? Number(service.defaultDurationHours)
       : null;
     Object.assign(draft, {
+      staffId: null, staffName: null, staffChoice: 'auto', staffContext: null, staffInvalid: false,
       serviceId: service.id,
       durationHours: fixedDuration,
       date: null,
@@ -186,7 +187,41 @@ window.KrugBooking = (() => {
     return !!previousDate && !draft.date;
   }
 
+  // Manual 'any' is a deliberate preference; never silently replace it with a named person.
+  function reconcileStaff(draft, availability) {
+    const mode = availability.staffSelection || 'none';
+    const context = [draft.serviceId, draft.date, draft.startTime, draft.durationHours].join('|');
+    const choice = availability.staffBySlot?.[draft.startTime];
+    const staff = choice?.staff || [];
+    const selected = staff.find(row => row.id === draft.staffId);
+    let message = '';
+    if (mode === 'none') {
+      Object.assign(draft, {staffId:null,staffName:null,staffChoice:'auto',staffInvalid:false});
+    } else if (draft.staffChoice === 'any' && mode !== 'required') {
+      Object.assign(draft, {staffId:null,staffName:null,staffInvalid:false});
+    } else if (draft.staffChoice === 'manual') {
+      if (!selected) {
+        draft.staffId=null; draft.staffName=null; draft.staffInvalid=true;
+        message='Выбранный специалист недоступен. Выбери другого или «Любой доступный».';
+      } else { draft.staffName=selected.name; draft.staffInvalid=false; }
+    } else {
+      const recommended=staff.find(row=>row.id===choice?.defaultStaffId) || staff[0];
+      draft.staffId=recommended?.id || null; draft.staffName=recommended?.name || null;
+      draft.staffInvalid=false;
+    }
+    draft.staffContext=context;
+    return {mode,staff,message,ready:mode==='none' || (!!staff.length && !draft.staffInvalid && (mode!=='required' || !!draft.staffId))};
+  }
+  function chooseStaff(draft, id, staff) {
+    const chosen=staff.find(row=>row.id===id);
+    if (id && !chosen) return false;
+    Object.assign(draft,{staffId:chosen?.id || null,staffName:chosen?.name || null,staffChoice:id?'manual':'any',staffInvalid:false});
+    return true;
+  }
+  const staffBadge = (date, now = new Date()) => date === today(now) ? 'Сегодня работает' : 'В этот день работает';
+
   return {
+    reconcileStaff, chooseStaff, staffBadge,
     today, addDays, toMinutes, toTime, endTime,
     priceFor, quoteFor, durationFor, canBookDuration,
     availableSlots, newDraft, validateClient, changeService, changeDuration

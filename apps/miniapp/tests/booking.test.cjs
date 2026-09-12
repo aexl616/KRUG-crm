@@ -21,7 +21,7 @@ test('creation whitelists inputs, preserves request ID, and accepts only server 
  const {API,calls}=setup();const row=await API.createBooking({...draft(),price:1,status:'completed',paidAmount:1,paymentStatus:'paid',useBonuses:true});
  assert.equal(row.price,2500);assert.equal(row.paymentStatus,'unpaid');assert.equal(row.bonusSpent,0);assert.equal(row.bonusReserved,100);assert.equal(row.paymentMode,'on_site_only');
  const call=calls.at(-1);assert.equal(call.opts.headers['X-Telegram-Init-Data'],'signed-test-data');
- assert.deepEqual(Object.keys(call.body).sort(),['client','comment','date','durationHours','requestId','serviceId','startTime','useBonuses'].sort());assert.equal(call.body.requestId,id);
+ assert.deepEqual(Object.keys(call.body).sort(),['client','comment','date','durationHours','requestId','serviceId','staffId','startTime','useBonuses'].sort());assert.equal(call.body.requestId,id);
  await API.createBooking(draft());assert.equal(calls.at(-1).body.requestId,id);
  await assert.rejects(API.completePaidBooking(),/студии/);
 });

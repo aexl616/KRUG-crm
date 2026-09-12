@@ -405,3 +405,6 @@ h1, h2, h3, .home-hero h1, .service-copy strong, .quick-card .service-copy stron
 #app[data-confirmation="true"] #booking-form label { margin:0 0 5px; font-size:12px; }
 #app[data-confirmation="true"] #comment { min-height:48px; height:48px; padding:10px 12px; font-size:13px; resize:none; margin-bottom:0; }
 #app[data-confirmation="true"] .dock { padding-top:10px; }
+
+/* 0.11: optional specialist selection */
+.staff-selection{margin:24px 0}.staff-card{display:block;width:100%;text-align:left;padding:16px;margin:10px 0;border:1px solid #424242;border-radius:18px;background:#202020;color:inherit}.staff-card.selected{border-color:#ff6633;background:#30241f}.staff-card small{display:block;white-space:normal;line-height:1.5;color:#ccc;margin-top:6px}.staff-card img{width:56px;height:56px;object-fit:cover;border-radius:50%;float:left;margin:0 12px 8px 0}.staff-badge{display:block;color:#ff9b6c;font-size:12px;margin-top:6px}.staff-card:focus-visible{outline:2px solid #ff6633;outline-offset:3px}

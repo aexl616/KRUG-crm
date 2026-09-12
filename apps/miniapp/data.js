@@ -40,7 +40,7 @@ window.KrugData = (() => {
       const error = new Error(result.message || 'Сервис КРУГ временно недоступен. Попробуй ещё раз.');
       error.code = result.error || `HTTP_${response.status}`;
       error.status = response.status;
-      if (error.code === 'SLOT_UNAVAILABLE') invalidateAvailability();
+      if (['SLOT_UNAVAILABLE', 'STAFF_UNAVAILABLE', 'STAFF_REQUIRED'].includes(error.code)) invalidateAvailability();
       if (['SERVICE_UNAVAILABLE', 'DURATION_UNAVAILABLE'].includes(error.code)) servicesCache = null;
       throw error;
     }
@@ -191,6 +191,7 @@ window.KrugData = (() => {
       body: JSON.stringify({
         requestId,
         serviceId: service.id,
+        staffId: data.staffId || null,
         date: data.date,
         startTime: data.startTime,
         durationHours,

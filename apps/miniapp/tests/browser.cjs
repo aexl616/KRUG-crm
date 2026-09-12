@@ -8,7 +8,7 @@ const server=http.createServer((req,res)=>{const file=path.resolve(base,'.'+(req
  try{
   browser=await chromium.launch({headless:true,channel:'msedge'});
   for(const width of [390,900]){
-   const context=await browser.newContext({viewport:{width,height:900}}),page=await context.newPage();
+   const context=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'}),page=await context.newPage();
    const errors=[],calls=[];let booking=null,failSync=false;
    page.on('pageerror',e=>errors.push(e.message));
    await context.addInitScript(()=>{localStorage.setItem('krug_mini_client_v1',JSON.stringify({onboarded:true,backendSynced:true,name:'Анна',phone:'+7 999 123-45-67',telegramUserId:123}));window.Telegram={WebApp:{initData:'test-signed-data',initDataUnsafe:{user:{id:123,first_name:'Анна'}}}};});
@@ -17,9 +17,9 @@ const server=http.createServer((req,res)=>{const file=path.resolve(base,'.'+(req
     const req=r.request(),url=new URL(req.url()),body=req.postDataJSON();calls.push({path:url.pathname,body,headers:req.headers()});
     let result={ok:true};let status=200;
     if(url.pathname==='/api/services')result.services=[{id:'recording',name:'Запись',publicName:'Запись',publicVisible:true,publicCategory:'primary',active:true,pricingType:'hourly',priceTiers:[{durationHours:1,totalPrice:2345}],pricingRules:{hourlyRate:2345}}];
-    else if(url.pathname==='/api/availability')result.availability={date:url.searchParams.get('date'),closed:false,slots:['10:00','12:00']};
+    else if(url.pathname==='/api/availability')result.availability={date:url.searchParams.get('date'),closed:false,slots:['10:00','12:00'],staffSelection:'optional',staffBySlot:{'10:00':{defaultStaffId:'u1',staff:[{id:'u1',name:'AE XL',scheduled:true,experienceSince:2018,genres:'Hip-hop · Pop',bio:'Запись вокала и сведение'},{id:'u2',name:'Миша',scheduled:true,genres:'Rock'}]},'12:00':{defaultStaffId:'u2',staff:[{id:'u2',name:'Миша',scheduled:true}]}}};
     else if(url.pathname==='/api/loyalty')result.loyalty={balance:0,enabled:true,accrualPercent:7,history:[]};
-    else if(url.pathname==='/api/bookings'){booking={id:'server-booking',requestId:body.requestId,serviceId:body.serviceId,serviceName:'Запись',date:body.date,startTime:body.startTime,durationHours:body.durationHours,price:2500,amountDue:2500,status:'request',paymentStatus:'unpaid',createdAt:new Date().toISOString()};result.booking=booking;}
+    else if(url.pathname==='/api/bookings'){booking={id:'server-booking',requestId:body.requestId,serviceId:body.serviceId,serviceName:'Запись',staffId:body.staffId||'u1',staffName:body.staffId==='u2'?'Миша':'AE XL',date:body.date,startTime:body.startTime,durationHours:body.durationHours,price:2500,amountDue:2500,status:'request',paymentStatus:'unpaid',createdAt:new Date().toISOString()};result.booking=booking;}
     else if(url.pathname==='/api/bookings/sync'){if(failSync){result={ok:false,error:'TELEGRAM_AUTH_EXPIRED',message:'Открой Mini App заново'};status=401;}else result.bookings=booking?[booking]:[];}
     else if(url.pathname==='/api/bookings/cancel'){booking={...booking,status:'cancelled',bonusReserved:0};result.booking={id:booking.id,requestId:booking.requestId,status:'cancelled',bonusReserved:0,amountDue:2500};}
     else throw Error('Unexpected API '+url.pathname);
@@ -32,11 +32,23 @@ const server=http.createServer((req,res)=>{const file=path.resolve(base,'.'+(req
    await page.locator('[data-service-quick="recording"]').click();
    await page.locator('[data-duration="1"]').click();await page.locator('[data-action="next"]').click();
    await page.locator('[data-date]:not([disabled])').nth(1).click();await page.locator('[data-action="next"]').click();
-   await page.locator('[data-time="10:00"]').click();await page.locator('[data-action="next"]').click();
+   await page.locator('[data-time="10:00"]').click();
+   assert.equal(await page.locator('[data-staff="u1"]').getAttribute('aria-pressed'),'true');
+   assert.match(await page.locator('[data-staff="u1"]').innerText(),/В этот день работает/);
+   await page.locator('[data-staff="u1"]').click();await page.locator('[data-time="12:00"]').click();
+   assert.equal(await page.locator('[data-action="next"]').isDisabled(),true);
+   await page.locator('[data-staff="u2"]').click();await page.locator('[data-action="next"]').click();
+   await page.getByRole('heading',{name:'Всё верно?'}).waitFor();
+   assert.equal(await page.locator('[data-staff="u2"]').getAttribute('aria-pressed'),'true');
+   await page.locator('[data-staff=""]').click();
+   await page.locator('[data-staff=""][aria-pressed="true"]').waitFor();
+   assert.equal(await page.locator('[data-staff=""]').getAttribute('aria-pressed'),'true');
+   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+   if(process.argv[3]){await page.locator('.staff-selection').scrollIntoViewIfNeeded();await page.screenshot({path:path.join(process.argv[3],`staff-selection-${width}.png`),fullPage:true,animations:'disabled'});}
    assert.match(await page.locator('.summary').innerText(),/Оплата на студии/);
    await page.locator('[form="booking-form"]').click();await page.locator('[data-action="success-bookings"]').waitFor();
    assert.match(await page.locator('.summary-total').innerText(),/2\s500/);
-   const create=calls.find(c=>c.path==='/api/bookings');assert.equal(create.headers['x-telegram-init-data'],'test-signed-data');assert.equal(create.body.paymentStatus,undefined);assert.equal(create.body.price,undefined);
+   const create=calls.find(c=>c.path==='/api/bookings');assert.equal(create.body.staffId,null);assert.equal(create.headers['x-telegram-init-data'],'test-signed-data');assert.equal(create.body.paymentStatus,undefined);assert.equal(create.body.price,undefined);
    await page.locator('[data-action="success-bookings"]').click();await page.locator('[data-cancel]').click();await page.locator('.krug-confirm [value="confirm"]').click();
    await page.waitForFunction(()=>document.querySelector('#tab-history')?.textContent.includes('1'));
    await page.locator('[data-action="list-history"]').click();assert.match(await page.locator('.booking-card').innerText(),/Отменено/);

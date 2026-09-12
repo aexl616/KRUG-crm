@@ -7,6 +7,9 @@ on:
       - 'api/**'
       - 'apps/miniapp/**'
       - 'supabase/migrations/**'
+      - 'supabase/tests/**'
+      - 'crm-staff-schedule.js'
+      - 'app.js'
       - 'crm-auth.js'
       - 'crm-staff-sync.js'
       - 'crm-cloud-sync.js'
@@ -15,6 +18,7 @@ on:
       - 'index.html'
       - '.github/workflows/tests.yml'
   workflow_dispatch:
+  pull_request:
 
 permissions:
   contents: read
@@ -32,6 +36,7 @@ jobs:
         run: |
           node --check crm-auth.js
           node --check crm-staff-sync.js
+          node --check crm-staff-schedule.js
           node --check crm-cloud-sync.js
           node --check crm-miniapp-sync.js
           node --check crm-remote-booking-actions.js
@@ -39,3 +44,7 @@ jobs:
         run: node --test apps/miniapp/tests/*.test.cjs
       - name: Run API unit tests
         run: node --test api/tests/*.test.cjs
+      - name: Install isolated SQL test engine
+        run: npm install --prefix "$RUNNER_TEMP/krug-sql" --ignore-scripts --no-audit --no-fund @electric-sql/pglite@0.3.14
+      - name: Execute migration and staff scheduling tests
+        run: PGLITE_MODULE="$RUNNER_TEMP/krug-sql/node_modules/@electric-sql/pglite" node --test supabase/tests/*.test.cjs

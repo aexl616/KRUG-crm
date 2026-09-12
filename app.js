@@ -3895,6 +3895,7 @@ function renderEmployeeCard(user) {
         <label class="check-row"><input name="active" type="checkbox" ${user.active !== false ? "checked" : ""} /> активен</label>
       </div>
       <div class="actions">
+        <button class="btn secondary" type="button" data-staff-schedule="${user.id}">График работы</button>
         <button class="btn secondary" type="button" data-save-user="${user.id}">Сохранить</button>
         ${user.id !== currentUser().id ? `<button class="btn danger" type="button" data-remove-user="${user.id}">Удалить</button>` : ""}
       </div>

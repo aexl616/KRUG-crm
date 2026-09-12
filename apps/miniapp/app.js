@@ -18,11 +18,17 @@
   let services = [], screen = 'home', step = 0, busy = false, renderId = 0, saved = null;
   let dateLimit = 8, flowMessage = '', transitioning = false;
   let fieldErrors = {};
+  let staffView = {mode:'none',staff:[],ready:false};
   let bookingsTab = 'upcoming', draftStarted = false;
   const current = () => services.find(s => s.id === bookingDraft.serviceId);
   const steps = () => current()?.isRentalPackage ? ['Формат','Дата','Подтверждение'] : current()?.id === 'rental' ? ['Формат','Длительность','Дата','Время','Подтверждение'] : ['Длительность','Дата','Время','Подтверждение'];
   const button = (label, action, cls = 'primary', disabled = false) => `<button class="${cls}" data-action="${action}" ${disabled ? 'disabled' : ''}>${label}</button>`;
   const heading = (eyebrow, title, hint = '') => `<p class="eyebrow">${eyebrow}</p><h1>${title}</h1>${hint ? `<p class="muted intro">${hint}</p>` : ''}`;
+  function staffCards() {
+    if (staffView.mode === 'none') return '';
+    const any = staffView.mode !== 'required' ? '<button type="button" class="staff-card '+(!bookingDraft.staffId && !bookingDraft.staffInvalid?'selected':'')+'" data-staff="" aria-pressed="'+(!bookingDraft.staffId && !bookingDraft.staffInvalid)+'">Любой доступный<small>Студия назначит подходящего специалиста</small></button>' : '';
+    return '<section class="staff-selection" aria-label="Выбор специалиста"><h2>Специалист'+(staffView.mode==='optional'?' · по желанию':'')+'</h2><p class="muted">Можно изменить предложенный выбор.</p>'+(staffView.message?'<p role="alert">'+escape(staffView.message)+'</p>':'')+(!staffView.staff.length?'<p role="status">На это время нет доступных специалистов. Выбери другое время.</p>':'')+any+staffView.staff.map(person=>'<button type="button" class="staff-card '+(bookingDraft.staffId===person.id?'selected':'')+'" data-staff="'+escape(person.id)+'" aria-pressed="'+(bookingDraft.staffId===person.id)+'">'+(/^https:\/\//.test(person.photoUrl||'')?'<img src="'+escape(person.photoUrl)+'" alt="" loading="lazy" referrerpolicy="no-referrer">':'')+'<strong>'+escape(person.name)+'</strong>'+(person.scheduled?'<span class="staff-badge">'+B.staffBadge(bookingDraft.date)+'</span>':'')+(person.experienceSince?'<small>В профессии с '+escape(person.experienceSince)+' года</small>':'')+(person.genres?'<small>'+escape(person.genres)+'</small>':'')+(person.bio?'<small>'+escape(person.bio)+'</small>':'')+'</button>').join('')+'</section>';
+  }
   function showError(error) { notice.textContent = error.message || 'Не получилось загрузить страницу. Попробуй ещё раз.'; notice.hidden = false; }
   function resetDraft() {
     bookingDraft = B.newDraft();
@@ -57,7 +63,7 @@
     return `<div class="muted">${snapshot.segments.map(segment => `<div>${segment.startTime}–${segment.endTime} · ${segment.durationHours} ч × ${money(segment.hourlyRate)} = ${money(segment.totalPrice)}</div>`).join('')}</div>`;
   }
   function summary(booking, serviceName) {
-    return `<div class="summary"><strong>${escape(serviceName || booking.serviceName)}</strong><div class="session-date">${dateLabel(booking.date)}</div><div class="session-time">${booking.startTime}–${B.endTime(booking.startTime, booking.durationHours)} <small>МСК</small></div><p class="muted">${hours(booking.durationHours)}</p>${priceBreakdown(booking) ? '<details class="price-details"><summary>Как рассчитана стоимость</summary>'+priceBreakdown(booking)+'</details>' : ''}<div class="summary-total"><span>${(booking.priceSnapshot?.isEstimate || booking === bookingDraft && current()?.pricingType === 'minimum') ? 'Стоимость от' : 'Стоимость'}</span><strong>${money(booking.price)}</strong></div>${booking.bonusSpent ? '<p class="muted">Списано бонусов: '+bonusCount(booking.bonusSpent)+'</p><div class="bonus-payable"><span>К оплате</span><strong>'+money(booking.amountDue)+'</strong></div>' : ''}<p class="muted">Оплата на студии</p>${booking.bonusReserved ? '<p class="muted">Зарезервировано бонусов: '+bonusCount(booking.bonusReserved)+'</p>' : ''}</div>`;
+    return `<div class="summary"><strong>${escape(serviceName || booking.serviceName)}</strong><div class="session-date">${dateLabel(booking.date)}</div><div class="session-time">${booking.startTime}–${B.endTime(booking.startTime, booking.durationHours)} <small>МСК</small></div><p class="muted">${hours(booking.durationHours)}</p>${booking.staffName ? `<p>Специалист: ${escape(booking.staffName)}</p>` : ''}${priceBreakdown(booking) ? '<details class="price-details"><summary>Как рассчитана стоимость</summary>'+priceBreakdown(booking)+'</details>' : ''}<div class="summary-total"><span>${(booking.priceSnapshot?.isEstimate || booking === bookingDraft && current()?.pricingType === 'minimum') ? 'Стоимость от' : 'Стоимость'}</span><strong>${money(booking.price)}</strong></div>${booking.bonusSpent ? '<p class="muted">Списано бонусов: '+bonusCount(booking.bonusSpent)+'</p><div class="bonus-payable"><span>К оплате</span><strong>'+money(booking.amountDue)+'</strong></div>' : ''}<p class="muted">Оплата на студии</p>${booking.bonusReserved ? '<p class="muted">Зарезервировано бонусов: '+bonusCount(booking.bonusReserved)+'</p>' : ''}</div>`;
   }
   function contactField(name, label, options = '') {
     return `<label for="contact-${name}">${label}</label><input id="contact-${name}" name="${name}" ${options} value="${escape(bookingDraft.client[name])}" aria-invalid="${!!fieldErrors[name]}" aria-describedby="error-${name}"><p class="field-error" id="error-${name}" aria-live="polite">${escape(fieldErrors[name] || '')}</p>`;
@@ -206,18 +212,27 @@
         html += `${flowMessage ? `<p class="flow-message" role="status">${escape(flowMessage)}</p>` : ''}<div class="date-grid">${choices.join('')}</div>${availableDates.length > dateLimit ? button('Показать ещё', 'more-dates', 'secondary more-dates') : ''}<p class="muted">${availableDates.length ? 'Только дни, в которых есть время на всю сессию.' : 'В ближайшие 3 недели нет свободного времени на эту длительность. Попробуй выбрать другую.'}</p>${footer(current().isRentalPackage ? 'Проверить запись' : 'Выбрать время', !!bookingDraft.date)}`;
       } else if (label === 'Время') {
         html += heading('ВРЕМЯ ТВОРИТЬ', 'Во сколько?', `${dateLabel(bookingDraft.date)} · ${hours(bookingDraft.durationHours)} · МСК`);
-        const slots = await API.getAvailableSlots(bookingDraft.date, bookingDraft.durationHours, bookingDraft.serviceId);
+        const availability = await API.getAvailability(bookingDraft.date, bookingDraft.durationHours, bookingDraft.serviceId);
+        const slots = availability.closed ? [] : availability.slots;
         if (version !== renderId) return;
         if (!slots.includes(bookingDraft.startTime)) bookingDraft.startTime = null;
         refreshPrice();
         html += slots.length ? `<div class="time-grid">${slots.map(time => `<button class="time-card ${bookingDraft.startTime === time ? 'selected' : ''}" data-time="${time}" aria-pressed="${bookingDraft.startTime === time}">${time}</button>`).join('')}</div>${bookingDraft.startTime ? `<p class="chosen-interval" role="status">${bookingDraft.startTime}–${B.endTime(bookingDraft.startTime, bookingDraft.durationHours)}</p>` : ''}<p class="muted">Это время свободно на всю выбранную длительность.</p>` : `<div class="empty"><p>На этот день свободного времени уже нет.</p>${button('Выбрать другую дату', 'back', 'secondary')}</div>`;
-        html += footer('Проверить запись', !!bookingDraft.startTime);
+        staffView = B.reconcileStaff(bookingDraft, availability);
+        if (bookingDraft.startTime) html += staffCards();
+        html += footer('Проверить запись', !!bookingDraft.startTime && staffView.ready);
       } else {
+        const availability = await API.getAvailability(bookingDraft.date, bookingDraft.durationHours, bookingDraft.serviceId, {force:true});
+        if (version !== renderId) return;
+        staffView = B.reconcileStaff(bookingDraft, availability);
+        if (!availability.slots.includes(bookingDraft.startTime)) staffView.ready = false;
         html += heading('ПОЧТИ В КРУГЕ', 'Всё верно?');
+        html += staffCards();
+        if (!staffView.ready) html += '<p role="alert">Проверь специалиста или вернись к выбору времени.</p>';
         html += summary(bookingDraft, current().name);
         const redemption=await window.KrugLoyalty.getRedemptionQuote(bookingDraft.price,bookingDraft.useBonuses);
         html += '<div class="bonus-choice"><label class="bonus-switch" for="use-bonuses"><span><strong>Списать бонусы</strong><small>Доступно '+bonusCount(redemption.balance)+'</small></span><input type="checkbox" role="switch" id="use-bonuses" '+(bookingDraft.useBonuses?'checked':'')+'><span class="switch-track" aria-hidden="true"></span></label><p class="muted">'+(bookingDraft.useBonuses?'Спишется '+bonusCount(redemption.applied)+' · останется '+bonusCount(redemption.remaining):'После оплаченной сессии начислим 10% бонусами')+'</p><div class="bonus-payable"><span>К оплате</span><strong>'+money(redemption.payable)+'</strong></div></div><form id="booking-form" novalidate>';
-        html += '<label for="comment">Комментарий <span class="muted">· необязательно</span></label><textarea id="comment" name="comment" rows="2" maxlength="1000" placeholder="Расскажи, что будем записывать">' + escape(bookingDraft.comment) + '</textarea></form><div class="dock"><button form="booking-form" type="submit" class="primary" ' + (busy ? 'disabled' : '') + '>' + (busy ? 'Сохраняем…' : 'Отправить заявку <span aria-hidden="true">↗</span>') + '</button></div>';
+        html += '<label for="comment">Комментарий <span class="muted">· необязательно</span></label><textarea id="comment" name="comment" rows="2" maxlength="1000" placeholder="Расскажи, что будем записывать">' + escape(bookingDraft.comment) + '</textarea></form><div class="dock"><button form="booking-form" type="submit" class="primary" ' + (busy || !staffView.ready ? 'disabled' : '') + '>' + (busy ? 'Сохраняем…' : 'Отправить заявку <span aria-hidden="true">↗</span>') + '</button></div>';
 
       }
     } else if (screen === 'success') {
@@ -260,7 +275,7 @@
     }
     if (action === 'next') {
       const label = steps()[step];
-      if (label === 'Услуга' && !current() || label === 'Длительность' && !bookingDraft.durationHours || label === 'Дата' && !bookingDraft.date || label === 'Время' && !bookingDraft.startTime) return;
+      if (label === 'Услуга' && !current() || label === 'Длительность' && !bookingDraft.durationHours || label === 'Дата' && !bookingDraft.date || label === 'Время' && (!bookingDraft.startTime || !staffView.ready)) return;
       step = Math.min(step + 1, steps().length - 1);
     }
     await render();
@@ -301,13 +316,14 @@
       }
       if (target.dataset.date) { bookingDraft.date = target.dataset.date; bookingDraft.startTime = current()?.fixedStart || null; flowMessage = ''; }
       if (target.dataset.time) bookingDraft.startTime = target.dataset.time;
-      const focusKey = ['service', 'duration', 'date', 'time'].find(key => target.dataset[key]);
+      if (target.hasAttribute('data-staff')) B.chooseStaff(bookingDraft, target.dataset.staff, staffView.staff);
+      const focusKey = ['service', 'duration', 'date', 'time', 'staff'].find(key => target.dataset[key]);
       await render();
       if (focusKey) root.querySelector(`[data-${focusKey}="${target.dataset[focusKey]}"]`)?.focus({ preventScroll: true });
     } catch (error) { showError(error); }
     finally { transitioning = false; }
   });
-  root.addEventListener('error', event => { if (event.target.matches('.home-user-avatar img')) event.target.remove(); }, true);
+  root.addEventListener('error', event => { if (event.target.matches('.home-user-avatar img, .staff-card img')) event.target.remove(); }, true);
   root.addEventListener('input', event => {
     const { name, value } = event.target;
     if (name === 'comment') bookingDraft.comment = value;
@@ -317,7 +333,7 @@
   root.addEventListener('submit', async event => {
     if (event.target.id !== 'booking-form') return;
     event.preventDefault();
-    if (busy) return;
+    if (busy || !staffView.ready) return;
     notice.hidden = true;
     const errors = B.validateClient(bookingDraft.client);
     displayFieldErrors(errors);
@@ -331,7 +347,7 @@
     } catch (error) {
       if (error.fields) { displayFieldErrors(error.fields); document.getElementById(`contact-${Object.keys(error.fields)[0]}`)?.focus(); }
       else {
-        if (error.code === 'SLOT_UNAVAILABLE') { bookingDraft.startTime = null; step = steps().indexOf(current()?.isRentalPackage ? 'Дата' : 'Время'); await render(); root.querySelector('.screen-content').scrollTop = 0; }
+        if (['SLOT_UNAVAILABLE','STAFF_UNAVAILABLE','STAFF_REQUIRED'].includes(error.code)) { bookingDraft.startTime = null; step = steps().indexOf(current()?.isRentalPackage ? 'Дата' : 'Время'); await render(); root.querySelector('.screen-content').scrollTop = 0; }
         showError(error);
       }
     }
@@ -345,4 +361,3 @@
   });
   render().then(welcomeIfNeeded).catch(showError);
 })();
-
