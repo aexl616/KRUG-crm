@@ -1,0 +1,72 @@
+/* KRUG 0.10.1 — subtle motion, less chrome, cleaner visual hierarchy. */
+:root{--ease-out:cubic-bezier(.22,1,.36,1);--ease-spring:cubic-bezier(.2,1.35,.35,1);--motion-fast:150ms;--motion:260ms;--motion-slow:520ms}
+
+/* Quieter shell/header: the wordmark is enough, no extra institutional label. */
+.edition{display:none!important}
+.shell .header{justify-content:flex-start!important;background:transparent!important;border-color:transparent!important;border-bottom:1px solid #242522!important;border-radius:0!important;margin-inline:0!important;padding-inline:0!important}
+.shell .brand-wordmark{width:156px!important}
+
+/* Remove low-value helper copy injected by older screens. */
+.krug-ui-hidden{display:none!important}
+.screen-content>.eyebrow:first-child{opacity:.78}
+
+/* Buttons/cards move like one product, not isolated browser controls. */
+.primary,.secondary,.quick-card,.service-card,.duration,.date-card,.time-card,.home-shortcut,.main-navigation button,.loyalty-open,.cancel-booking{
+  transition:transform var(--motion-fast) var(--ease-out),border-color var(--motion) ease,background-color var(--motion) ease,color var(--motion) ease,opacity var(--motion-fast) ease,box-shadow var(--motion) ease;
+}
+.primary:not(:disabled):active,.secondary:not(:disabled):active,.quick-card:not(:disabled):active,.service-card:not(:disabled):active,.duration:not(:disabled):active,.date-card:not(:disabled):active,.time-card:not(:disabled):active{transform:scale(.985)}
+.quick-card:hover,.service-card:hover{border-color:#454640}
+.selected{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 58%,transparent)}
+.duration.selected,.date-card.selected,.time-card.selected{animation:krug-select 320ms var(--ease-spring)}
+
+/* Screen entrance. Direct children stagger very slightly so navigation feels intentional. */
+.screen-content.krug-enter>*{animation:krug-rise var(--motion) var(--ease-out) both}
+.screen-content.krug-enter>*:nth-child(2){animation-delay:24ms}.screen-content.krug-enter>*:nth-child(3){animation-delay:42ms}.screen-content.krug-enter>*:nth-child(4){animation-delay:58ms}.screen-content.krug-enter>*:nth-child(n+5){animation-delay:72ms}
+.quick-grid.krug-stagger .quick-card,.service-list.krug-stagger .service-card,.booking-list.krug-stagger .booking-card{animation:krug-rise 340ms var(--ease-out) both}
+.quick-grid.krug-stagger>*:nth-child(2),.service-list.krug-stagger>*:nth-child(2),.booking-list.krug-stagger>*:nth-child(2){animation-delay:35ms}
+.quick-grid.krug-stagger>*:nth-child(3),.service-list.krug-stagger>*:nth-child(3),.booking-list.krug-stagger>*:nth-child(3){animation-delay:70ms}
+.quick-grid.krug-stagger>*:nth-child(4),.service-list.krug-stagger>*:nth-child(4),.booking-list.krug-stagger>*:nth-child(4){animation-delay:105ms}
+.quick-grid.krug-stagger>*:nth-child(n+5),.service-list.krug-stagger>*:nth-child(n+5),.booking-list.krug-stagger>*:nth-child(n+5){animation-delay:130ms}
+
+/* Home has a restrained orange orbit instead of extra labels. */
+.home-hero{isolation:isolate;overflow:visible!important}
+.home-hero::after{content:"";position:absolute;width:132px;height:132px;border:1px solid color-mix(in srgb,var(--accent) 38%,transparent);border-radius:50%;right:-62px;top:-44px;z-index:-1;opacity:.55;animation:krug-orbit 9s linear infinite}
+.home-hero::before{content:"";position:absolute;width:54px;height:54px;border-radius:50%;right:6px;top:34px;background:radial-gradient(circle at 35% 35%,#ffb071 0,var(--accent) 35%,#9b3510 100%);filter:blur(.1px);opacity:.12;z-index:-1;animation:krug-breathe 4.5s ease-in-out infinite}
+
+/* Navigation: small active lift and no chunky background block. */
+.main-navigation [aria-current="page"]{background:transparent!important;transform:translateY(-2px)}
+.main-navigation [aria-current="page"]::after{content:"";width:18px;height:2px;border-radius:999px;background:var(--accent);display:block;position:absolute;bottom:1px;left:50%;transform:translateX(-50%);animation:krug-line 240ms var(--ease-out)}
+.main-navigation button{position:relative}
+.main-navigation button svg{width:22px;height:22px;transition:transform var(--motion) var(--ease-spring)}
+.main-navigation [aria-current="page"] svg{transform:scale(1.08)}
+
+/* Loading becomes a skeleton-like shimmer instead of a plain extra line. */
+.loading-state{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px;padding:16px 0}
+.loading-state::before{content:"";width:18px;height:18px;border-radius:50%;border:2px solid #343531;border-top-color:var(--accent);animation:krug-spin .8s linear infinite}
+
+/* Dialogs and success state. */
+dialog[open]{animation:krug-dialog-in 220ms var(--ease-out)}
+dialog[open]::backdrop{animation:krug-backdrop-in 220ms ease both}
+.success-icon{animation:krug-success 560ms var(--ease-spring)}
+.notice:not([hidden]){animation:krug-notice 260ms var(--ease-out)}
+
+/* Cleaner copy blocks: keep content, lose repetitive framing. */
+.price-panel{border:1px solid #292a27;background:#151615}
+.summary{background:#151615}
+.booking-card{background:#151615}
+.home-bonus{border-block-color:#292a27}
+
+@keyframes krug-rise{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
+@keyframes krug-select{0%{transform:scale(.97)}65%{transform:scale(1.018)}100%{transform:scale(1)}}
+@keyframes krug-orbit{to{transform:rotate(360deg)}}
+@keyframes krug-breathe{0%,100%{transform:scale(.86);opacity:.08}50%{transform:scale(1.08);opacity:.17}}
+@keyframes krug-line{from{opacity:0;transform:translateX(-50%) scaleX(.25)}to{opacity:1;transform:translateX(-50%) scaleX(1)}}
+@keyframes krug-spin{to{transform:rotate(360deg)}}
+@keyframes krug-dialog-in{from{opacity:0;transform:translateY(12px) scale(.985)}to{opacity:1;transform:none}}
+@keyframes krug-backdrop-in{from{opacity:0}to{opacity:1}}
+@keyframes krug-success{0%{opacity:0;transform:scale(.5) rotate(-14deg)}70%{transform:scale(1.08) rotate(2deg)}100%{opacity:1;transform:none}}
+@keyframes krug-notice{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}
+}
