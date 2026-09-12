@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'api/**'
+      - 'tests/api/**'
       - 'apps/miniapp/**'
       - 'supabase/migrations/**'
       - 'supabase/tests/**'
@@ -43,7 +44,7 @@ jobs:
       - name: Run Mini App tests
         run: node --test apps/miniapp/tests/*.test.cjs
       - name: Run API unit tests
-        run: node --test api/tests/*.test.cjs
+        run: node --test tests/api/*.test.cjs
       - name: Install isolated SQL test engine
         run: npm install --prefix "$RUNNER_TEMP/krug-sql" --ignore-scripts --no-audit --no-fund @electric-sql/pglite@0.3.14
       - name: Execute migration and staff scheduling tests
