@@ -3,9 +3,9 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const fs = require('node:fs');
 const path = require('node:path');
-function setup(bookings = [], user = null) {
+function setup(bookings = [], user = null, storage = null) {
   const window = { KrugData: { getMyBookings: async () => structuredClone(bookings) }, KrugTelegram: { getTelegramUser: () => user } };
-  const localStorage={getItem:()=>null,setItem:()=>{}};
+  const localStorage=storage || {getItem:()=>null,setItem:()=>{}};
   const context = vm.createContext({ window, localStorage, Date, Intl, crypto: require('node:crypto').webcrypto });
   for (const file of ['booking.js','client.js','loyalty.js','account.js']) vm.runInContext(fs.readFileSync(path.join(__dirname,'..',file),'utf8'),context);
   return window;
@@ -24,7 +24,7 @@ test('fallback profile and completed-only statistics use adapters, not pending a
   assert.equal(profile.totalSpent,5400);
   assert.equal(profile.id,'krug-mock-client');
   const fallback = await setup().KrugClient.getCurrentClient();
-  assert.equal(fallback.name,'Демо-профиль');
+  assert.equal(fallback.name,'Профиль');
   assert.equal(fallback.telegram,'');
   assert.equal(fallback.phone,'');
   assert.equal(fallback.visits,0);
@@ -38,6 +38,12 @@ test('Telegram data prefills profile without changing identity or inventing phon
     assert.equal(profile.phone,'');
     assert.equal(profile.id,'krug-mock-client');
   }
+});
+test('corrupted or unavailable local profile storage cannot crash the live app', async () => {
+  const corrupted={getItem:()=>'{bad json',setItem:()=>{throw Error('quota');}};
+  const profile=await setup([], {id:987,first_name:'Анна'}, corrupted).KrugClient.getCurrentClient();
+  assert.equal(profile.name,'Анна');
+  assert.equal(profile.telegramUserId,987);
 });
 test('live loyalty never invents a demo balance without Telegram', async () => {
   const {KrugLoyalty: loyalty} = setup();
