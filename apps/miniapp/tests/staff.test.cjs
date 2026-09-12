@@ -16,11 +16,13 @@ test('automatic choices follow new time; unavailable manual choices require expl
  assert.equal(B.reconcileStaff(d,availability()).ready,false);
  B.chooseStaff(d,'',people);assert.equal(B.reconcileStaff(d,availability()).ready,true);
 });
-test('required staff, empty candidates, hidden selection and changed service',()=>{
- const d=draft();B.chooseStaff(d,'',people);assert.equal(B.reconcileStaff(d,availability(people,'required')).ready,true);assert.ok(d.staffId);
- assert.equal(B.reconcileStaff(d,availability([])).ready,false);
- assert.equal(B.reconcileStaff(d,availability([],'none')).ready,true);assert.equal(d.staffId,null);
- B.changeService(d,{id:'rental',pricingType:'hourly'});assert.equal(d.staffChoice,'auto');assert.equal(d.staffId,null);
+test('optional staff never blocks a free room; required staff still does',()=>{
+ const d=draft();
+ assert.equal(B.reconcileStaff(d,availability([],'optional',null)).ready,true);assert.equal(d.staffId,null);
+ B.chooseStaff(d,'',people);assert.equal(B.reconcileStaff(d,availability(people,'required')).ready,true);assert.ok(d.staffId);
+ const required=draft();assert.equal(B.reconcileStaff(required,availability([],'required',null)).ready,false);
+ assert.equal(B.reconcileStaff(required,availability([],'none')).ready,true);assert.equal(required.staffId,null);
+ B.changeService(required,{id:'rental',pricingType:'hourly'});assert.equal(required.staffChoice,'auto');assert.equal(required.staffId,null);
 });
 test('badge uses Moscow calendar date around midnight',()=>{
  assert.equal(B.staffBadge('2030-01-02',new Date('2030-01-01T21:05:00Z')),'Сегодня работает');
