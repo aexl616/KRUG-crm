@@ -210,7 +210,7 @@ window.KrugBooking = (() => {
       draft.staffInvalid=false;
     }
     draft.staffContext=context;
-    return {mode,staff,message,ready:mode==='none' || (!!staff.length && !draft.staffInvalid && (mode!=='required' || !!draft.staffId))};
+    return {mode,staff,message,ready:mode==='none' || (mode==='optional' && !draft.staffInvalid) || (!!staff.length && !draft.staffInvalid && !!draft.staffId)};
   }
   function chooseStaff(draft, id, staff) {
     const chosen=staff.find(row=>row.id===id);
