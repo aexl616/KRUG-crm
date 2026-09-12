@@ -57,6 +57,10 @@
     return `miniapp-booking-${remoteId}`;
   }
 
+  function localPaymentId(remoteId) {
+    return `miniapp-payment-${remoteId}`;
+  }
+
   function cleanMiniAppClients(rows) {
     const seen = new Set();
     return (Array.isArray(rows) ? rows : []).filter(client => {
@@ -73,6 +77,17 @@
     return (Array.isArray(rows) ? rows : []).filter(booking => {
       if (!booking || booking.source !== 'miniapp') return true;
       const key = String(booking.miniAppBookingId || booking.id || '');
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  function cleanMiniAppPayments(rows) {
+    const seen = new Set();
+    return (Array.isArray(rows) ? rows : []).filter(payment => {
+      if (!payment || payment.source !== 'miniapp') return true;
+      const key = String(payment.miniAppBookingId || payment.id || '');
       if (!key || seen.has(key)) return false;
       seen.add(key);
       return true;
@@ -166,6 +181,7 @@
         status: statusMap[remote.status] || 'заявка',
         comment: String(remote.comment || ''),
         paymentStatus: String(remote.paymentStatus || 'unpaid'),
+        paidAt: remote.paidAt || existing?.paidAt || '',
         paidAmount: Number(remote.paidAmount || 0),
         paymentMethod: String(remote.paymentMethod || ''),
         bonusReserved: Number(remote.bonusReserved || 0),
@@ -187,6 +203,53 @@
     }
 
     if (changed) state.bookings = result;
+    return { changed, bookings: result };
+  }
+
+  function mergePayments(remoteBookings, clients, bookings) {
+    const original = Array.isArray(state.payments) ? state.payments : [];
+    const result = cleanMiniAppPayments(original);
+    let changed = JSON.stringify(original) !== JSON.stringify(result);
+
+    for (const remote of remoteBookings) {
+      if (!remote?.id || remote.paymentStatus !== 'paid' || remote.paidAmount == null) continue;
+      const remoteId = String(remote.id);
+      const localBooking = bookings.find(row => String(row.miniAppBookingId || '') === remoteId);
+      if (!localBooking) continue;
+      const client = clients.find(row => String(row.miniAppClientId || '') === String(remote.clientId || ''));
+      const existing = result.find(payment => payment.source === 'miniapp' && String(payment.miniAppBookingId || '') === remoteId)
+        || result.find(payment => payment.id === localPaymentId(remoteId));
+      const paidDate = String(remote.paidAt || remote.date || '').slice(0, 10) || String(remote.date || '');
+      const next = {
+        ...(existing || {}),
+        id: existing?.id || localPaymentId(remoteId),
+        source: 'miniapp',
+        miniAppBookingId: remoteId,
+        bookingId: localBooking.id,
+        date: paidDate,
+        client: String(remote.clientName || client?.name || localBooking.client || ''),
+        service: String(remote.serviceName || localBooking.serviceName || localBooking.service || 'Услуга Mini App'),
+        amount: Number(remote.paidAmount || 0),
+        method: String(remote.paymentMethod || 'На студии'),
+        comment: 'Оплата записи из Mini App',
+        employee: existing?.employee || localBooking.employee || '',
+        soundEngineer: existing?.soundEngineer || '',
+        performer: existing?.performer || ''
+      };
+
+      if (existing) {
+        const index = result.findIndex(payment => payment.id === existing.id);
+        if (index >= 0 && JSON.stringify(result[index]) !== JSON.stringify(next)) {
+          result[index] = next;
+          changed = true;
+        }
+      } else {
+        result.push(next);
+        changed = true;
+      }
+    }
+
+    if (changed) state.payments = result;
     return changed;
   }
 
@@ -206,19 +269,21 @@
       if (!overview || !bookings) return;
       const fingerprint = JSON.stringify({
         clients: (overview.clients || []).map(row => [row.id,row.updatedAt,row.category,row.banned,row.loyaltyBalance]),
-        bookings: (bookings || []).map(row => [row.id,row.status,row.date,row.startTime,row.endTime,row.paymentStatus,row.paidAmount,row.bonusReserved,row.amountDue])
+        bookings: (bookings || []).map(row => [row.id,row.status,row.date,row.startTime,row.endTime,row.paymentStatus,row.paidAt,row.paidAmount,row.paymentMethod,row.bonusReserved,row.amountDue])
       });
       if (fingerprint === lastFingerprint) return;
 
+      const remoteBookings = Array.isArray(bookings) ? bookings : [];
       const clientResult = mergeClients(Array.isArray(overview.clients) ? overview.clients : []);
-      const bookingChanged = mergeBookings(Array.isArray(bookings) ? bookings : [], clientResult.clients);
+      const bookingResult = mergeBookings(remoteBookings, clientResult.clients);
+      const paymentChanged = mergePayments(remoteBookings, clientResult.clients, bookingResult.bookings);
       lastFingerprint = fingerprint;
 
-      if (clientResult.changed || bookingChanged) {
+      if (clientResult.changed || bookingResult.changed || paymentChanged) {
         saveState();
         if (canRenderSafely() && typeof render === 'function') render();
         document.dispatchEvent(new CustomEvent('krug:miniapp-synced', {
-          detail: { clients: (overview.clients || []).length, bookings: (bookings || []).length }
+          detail: { clients: (overview.clients || []).length, bookings: remoteBookings.length }
         }));
       }
     } catch (error) {
