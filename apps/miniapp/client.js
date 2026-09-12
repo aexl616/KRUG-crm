@@ -1,9 +1,22 @@
-/* Client profile adapter. Local profile remains as UI cache while the CRM backend is authoritative. */
+/* Client profile adapter. Local profile remains as a UI cache while the CRM backend is authoritative. */
 window.KrugClient = (() => {
-  const fallback = { id: 'krug-mock-client', name: 'Демо-профиль', telegram: '', phone: '' };
+  const fallback = { id: 'krug-mock-client', name: 'Профиль', telegram: '', phone: '' };
   const PROFILE_KEY='krug_mini_client_v1';
-  function readProfile(){const raw=localStorage.getItem(PROFILE_KEY);return raw ? JSON.parse(raw) : {};}
-  function writeProfile(profile){localStorage.setItem(PROFILE_KEY,JSON.stringify(profile));}
+  let memoryProfile={};
+  function readProfile(){
+    try{
+      const raw=localStorage.getItem(PROFILE_KEY);
+      if(!raw)return {...memoryProfile};
+      const value=JSON.parse(raw);
+      if(!value || typeof value!=='object' || Array.isArray(value))return {...memoryProfile};
+      memoryProfile={...value};
+      return {...memoryProfile};
+    }catch{return {...memoryProfile};}
+  }
+  function writeProfile(profile){
+    memoryProfile={...profile};
+    try{localStorage.setItem(PROFILE_KEY,JSON.stringify(profile));}catch{/* Remote profile remains authoritative even when device storage is unavailable. */}
+  }
 
   function telegramHeaders(){
     const initData=window.KrugTelegram?.getInitData?.() || '';
