@@ -1,5 +1,5 @@
 const {test}=require('node:test'),assert=require('node:assert/strict'),path=require('node:path');
-const base=path.resolve(__dirname,'..');
+const base=path.resolve(__dirname,'../../api');
 const id='11111111-1111-4111-8111-111111111111';
 const body={requestId:id,serviceId:'recording',date:'2030-01-02',startTime:'10:00',durationHours:1,client:{name:'Анна',phone:'+79991234567',telegramUserId:123}};
 const res=()=>({statusCode:200,setHeader(){},status(n){this.statusCode=n;return this},json(data){this.body=data;return this}});
