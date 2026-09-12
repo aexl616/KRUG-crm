@@ -2,9 +2,9 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const path=require('node:path');
 
-const handlerPath=path.resolve(__dirname,'../app-admin.js');
-const supabasePath=path.resolve(__dirname,'../_lib/supabase-server.js');
-const httpPath=path.resolve(__dirname,'../_lib/http.js');
+const handlerPath=path.resolve(__dirname,'../../api/app-admin.js');
+const supabasePath=path.resolve(__dirname,'../../api/_lib/supabase-server.js');
+const httpPath=path.resolve(__dirname,'../../api/_lib/http.js');
 const bookingId='11111111-1111-4111-8111-111111111111';
 
 function response(){
