@@ -13,6 +13,7 @@ function sessionToken(req) {
 
 function mapError(error) {
   const message = String(error?.message || error?.details?.message || '');
+  if (message.includes('SLOT_UNAVAILABLE')) return [409, 'SLOT_UNAVAILABLE', 'Это время комнаты уже занято. Обнови календарь и выбери другое время.'];
   if (message.includes('SUPABASE_SERVER_SECRET_REQUIRED')) return [503, 'SERVER_SECRET_REQUIRED', 'Серверный доступ к базе ещё не настроен.'];
   if (message.includes('CRM_SESSION_INVALID')) return [401, 'CRM_SESSION_INVALID', 'Сессия истекла. Войди снова.'];
   if (message.includes('CRM_FORBIDDEN')) return [403, 'CRM_FORBIDDEN', 'У этой роли нет прав менять общую базу.'];

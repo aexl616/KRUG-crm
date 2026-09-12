@@ -43,6 +43,7 @@ module.exports = async function handler(req, res) {
   }
 
   try {
+    res.setHeader('Cache-Control', 'no-store');
     const data = await supabasePublic('rpc/krug_available_slots', {
       method: 'POST',
       body: JSON.stringify({

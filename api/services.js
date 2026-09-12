@@ -29,6 +29,7 @@ function normalizeService(row) {
     publicCategory: row.public_category,
     publicVisible: row.public_visible,
     active: row.active,
+    staffSelection: row.staff_selection || 'none',
     legacyOnly: row.legacy_only,
     selectDuration: isRentalPackage ? false : row.select_duration,
     minDurationHours: row.min_duration_hours == null ? null : Number(row.min_duration_hours),

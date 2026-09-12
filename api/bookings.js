@@ -15,6 +15,9 @@ function mapBookingError(error) {
   const message = String(error?.message || error?.details?.message || '');
   if (message.includes('SUPABASE_SERVER_SECRET_REQUIRED')) return [503, 'SERVER_SECRET_REQUIRED', 'Серверный доступ к базе ещё не настроен.'];
   if (message.includes('USER_BANNED')) return [403, 'USER_BANNED', 'Доступ к записи через Mini App ограничен. Свяжись со студией.'];
+  if (message.includes('STAFF_UNAVAILABLE')) return [409, 'STAFF_UNAVAILABLE', 'Специалист уже недоступен на это время. Выбери другого или другое время.'];
+  if (message.includes('STAFF_REQUIRED')) return [400, 'STAFF_REQUIRED', 'Для этой услуги выбери специалиста.'];
+  if (message.includes('STAFF_NOT_SUPPORTED')) return [400, 'STAFF_NOT_SUPPORTED', 'Для этой услуги специалист не требуется.'];
   if (message.includes('SLOT_UNAVAILABLE')) return [409, 'SLOT_UNAVAILABLE', 'Это время уже заняли. Выбери другое.'];
   if (message.includes('SERVICE_UNAVAILABLE')) return [400, 'SERVICE_UNAVAILABLE', 'Эта услуга сейчас недоступна.'];
   if (message.includes('DURATION_UNAVAILABLE')) return [400, 'DURATION_UNAVAILABLE', 'Эта длительность недоступна для услуги.'];
@@ -40,6 +43,8 @@ module.exports = async function handler(req, res) {
 
   const requestId = String(body.requestId || '');
   const serviceId = String(body.serviceId || '');
+  const staffId = body.staffId == null || body.staffId === '' ? null : String(body.staffId);
+  if (staffId !== null && staffId.length > 120) return apiError(res, 400, 'INVALID_STAFF');
   const date = String(body.date || '');
   const startTime = String(body.startTime || '');
   const durationHours = Number(body.durationHours);
@@ -65,7 +70,7 @@ module.exports = async function handler(req, res) {
   try {
     const authUser = resolveTelegramUser(req, claimedTelegramUserId);
     const telegramUserId = authUser?.id || claimedTelegramUserId;
-    const booking = await supabaseServer('rpc/krug_create_booking_v3', {
+    const booking = await supabaseServer('rpc/krug_create_booking_v4', {
       method: 'POST',
       body: JSON.stringify({
         p_request_id: requestId,
@@ -78,7 +83,8 @@ module.exports = async function handler(req, res) {
         p_client_telegram: telegram || null,
         p_telegram_user_id: telegramUserId,
         p_comment: comment,
-        p_use_bonuses: useBonuses
+        p_use_bonuses: useBonuses,
+        p_staff_id: staffId
       })
     });
     processDueNotifications(10).catch(error => console.warn('[KRUG API] telegram booking notice delayed', error.message || error));

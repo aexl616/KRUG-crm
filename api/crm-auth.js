@@ -27,8 +27,11 @@ async function table(path, method, body) {
 
 function mapError(error) {
   const message = String(error?.message || error?.details?.message || '');
+  if (message.includes('bookings_staff_id_fkey')) return [409, 'CRM_STAFF_IN_USE', 'Сотрудник связан с записями. Его можно отключить, но нельзя удалить.'];
   if (message.includes('SUPABASE_SERVER_SECRET_REQUIRED')) return [503, 'SERVER_SECRET_REQUIRED', 'Серверная авторизация CRM ещё не настроена.'];
   if (message.includes('ADMIN_UNAUTHORIZED')) return [401, 'BOOTSTRAP_UNAUTHORIZED', 'Неверный ключ управления Mini App.'];
+  if (message.includes('STAFF_SCHEDULE_CONFLICT')) return [409, 'STAFF_SCHEDULE_CONFLICT', 'График изменён в другом окне. Закрой и открой график заново.'];
+  if (message.includes('STAFF_SCHEDULE_INVALID') || /check constraint|foreign key constraint|invalid input syntax/.test(message)) return [400, 'STAFF_SCHEDULE_INVALID', 'Проверь интервалы, услуги и поля профиля.'];
   if (message.includes('CRM_AUTH_INVALID')) return [401, 'CRM_AUTH_INVALID', 'Неверный логин или пароль.'];
   if (message.includes('CRM_SESSION_INVALID')) return [401, 'CRM_SESSION_INVALID', 'Сессия истекла. Войди снова.'];
   if (message.includes('CRM_PASSWORD_WEAK')) return [400, 'CRM_PASSWORD_WEAK', 'Пароль должен быть не короче 10 символов.'];
@@ -117,6 +120,13 @@ module.exports = async function handler(req, res) {
         const password = String(body.password || '');
         if (password.length < 10 || password.length > 200) return apiError(res, 400, 'CRM_PASSWORD_WEAK', 'Пароль должен быть не короче 10 символов.');
         data = await rpc('krug_crm_change_password', { p_token: token, p_password: password });
+      } else if (action === 'staffScheduleGet' || action === 'staffScheduleSave') {
+        const staffId = String(body.staffId || '');
+        if (!staffId || staffId.length > 120) return apiError(res, 400, 'INVALID_STAFF');
+        const save = action === 'staffScheduleSave';
+        if (save && (!body.profile || typeof body.profile !== 'object' || !Number.isInteger(body.expectedVersion))) return apiError(res, 400, 'STAFF_SCHEDULE_INVALID');
+        data = await rpc('krug_crm_staff_schedule', { p_token: token, p_staff_id: staffId,
+          p_profile: save ? body.profile : null, p_expected_version: save ? body.expectedVersion : null });
       } else if (action === 'staffList') {
         data = await rpc('krug_crm_staff_list', { p_token: token });
       } else if (action === 'staffCreate') {
