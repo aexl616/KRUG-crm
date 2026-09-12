@@ -20,6 +20,7 @@ function mapError(error) {
   if (message.includes('SUPABASE_SERVER_SECRET_REQUIRED')) return [503, 'SERVER_SECRET_REQUIRED', 'Серверная авторизация CRM ещё не настроена.'];
   if (message.includes('CRM_AUTH_INVALID')) return [401, 'CRM_AUTH_INVALID', 'Неверный логин или пароль.'];
   if (message.includes('CRM_SESSION_INVALID')) return [401, 'CRM_SESSION_INVALID', 'Сессия истекла. Войди снова.'];
+  if (message.includes('CRM_PASSWORD_WEAK')) return [400, 'CRM_PASSWORD_WEAK', 'Новый пароль должен быть не короче 10 символов.'];
   return [502, 'CRM_AUTH_UNAVAILABLE', 'Авторизация CRM временно недоступна.'];
 }
 
@@ -39,12 +40,16 @@ module.exports = async function handler(req, res) {
       const password = String(body.password || '');
       if (!login || !password || login.length > 120 || password.length > 300) return apiError(res, 400, 'INVALID_CREDENTIALS');
       data = await rpc('krug_crm_login', { p_login: login, p_password: password });
-    } else if (action === 'session' || action === 'logout') {
+    } else if (action === 'session' || action === 'logout' || action === 'changePassword') {
       const token = bearer(req);
       if (!UUID_RE.test(token)) return apiError(res, 401, 'CRM_SESSION_REQUIRED', 'Войди в CRM.');
-      data = action === 'session'
-        ? await rpc('krug_crm_session_get', { p_token: token })
-        : await rpc('krug_crm_logout', { p_token: token });
+      if (action === 'session') data = await rpc('krug_crm_session_get', { p_token: token });
+      else if (action === 'logout') data = await rpc('krug_crm_logout', { p_token: token });
+      else {
+        const password = String(body.password || '');
+        if (password.length < 10 || password.length > 200) return apiError(res, 400, 'CRM_PASSWORD_WEAK', 'Новый пароль должен быть не короче 10 символов.');
+        data = await rpc('krug_crm_change_password', { p_token: token, p_password: password });
+      }
     } else {
       return apiError(res, 400, 'UNKNOWN_ACTION');
     }
