@@ -1,48 +1,40 @@
 'use strict';
-
-const { supabaseServer } = require('../_lib/supabase-server');
-const { readJsonBody, apiError } = require('../_lib/http');
-
-function token(req) {
-  const value = String(req.headers.authorization || '');
-  const match = value.match(/^Bearer\s+(.+)$/i);
-  return match ? match[1].trim() : '';
-}
-
-module.exports = async function handler(req,res) {
-  if (req.method !== 'POST') {
-    res.setHeader('Allow','POST');
-    return apiError(res,405,'METHOD_NOT_ALLOWED');
-  }
-  const admin = token(req);
-  if (!admin) return apiError(res,401,'ADMIN_TOKEN_REQUIRED');
-  const body = readJsonBody(req);
-  if (!body) return apiError(res,400,'INVALID_JSON');
-  const action = String(body.action || 'overview');
-  try {
-    let data;
-    if (action === 'overview') {
-      data = await supabaseServer('rpc/krug_admin_notifications_overview', { method:'POST', body:JSON.stringify({ p_token:admin }) });
-    } else if (action === 'createCampaign') {
-      const message = String(body.message || '').trim();
-      const segment = String(body.segment || 'all');
-      const buttonText = String(body.buttonText || '').trim();
-      const buttonUrl = String(body.buttonUrl || '').trim();
-      if (!message || message.length > 3500) return apiError(res,400,'INVALID_CAMPAIGN_MESSAGE','Сообщение должно быть от 1 до 3500 символов.');
-      if (!['all','app_registered','app_visited'].includes(segment)) return apiError(res,400,'INVALID_CAMPAIGN_SEGMENT');
-      if (buttonUrl && !/^https:\/\//i.test(buttonUrl)) return apiError(res,400,'INVALID_BUTTON_URL','Ссылка должна начинаться с https://');
-      data = await supabaseServer('rpc/krug_admin_create_campaign', { method:'POST', body:JSON.stringify({
-        p_token:admin,p_message:message,p_segment:segment,p_button_text:buttonText||null,p_button_url:buttonUrl||null
-      }) });
-    } else {
-      return apiError(res,400,'UNKNOWN_ACTION');
+const {rpc,requireSecret,health}=require('../_lib/telegram');
+const {readJsonBody,apiError,applyPublicCors}=require('../_lib/http');
+const {verifyInitData,mapTelegramAuthError}=require('../_lib/telegram-auth');
+const content=require('../../telegram-content');
+const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+module.exports=async function(req,res){
+  if(applyPublicCors(req,res))return;
+  res.setHeader('Cache-Control','no-store, private');
+  if(req.method!=='POST')return apiError(res,405,'METHOD_NOT_ALLOWED');
+  const body=readJsonBody(req);if(!body)return apiError(res,400,'INVALID_JSON');
+  const action=String(body.action||'overview');
+  try{
+    requireSecret();let data;
+    if(action==='preferences'){
+      const user=verifyInitData(String(req.headers['x-telegram-init-data']||''),process.env.TELEGRAM_BOT_TOKEN);
+      data=await rpc('krug_telegram_preferences',{p_telegram_user_id:user.id,p_changes:body.changes??null});
+    }else{
+      const session=String(req.headers.authorization||'').replace(/^Bearer\s+/i,'');
+      if(!UUID.test(session))return apiError(res,401,'CRM_SESSION_REQUIRED');
+      if(!['overview','preview','saveTemplate','previewAudience','saveCampaign','launchCampaign','retry','testSend'].includes(action))return apiError(res,400,'UNKNOWN_ACTION');
+      if(action==='preview'){
+        await rpc('krug_telegram_admin',{p_session:session,p_action:'authorize'});
+        try{data=content.render(body.content);}catch(error){return apiError(res,400,'TELEGRAM_TEMPLATE_INVALID',error.message);}
+      }else{
+        data=await rpc('krug_telegram_admin',{p_session:session,p_action:action,p_payload:body});
+        if(action==='overview')data.health=await health();
+      }
     }
-    res.setHeader('Cache-Control','no-store');
     return res.status(200).json({ok:true,data});
-  } catch(error) {
-    const message = String(error?.message || '');
-    if (message.includes('ADMIN_UNAUTHORIZED')) return apiError(res,401,'ADMIN_UNAUTHORIZED','Неверный ключ управления Mini App.');
-    console.error('[KRUG API] telegram admin failed', action, error.status || error.name || 'Error');
-    return apiError(res,502,'TELEGRAM_ADMIN_FAILED','Не удалось выполнить операцию с Telegram.');
+  }catch(error){
+    const auth=mapTelegramAuthError(error);if(auth)return apiError(res,...auth);
+    const code=String(error.message||'');
+    if(code.includes('CRM_SESSION_INVALID'))return apiError(res,401,'CRM_SESSION_INVALID');
+    if(code.includes('CRM_FORBIDDEN'))return apiError(res,403,'CRM_FORBIDDEN');
+    if(code.includes('CONFLICT'))return apiError(res,409,'TELEGRAM_TEMPLATE_CONFLICT','Шаблон уже изменён. Обнови страницу.');
+    if(/TELEGRAM_.*(INVALID|REQUIRED|UNAVAILABLE|NOT_FOUND)/.test(code))return apiError(res,400,'TELEGRAM_INVALID_REQUEST','Проверь текст, переменные, получателей и время отправки.');
+    return apiError(res,502,'TELEGRAM_ADMIN_FAILED','Не удалось выполнить операцию Telegram.');
   }
 };

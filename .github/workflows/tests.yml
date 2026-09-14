@@ -18,6 +18,9 @@ on:
       - 'crm-miniapp-sync.js'
       - 'crm-remote-booking-actions.js'
       - 'index.html'
+      - 'telegram-*.js'
+      - 'telegram-management.css'
+      - 'vercel.json'
       - '.github/workflows/tests.yml'
   workflow_dispatch:
   pull_request:
@@ -42,6 +45,8 @@ jobs:
           node --check crm-cloud-sync.js
           node --check crm-miniapp-sync.js
           node --check crm-remote-booking-actions.js
+          node --check telegram-notifications-management.js
+          node --check telegram-content.js
       - name: Run Mini App tests
         run: node --test apps/miniapp/tests/*.test.cjs
       - name: Run API unit tests
@@ -59,4 +64,5 @@ jobs:
       - name: Check CRM schedule and Mini App booking in browser
         run: |
           node tests/staff-schedule-browser.cjs "$RUNNER_TEMP/krug-browser/node_modules/playwright"
+          node tests/telegram-browser.cjs "$RUNNER_TEMP/krug-browser/node_modules/playwright"
           node apps/miniapp/tests/browser.cjs "$RUNNER_TEMP/krug-browser/node_modules/playwright"

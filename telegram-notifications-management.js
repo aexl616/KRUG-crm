@@ -1,58 +1,101 @@
 (() => {
   'use strict';
-  const TOKEN_KEY='krug-app-admin-token';
-  const root=document.getElementById('app');
-  if(!root)return;
-
-  async function api(path,body){
-    const token=sessionStorage.getItem(TOKEN_KEY)||'';
-    if(!token)throw new Error('Нужен ключ управления Mini App.');
-    const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${token}`},body:JSON.stringify(body||{})});
-    const j=await r.json().catch(()=>({}));
-    if(!r.ok||!j.ok)throw new Error(j.message||'Ошибка Telegram.');
-    return j.data||j.stats||j;
+  const root=document.getElementById('app');if(!root)return;
+  const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const labels={welcome:'Первый /start',start_repeat:'Повторный /start',created:'Заявка получена',confirmed:'Запись подтверждена',changed:'Запись изменена',cancelled_studio:'Отмена студией',cancelled_client:'Отмена клиентом',reminder_24h:'За 24 часа',reminder_2h:'За 2 часа',reminder_30m:'За 30 минут',completed:'Сессия завершена',loyalty_accrual:'Начисление бонусов',loyalty_refund:'Возврат бонусов',campaign:'Рассылка',test:'Проверка связи',settings:'Настройки'};
+  const statuses={draft:'Черновик',scheduled:'Запланирована',sending:'Отправляется',completed:'Завершена',completed_with_errors:'Завершена с ошибками'};
+  let dialog,data,tab='overview',offset=0;
+  function allowed(){try{return ['owner','admin'].includes(JSON.parse(sessionStorage.getItem('krug-crm-session-user-v1')||'null')?.role);}catch{return false;}}
+  async function api(action,payload={}){
+    const token=window.KrugCrmAuth?.sessionToken?.()||'';
+    const response=await fetch('/api/telegram/admin',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({action,...payload})});
+    const result=await response.json();if(!response.ok||!result.ok)throw Error(result.message||'Не удалось выполнить запрос. Проверь сессию и подключение.');return result.data;
   }
-
-  async function processQueue(){
-    if(!sessionStorage.getItem(TOKEN_KEY))return;
-    try{await api('/api/telegram/process',{});}catch{}
+  function notice(text){if(dialog)dialog.querySelector('[data-tg-notice]').textContent=text;}
+  async function run(button,action){button.disabled=true;try{await action();}catch(error){notice(error.message);}finally{button.disabled=false;}}
+  const date=value=>value?new Date(value).toLocaleString('ru-RU'):'Нет данных';
+  const localInput=value=>{if(!value)return '';const d=new Date(value);return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);};
+  function shell(){
+    dialog.innerHTML=`<header class="tg-head"><div><small>КРУГ · СВЯЗЬ С КЛИЕНТАМИ</small><h2 id="tg-title">Telegram</h2></div><button class="app-mgmt-btn ghost" data-close aria-label="Закрыть Telegram">Закрыть</button></header>
+    <nav class="tg-tabs" aria-label="Разделы Telegram">${[['overview','Уведомления'],['templates','Шаблоны'],['campaigns','Рассылки'],['clients','Клиенты']].map(([id,title])=>`<button class="app-mgmt-btn ${tab===id?'primary':'ghost'}" data-tab="${id}" aria-pressed="${tab===id}">${title}</button>`).join('')}</nav>
+    <p data-tg-notice role="status" aria-live="polite"></p><div data-tg-body></div>`;
+    dialog.querySelector('[data-close]').onclick=()=>dialog.close();
+    dialog.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;render();});
   }
-
-  async function load(panel){
-    try{
-      const data=await api('/api/telegram/admin',{action:'overview'});
-      const campaigns=Array.isArray(data.campaigns)?data.campaigns:[];
-      panel.innerHTML=`
-        <div class="app-mgmt-section-head"><div><h2>Telegram уведомления</h2><p>Подтверждения, отмены, напоминания и рассылки клиентам Mini App.</p></div><button class="app-mgmt-btn ghost" data-tg-process>Обработать очередь</button></div>
-        <div class="app-mgmt-grid">
-          <article class="app-mgmt-stat"><span>В очереди</span><strong>${Number(data.pending||0)}</strong></article>
-          <article class="app-mgmt-stat"><span>Отправлено</span><strong>${Number(data.sent||0)}</strong></article>
-          <article class="app-mgmt-stat"><span>Ошибок</span><strong>${Number(data.failed||0)}</strong></article>
-        </div>
-        <form id="tgCampaignForm" class="app-mgmt-modal-fields" style="margin-top:20px">
-          <label class="app-mgmt-field">Получатели<select name="segment"><option value="all">Все пользователи Mini App</option><option value="app_registered">Зарегистрировались, ещё не были</option><option value="app_visited">Были на студии</option></select></label>
-          <label class="app-mgmt-field">Текст рассылки<textarea name="message" rows="5" maxlength="3500" required placeholder="Напиши сообщение…"></textarea></label>
-          <label class="app-mgmt-field">Текст кнопки<input name="buttonText" maxlength="64" placeholder="Записаться"></label>
-          <label class="app-mgmt-field">Ссылка кнопки<input name="buttonUrl" value="https://krug-miniapp.vercel.app" placeholder="https://…"></label>
-          <button class="app-mgmt-btn primary" type="submit">Поставить рассылку в очередь</button>
-          <div data-tg-result></div>
-        </form>
-        ${campaigns.length?`<div class="app-booking-list" style="margin-top:20px">${campaigns.slice(0,8).map(c=>`<article class="app-booking-row"><div class="app-booking-main"><small>${new Date(c.createdAt).toLocaleString('ru-RU')}</small><strong>${String(c.message||'').slice(0,100)}</strong><span>${c.segment}</span></div><div class="app-booking-money"><small>в очередь ${c.queued||0}</small></div></article>`).join('')}</div>`:''}`;
-
-      panel.querySelector('[data-tg-process]')?.addEventListener('click',async e=>{e.currentTarget.disabled=true;try{await processQueue();await load(panel);}finally{e.currentTarget.disabled=false;}});
-      panel.querySelector('#tgCampaignForm')?.addEventListener('submit',async e=>{
-        e.preventDefault(); const btn=e.currentTarget.querySelector('button[type="submit"]'); const out=e.currentTarget.querySelector('[data-tg-result]'); btn.disabled=true;
-        try{const f=new FormData(e.currentTarget); const result=await api('/api/telegram/admin',{action:'createCampaign',segment:f.get('segment'),message:f.get('message'),buttonText:f.get('buttonText'),buttonUrl:f.get('buttonUrl')}); out.textContent=`В очередь добавлено: ${result.queued||0}`; await processQueue(); setTimeout(()=>load(panel),700);}catch(err){out.textContent=err.message;}finally{btn.disabled=false;}
-      });
-    }catch(err){panel.innerHTML=`<div class="app-mgmt-error">${String(err.message||err)}</div>`;}
+  async function load(){data=await api('overview',{offset});render();}
+  function render(){
+    if(!dialog?.open)return;shell();const body=dialog.querySelector('[data-tg-body]');
+    if(!data){body.textContent='Загружаем Telegram…';return;}
+    if(tab==='overview'){
+      const h=data.health||{},stale=!data.last_run_at||Date.now()-new Date(data.last_run_at)>180000;
+      body.innerHTML=`<div class="tg-stats">${[['В очереди',data.pending],['Отправлено',data.sent],['Ошибок',data.failed]].map(([title,n])=>`<article class="app-mgmt-stat"><span>${title}</span><strong>${Number(n||0)}</strong></article>`).join('')}</div>
+       <article class="tg-card"><h3>${h.connected?'Бот на связи':'Нет связи с ботом'} ${h.username?'@'+escape(h.username):''}</h3><p>Webhook: ${h.webhook_matches?'подключён':h.webhook_set?'проверь адрес в настройках сервера':'не настроен'}. Входящих в очереди: ${Number(h.pending_updates||0)}.</p><p>Автоматическая доставка: ${stale?'нет свежего запуска':'работает'}. Последний запуск: ${escape(date(data.last_run_at))}.</p><p>Последнее входящее событие: ${escape(date(data.last_update_at))}. Ошибка webhook: ${h.last_error_at?escape(date(h.last_error_at*1000)):'нет'}.</p><button class="app-mgmt-btn ghost" data-refresh>Обновить статус</button></article>
+       <h3>Последние ошибки доставки</h3><div class="tg-list">${(data.errors||[]).map(e=>`<article class="tg-card"><strong>${escape(labels[e.kind]||e.kind)}</strong><p>${escape(e.last_error)} · попыток ${Number(e.attempts)} · ${escape(date(e.created_at))}</p>${e.status==='failed'?`<button class="app-mgmt-btn ghost" data-retry="${escape(e.id)}" data-uncertain="${e.last_error==='DELIVERY_UNCERTAIN'}">Повторить</button>`:''}</article>`).join('')||'<p>Ошибок нет.</p>'}</div>`;
+      body.querySelector('[data-refresh]').onclick=e=>run(e.currentTarget,load);bindRetry(body);
+    }else if(tab==='templates'){
+      body.innerHTML=`<p>Обязательные события записи отправляются независимо от подписки на новости. Напоминания клиент настраивает отдельно.</p><label class="app-mgmt-field">Событие<select data-template>${data.templates.map(t=>`<option value="${escape(t.kind)}">${escape(labels[t.kind]||t.kind)}</option>`).join('')}</select></label><div data-editor></div>`;
+      const select=body.querySelector('[data-template]');select.onchange=()=>templateEditor(body,select.value);templateEditor(body,select.value);
+    }else if(tab==='campaigns'){
+      body.innerHTML=`<p>Только клиенты с явным согласием на новости. Отписки и блокировки проверяются повторно перед доставкой.</p><form data-campaign class="tg-card">
+      <label class="app-mgmt-field">Начать с шаблона<select data-source><option value="">Свой текст</option>${data.templates.map(t=>`<option value="${escape(t.kind)}">${escape(labels[t.kind]||t.kind)}</option>`).join('')}</select></label>
+      ${fields({title:'',body:'',button_text:'Открыть КРУГ',button_target:'miniapp'})}
+      <label class="app-mgmt-field">Аудитория<select name="segment"><option value="all">Все подписанные Telegram-клиенты</option><option value="miniapp">Пользователи Mini App</option><option value="visited">Посетители студии</option></select></label>
+      <label class="app-mgmt-field">Тег клиента<select name="tag"><option value="">Все теги</option>${(data.tags||[]).map(t=>`<option value="${escape(t)}">${escape(t)}</option>`).join('')}</select></label><p class="tg-muted">Доступны теги связанных клиентов, сохранённые в общей CRM.</p>
+      <label class="app-mgmt-field">Когда отправить (время этого устройства)<input type="datetime-local" name="scheduled_at"></label><p class="tg-muted">Оставь пустым для отправки сейчас.</p>
+      <div class="tg-actions"><button type="button" class="app-mgmt-btn ghost" data-preview>Предпросмотр и получатели</button><button class="app-mgmt-btn primary" type="submit">Сохранить черновик</button></div><pre data-preview-output aria-live="polite"></pre></form>
+      <h3>Кампании</h3><div class="tg-list">${(data.campaigns||[]).map(c=>`<article class="tg-card"><strong>${escape(c.title||c.message.slice(0,80))}</strong><p>${escape(statuses[c.status]||c.status)} · ${escape(date(c.scheduled_at||c.created_at))}</p><p>Всего ${Number(c.queued_count)} · доставлено ${Number(c.sent_count)} · ошибок ${Number(c.failed_count)} · исключено ${Number(c.skipped_count||0)}</p>${c.status==='draft'?`<label class="app-mgmt-field">Время отправки<input type="datetime-local" data-schedule="${escape(c.id)}" value="${escape(localInput(c.scheduled_at))}"></label><button class="app-mgmt-btn primary" data-launch="${escape(c.id)}">Проверить и отправить</button>`:''}${c.failed_count?`<button class="app-mgmt-btn ghost" data-retry-campaign="${escape(c.id)}">Повторить ошибки</button>`:''}</article>`).join('')||'<p>Пока нет рассылок.</p>'}</div>`;
+      const form=body.querySelector('[data-campaign]');let requestId=crypto.randomUUID();bindPreview(form,true);
+      form.querySelector('[data-source]').onchange=e=>{const t=data.templates.find(t=>t.kind===e.target.value);if(t)fill(form,t);};
+      form.onsubmit=e=>{e.preventDefault();run(form.querySelector('[type="submit"]'),async()=>{
+        const scheduled=form.elements.scheduled_at.value;
+        const c=await api('saveCampaign',{request_id:requestId,content:read(form),audience:{segment:form.elements.segment.value,tag:form.elements.tag.value},scheduled_at:scheduled?new Date(scheduled).toISOString():null});
+        await load();const input=dialog.querySelector(`[data-schedule="${c.id}"]`);if(input)input.value=scheduled;
+        notice('Черновик сохранён. Проверь получателей перед запуском.');requestId=crypto.randomUUID();
+      });};
+      body.querySelectorAll('[data-launch]').forEach(b=>b.onclick=()=>run(b,async()=>{
+        const c=data.campaigns.find(c=>c.id===b.dataset.launch),count=await api('previewAudience',{audience:c.audience});
+        const when=body.querySelector(`[data-schedule="${c.id}"]`).value;
+        const text=window.KrugTelegramContent.render({title:c.title,body:c.message,button_text:c.button_text||'',button_target:c.button_target,button_url:c.button_url}).text;
+        if(!window.confirm(`${text}\n\nПолучателей сейчас: ${count.count}. Отправить ${when?new Date(when).toLocaleString('ru-RU'):'сейчас'}?`))return;
+        await api('launchCampaign',{id:c.id,scheduled_at:when?new Date(when).toISOString():null});await load();notice('Рассылка запущена. Доставку выполняет автоматическая очередь.');
+      }));bindRetry(body);
+    }else{
+      body.innerHTML=`<p>События записи обязательны. Клиент управляет новостями и напоминаниями командами /settings в боте.</p><div class="tg-list">${(data.clients||[]).map(c=>`<article class="tg-card"><strong>${escape(c.name)}</strong><p>Telegram ${escape(c.telegram_user_id)} · ${c.telegram_blocked_at?'Бот заблокирован':c.telegram_started_at?'Бот запущен':'/start ещё не получен'}</p><p>Новости: ${c.marketing_enabled?'включены':'выключены'}. Напоминания: ${c.reminders_enabled?'включены':'выключены'}.</p><button class="app-mgmt-btn ghost" data-test="${escape(c.id)}" ${c.telegram_blocked_at?'disabled':''}>Тестовое сообщение</button></article>`).join('')||'<p>Клиентов на этой странице нет.</p>'}</div><div class="tg-actions"><button class="app-mgmt-btn ghost" data-prev ${offset===0?'disabled':''}>Назад</button><span>Страница ${offset/100+1}</span><button class="app-mgmt-btn ghost" data-next ${(data.clients||[]).length<100?'disabled':''}>Далее</button></div>`;
+      body.querySelector('[data-prev]').onclick=e=>run(e.currentTarget,async()=>{offset=Math.max(0,offset-100);await load();});
+      body.querySelector('[data-next]').onclick=e=>run(e.currentTarget,async()=>{offset+=100;await load();});
+      body.querySelectorAll('[data-test]').forEach(b=>b.onclick=()=>run(b,async()=>{await api('testSend',{client_id:b.dataset.test});notice('Тестовое сообщение добавлено в очередь.');}));
+    }
   }
-
+  function fields(c){return `<div class="tg-fields"><label class="app-mgmt-field">Заголовок<input name="title" maxlength="160" value="${escape(c.title)}"></label><label class="app-mgmt-field">Сообщение<textarea name="body" rows="5" maxlength="3000" required>${escape(c.body)}</textarea></label><label class="app-mgmt-field">Текст кнопки<input name="button_text" maxlength="64" value="${escape(c.button_text)}"></label><label class="app-mgmt-field">Кнопка открывает<select name="button_target">${[['miniapp','Mini App'],['url','HTTPS-ссылку'],['none','Без кнопки']].map(([v,n])=>`<option value="${v}" ${v===c.button_target?'selected':''}>${n}</option>`).join('')}</select></label><label class="app-mgmt-field">HTTPS-ссылка<input name="button_url" value="${escape(c.button_url||'')}"></label></div><p class="tg-muted">Переменные: ${window.KrugTelegramContent.placeholders.map(p=>'{'+p+'}').join(', ')}</p>`;}
+  function read(form){return Object.fromEntries(['title','body','button_text','button_target','button_url'].map(k=>[k,form.elements[k].value]));}
+  function fill(form,c){for(const k of ['title','body','button_text','button_target','button_url'])form.elements[k].value=c[k]||'';}
+  function bindPreview(form,audience=false){form.querySelector('[data-preview]').onclick=e=>run(e.currentTarget,async()=>{
+    const preview=await api('preview',{content:read(form)});let result=preview.text+(preview.button_text&&preview.button_target!=='none'?`\n\n[ ${preview.button_text} ]`:'');
+    if(audience){const count=await api('previewAudience',{audience:{segment:form.elements.segment.value,tag:form.elements.tag.value}});result+=`\n\nПолучателей сейчас: ${count.count}`;}
+    form.querySelector('[data-preview-output]').textContent=result;
+  });}
+  function templateEditor(body,kind){
+    const t=data.templates.find(t=>t.kind===kind),holder=body.querySelector('[data-editor]');
+    holder.innerHTML=`<form class="tg-card">${fields(t)}<div class="tg-actions"><button type="button" class="app-mgmt-btn ghost" data-preview>Предпросмотр</button><button class="app-mgmt-btn primary" type="submit">Сохранить шаблон</button></div><pre data-preview-output aria-live="polite"></pre></form>`;
+    const form=holder.querySelector('form');bindPreview(form);
+    form.onsubmit=e=>{e.preventDefault();run(form.querySelector('[type="submit"]'),async()=>{const saved=await api('saveTemplate',{kind:t.kind,version:t.version,content:read(form)});Object.assign(t,saved);notice('Шаблон сохранён.');});};
+  }
+  function bindRetry(body){body.querySelectorAll('[data-retry],[data-retry-campaign]').forEach(b=>b.onclick=()=>run(b,async()=>{
+    const uncertain=b.dataset.uncertain==='true'||Boolean(b.dataset.retryCampaign);
+    if(uncertain&&!window.confirm('Для доставок с неизвестным результатом повтор может создать дубликат. Повторить?'))return;
+    const result=await api('retry',{id:b.dataset.retry||null,campaign_id:b.dataset.retryCampaign||null,acknowledge_uncertain:uncertain});await load();notice(`Повторно в очереди: ${result.retried}.`);
+  }));}
+  async function open(){
+    if(!allowed())return;if(dialog?.open)return;
+    dialog=document.createElement('dialog');dialog.className='tg-dialog';dialog.setAttribute('aria-labelledby','tg-title');document.body.append(dialog);
+    dialog.addEventListener('close',()=>{dialog.remove();dialog=null;data=null;},{once:true});dialog.showModal();render();
+    try{await load();}catch(error){notice(error.message);}
+  }
   function ensure(){
-    const screen=root.querySelector('.app-management-screen');
-    if(!screen||!sessionStorage.getItem(TOKEN_KEY)||screen.querySelector('#tgNotificationsPanel'))return;
-    const panel=document.createElement('section'); panel.id='tgNotificationsPanel'; panel.className='app-mgmt-card'; screen.appendChild(panel); load(panel); processQueue();
+    if(!allowed()){document.querySelectorAll('[data-tg-open]').forEach(n=>n.remove());dialog?.close();return;}
+    for(const nav of root.querySelectorAll('.nav,.mobile-tabs')){
+      if(nav.querySelector('[data-tg-open]'))continue;const b=document.createElement('button');b.type='button';b.dataset.tgOpen='';b.textContent='Telegram';b.onclick=open;nav.append(b);
+    }
   }
-  new MutationObserver(()=>queueMicrotask(ensure)).observe(root,{childList:true,subtree:true});
-  setInterval(processQueue,30000);
-  ensure();
+  new MutationObserver(()=>queueMicrotask(ensure)).observe(root,{childList:true,subtree:true});ensure();
 })();

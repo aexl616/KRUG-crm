@@ -1,72 +1,81 @@
 'use strict';
-
-const { supabaseServer } = require('./supabase-server');
-
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
-const API = BOT_TOKEN ? `https://api.telegram.org/bot${BOT_TOKEN}` : '';
-
-function ensureBot() {
-  if (!BOT_TOKEN) throw new Error('TELEGRAM_BOT_TOKEN_REQUIRED');
-}
-
-async function sendMessage(row) {
-  ensureBot();
-  const replyMarkup = row.button_text && row.button_url ? {
-    inline_keyboard: [[{ text: row.button_text, web_app: { url: row.button_url } }]]
-  } : undefined;
-  const response = await fetch(`${API}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: row.telegram_user_id,
-      text: row.text,
-      disable_web_page_preview: true,
-      ...(replyMarkup ? { reply_markup: replyMarkup } : {})
-    })
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok || !data.ok) {
-    const error = new Error(data?.description || `Telegram send failed (${response.status})`);
-    error.status = response.status;
-    throw error;
+const crypto=require('node:crypto');
+const {supabaseServer,hasServerSecret}=require('./supabase-server');
+const content=require('../../telegram-content');
+const rpc=(name,payload)=>supabaseServer(`rpc/${name}`,{method:'POST',body:JSON.stringify(payload),signal:AbortSignal.timeout(5000)});
+function safeEqual(a,b){const l=Buffer.from(String(a||'')),r=Buffer.from(String(b||''));return l.length>0&&l.length===r.length&&crypto.timingSafeEqual(l,r);}
+function requireSecret(){if(!hasServerSecret())throw Error('SUPABASE_SERVER_SECRET_REQUIRED');}
+async function botCall(method,payload={}){
+  const token=process.env.TELEGRAM_BOT_TOKEN;
+  if(!token)throw Error('TELEGRAM_BOT_TOKEN_REQUIRED');
+  let response,data;
+  try{
+    response=await fetch(`https://api.telegram.org/bot${token}/${method}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:AbortSignal.timeout(8000)});
+    data=await response.json();
+  }catch{throw Object.assign(Error('DELIVERY_UNCERTAIN'),{uncertain:true});}
+  if(!response.ok||!data.ok){
+    const status=Number(data.error_code||response.status);
+    throw Object.assign(Error(`TELEGRAM_${status}`),{status,retryAfter:Math.max(1,Math.min(86400,Number(data.parameters?.retry_after)||60)),uncertain:status>=500});
   }
   return data.result;
 }
-
-async function processDueNotifications(limit = 25) {
-  ensureBot();
-  const now = encodeURIComponent(new Date().toISOString());
-  const rows = await supabaseServer(`telegram_notifications?select=id,telegram_user_id,text,button_text,button_url,campaign_id,attempts&status=eq.pending&scheduled_at=lte.${now}&order=scheduled_at.asc&limit=${Math.max(1,Math.min(100,Number(limit)||25))}`);
-  const stats = { picked: Array.isArray(rows) ? rows.length : 0, sent: 0, failed: 0 };
-  for (const row of rows || []) {
-    try {
-      await supabaseServer(`telegram_notifications?id=eq.${row.id}`, {
-        method: 'PATCH',
-        headers: { Prefer: 'return=minimal' },
-        body: JSON.stringify({ status:'processing', attempts:Number(row.attempts||0)+1, last_error:null })
-      });
-      await sendMessage(row);
-      await supabaseServer(`telegram_notifications?id=eq.${row.id}`, {
-        method: 'PATCH', headers:{ Prefer:'return=minimal' }, body:JSON.stringify({ status:'sent', sent_at:new Date().toISOString() })
-      });
-      if (row.campaign_id) await supabaseServer(`telegram_campaigns?id=eq.${row.campaign_id}`, {
-        method:'PATCH', headers:{ Prefer:'return=minimal' }, body:JSON.stringify({})
-      }).catch(()=>{});
-      stats.sent++;
-    } catch (error) {
-      const attempts = Number(row.attempts||0)+1;
-      const retry = attempts < 4;
-      await supabaseServer(`telegram_notifications?id=eq.${row.id}`, {
-        method:'PATCH', headers:{ Prefer:'return=minimal' }, body:JSON.stringify({
-          status: retry ? 'pending' : 'failed',
-          scheduled_at: retry ? new Date(Date.now()+Math.min(30,attempts*5)*60000).toISOString() : undefined,
-          last_error:String(error.message||error).slice(0,500)
-        })
-      }).catch(()=>{});
-      stats.failed++;
+function miniappUrl(){
+  const url=new URL(process.env.TELEGRAM_MINI_APP_URL||'https://krug-miniapp.vercel.app');
+  if(url.protocol!=='https:'||url.username||url.password)throw Error('TELEGRAM_MINI_APP_URL_INVALID');return url.href;
+}
+async function sendMessage(row){
+  const target=row.button_target||'miniapp';
+  const button=target==='miniapp'?{web_app:{url:miniappUrl()}}:{url:row.button_url};
+  return botCall('sendMessage',{chat_id:row.telegram_user_id,text:row.text,disable_web_page_preview:true,
+    ...(row.button_text&&target!=='none'?{reply_markup:{inline_keyboard:[[{text:row.button_text,...button}]]}}:{})});
+}
+async function health(){
+  const configured=Boolean(process.env.TELEGRAM_BOT_TOKEN);
+  if(!configured)return {configured:false,connected:false};
+  try{
+    const [bot,hook]=await Promise.all([botCall('getMe'),botCall('getWebhookInfo')]);
+    return {configured:true,connected:true,username:bot.username,webhook_set:Boolean(hook.url),
+      webhook_matches:Boolean(process.env.TELEGRAM_WEBHOOK_URL)&&hook.url===process.env.TELEGRAM_WEBHOOK_URL,
+      pending_updates:hook.pending_update_count||0,last_error_at:hook.last_error_date||null};
+  }catch{return {configured:true,connected:false};}
+}
+async function processDueNotifications(limit=10){
+  requireSecret();if(!process.env.TELEGRAM_BOT_TOKEN)throw Error('TELEGRAM_BOT_TOKEN_REQUIRED');
+  const started=Date.now();
+  const templates=await supabaseServer('telegram_templates?select=*',{signal:AbortSignal.timeout(5000)});
+  const map=new Map((templates||[]).map(t=>[t.kind,t]));
+  const stats={picked:0,sent:0,failed:0,skipped:0};
+  for(let i=0;i<Math.min(10,Math.max(1,Number(limit)||10))&&Date.now()-started<30000;i++){
+    const [row]=await rpc('krug_telegram_claim',{p_limit:1});
+    if(!row)break;stats.picked++;
+    let payload;
+    try{
+      if(row.campaign_id){
+        payload=content.render(row.context?._content||{title:'',body:row.text,button_text:row.button_text||'',button_target:row.button_target,button_url:row.button_url},row.context);
+      }else{
+        const template=map.get(row.kind);
+        payload=template?content.render(template,row.context):{text:row.text,button_text:row.button_text,button_target:row.button_target,button_url:row.button_url};
+        if(!payload.text)throw Error('TEMPLATE_INVALID');
+        if(row.kind==='settings'){
+          const p=await rpc('krug_telegram_preferences',{p_telegram_user_id:row.telegram_user_id});
+          payload.text+=`\n\nНовости: ${p.marketing_enabled?'вкл':'выкл'}. Напоминания: ${p.reminders_enabled?'вкл':'выкл'}. За 30 мин: ${p.reminder_30m_enabled?'вкл':'выкл'}.`;
+        }
+      }
+    }catch{
+      await rpc('krug_telegram_finish',{p_id:row.id,p_lease:row.lease_token,p_result:'failed',p_code:'TEMPLATE_INVALID'});stats.failed++;continue;
     }
+    if(!await rpc('krug_telegram_delivery_check',{p_id:row.id,p_lease:row.lease_token})){stats.skipped++;continue;}
+    let result;
+    try{result=await sendMessage({...row,...payload});}
+    catch(error){
+      const outcome=error.status===403?'blocked':error.status===429?'retry':'failed';
+      await rpc('krug_telegram_finish',{p_id:row.id,p_lease:row.lease_token,p_result:outcome,
+        p_code:error.uncertain?'DELIVERY_UNCERTAIN':error.status?`TELEGRAM_${error.status}`:'DELIVERY_FAILED',p_retry_after:error.retryAfter||60});
+      stats.failed++;continue;
+    }
+    // A lost success acknowledgement leaves an ambiguous lease, never an automatic retry.
+    await rpc('krug_telegram_finish',{p_id:row.id,p_lease:row.lease_token,p_result:'sent',p_message_id:result.message_id});stats.sent++;
   }
   return stats;
 }
-
-module.exports = { sendMessage, processDueNotifications };
+module.exports={rpc,safeEqual,requireSecret,botCall,health,sendMessage,processDueNotifications};

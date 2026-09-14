@@ -1,5 +1,7 @@
 # КРУГ Mini App — запуск в Telegram
 
+> Для бота и уведомлений версии 0.12.0 используй [инструкцию патча](PATCH-0.12.0.md): новая миграция, webhook, Vault и Supabase Cron. Старый `/api/health` удалён; проверка Telegram теперь доступна в CRM → Telegram. Старые инструкции ниже описывают первоначальный запуск Mini App.
+
 Production URL: `https://krug-miniapp.vercel.app`
 
 Backend: `https://krug-crm.vercel.app/api/*`
