@@ -104,7 +104,7 @@ test('owner bootstrap rejects obviously malformed recovery key before database a
 
 test('staff schedule actions bind the session and optimistic version',async()=>{
   const {handler,calls}=load({rpcResult:{version:2}});const res=response();
-  const profile={schedule:{weekly:{},exceptions:{}},serviceIds:['recording']};
+  const profile={schedule:{mode:'cyclic',weekly:{},exceptions:{'2030-01-05':[]},cycle:{workDays:2,offDays:4,startDate:'2030-01-02',intervals:[{start:'22:00',end:'02:00'}]}},serviceIds:['recording']};
   await handler(req({action:'staffScheduleSave',staffId:'u2',profile,expectedVersion:1},session),res);
   assert.equal(res.statusCode,200);assert.equal(calls[0].route,'rpc/krug_crm_staff_schedule');
   assert.deepEqual(calls[0].body,{p_token:session,p_staff_id:'u2',p_profile:profile,p_expected_version:1});

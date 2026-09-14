@@ -31,7 +31,7 @@ function mapError(error) {
   if (message.includes('SUPABASE_SERVER_SECRET_REQUIRED')) return [503, 'SERVER_SECRET_REQUIRED', 'Серверная авторизация CRM ещё не настроена.'];
   if (message.includes('ADMIN_UNAUTHORIZED')) return [401, 'BOOTSTRAP_UNAUTHORIZED', 'Неверный ключ управления Mini App.'];
   if (message.includes('STAFF_SCHEDULE_CONFLICT')) return [409, 'STAFF_SCHEDULE_CONFLICT', 'График изменён в другом окне. Закрой и открой график заново.'];
-  if (message.includes('STAFF_SCHEDULE_INVALID') || /check constraint|foreign key constraint|invalid input syntax/.test(message)) return [400, 'STAFF_SCHEDULE_INVALID', 'Проверь интервалы, услуги и поля профиля.'];
+  if (message.includes('STAFF_SCHEDULE_INVALID') || /check constraint|foreign key constraint|invalid input syntax/.test(message)) return [400, 'STAFF_SCHEDULE_INVALID', 'Проверь тип графика, дату начала цикла, рабочие и выходные дни (1–366), интервалы и услуги.'];
   if (message.includes('CRM_AUTH_INVALID')) return [401, 'CRM_AUTH_INVALID', 'Неверный логин или пароль.'];
   if (message.includes('CRM_SESSION_INVALID')) return [401, 'CRM_SESSION_INVALID', 'Сессия истекла. Войди снова.'];
   if (message.includes('CRM_PASSWORD_WEAK')) return [400, 'CRM_PASSWORD_WEAK', 'Пароль должен быть не короче 10 символов.'];

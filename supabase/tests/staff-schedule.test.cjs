@@ -35,12 +35,50 @@ test('staff scheduling SQL: migrations, schedules, qualification, room, assignme
   assert.equal(await duty({...night,exceptions:{[next]:[{start:'00:00',end:'03:00'}]}},when('23:00'),when('01:00',next)),true);
   assert.equal(await value('select private.krug_validate_schedule($1)',[JSON.stringify({weekly:{1:[{start:'12:00',end:'12:00'}]},exceptions:{}})]),false);
   assert.equal(await value('select private.krug_validate_schedule($1)',[JSON.stringify({weekly:{},exceptions:{'2026-02-30':[]}})]),false);
+  const cyclic=(workDays=2,offDays=2,startDate=date,intervals=[{start:'10:00',end:'18:00'}])=>({mode:'cyclic',weekly:schedule.weekly,exceptions:{},cycle:{workDays,offDays,startDate,intervals}});
+  const shifted=async(days)=>value('select ($1::date+$2::integer)::text',[date,days]);
+  for(const [n,m] of [[2,2],[2,4],[3,3],[4,2],[5,7],[1,1],[366,366]]) {
+    const c=cyclic(n,m);
+    assert.equal(await value('select private.krug_validate_schedule($1)',[JSON.stringify(c)]),true);
+    for(const offset of [-1,0,n-1,n,n+m-1,n+m,2*(n+m)]) {
+      const d=await shifted(offset);
+      assert.equal(await duty(c,when('10:00',d),when('18:00',d)),offset>=0&&offset%(n+m)<n,`${n}/${m} day ${offset}`);
+    }
+  }
+  const c=cyclic(),rest=await shifted(2),before=await shifted(-1);
+  assert.equal(await duty({...c,mode:'weekly'},when('10:00'),when('18:00')),true);
+  assert.equal(await duty({...c,exceptions:{[date]:[]}},when('10:00'),when('11:00')),false);
+  for(const d of [rest,before]) assert.equal(await duty({...c,exceptions:{[d]:[{start:'10:00',end:'12:00'}]}},when('10:00',d),when('12:00',d)),true);
+  const cn=cyclic(1,1,date,[{start:'22:00',end:'02:00'}]);
+  assert.equal(await duty(cn,when('23:00'),when('02:00',next)),true);
+  assert.equal(await duty(cn,when('02:00',next),when('03:00',next)),false);
+  assert.equal(await duty({...cn,exceptions:{[next]:[]}},when('23:00'),when('01:00',next)),false);
+  assert.equal(await duty(cyclic(2,2,date,[{start:'10:00',end:'12:00'},{start:'13:00',end:'18:00'}]),when('11:00'),when('14:00')),false);
+  for(const anchor of ['2028-02-28','2029-12-31']) {
+    const third=await value('select ($1::date+2)::text',[anchor]);
+    assert.equal(await duty(cyclic(2,2,anchor),when('10:00',third),when('11:00',third)),false);
+  }
+  for(const invalid of [
+    {...c,mode:'unknown'},{...c,mode:null},{...c,cycle:null},
+    ...[0,-1,1.5,367,'2',null].flatMap(v=>['workDays','offDays'].map(key=>({...c,cycle:{...c.cycle,[key]:v}}))),
+    ...['','2026-02-30','2026-13-01',null].map(startDate=>({...c,cycle:{...c.cycle,startDate}})),
+    ...[[],null,[null],[{start:'25:00',end:'02:00'}],Array(9).fill({start:'10:00',end:'11:00'})].map(intervals=>({...c,cycle:{...c.cycle,intervals}})),
+    {mode:'cyclic',weekly:{},exceptions:{}},{weekly:{1:null},exceptions:{}}
+  ]) assert.equal(await value('select private.krug_validate_schedule($1)',[JSON.stringify(invalid)]),false,JSON.stringify(invalid));
   await db.exec("update public.studio_hours set is_open=true,opens_at='09:00',closes_at='23:00';update public.crm_staff_users set active=true,must_change_password=false;");
   const session=await value("insert into public.crm_staff_sessions(user_id) values('u1') returning token");
   const save=async(id,profile,version=0)=>value('select public.krug_crm_staff_schedule($1,$2,$3,$4)',[session,id,JSON.stringify(profile),version]);
-  const profile={name:'AE XL',published:true,priority:10,schedule,serviceIds:['recording']};
+  const profile={name:'AE XL',published:true,priority:10,schedule:cyclic(),serviceIds:['recording']};
   const saved=await save('u1',profile);assert.equal(saved.version,1);
   await save('u2',{...profile,name:'Миша',priority:20});
+  const loaded=await value('select public.krug_crm_staff_schedule($1,$2)',[session,'u1']);
+  assert.deepEqual(loaded.schedule,cyclic());
+  await assert.rejects(save('u1',{...profile,schedule:{...c,cycle:{...c.cycle,workDays:0}}},1),/STAFF_SCHEDULE_INVALID/);
+  const restAvailability=()=>value('select public.krug_available_slots($1,1,$2)',[rest,'recording']);
+  let restSlots=await restAvailability();assert.ok(restSlots.slots.includes('10:00'));assert.deepEqual(restSlots.staffBySlot['10:00'].staff,[]);
+  await db.exec("update public.services set staff_selection='required' where id='recording'");
+  assert.equal((await restAvailability()).slots.length,0);
+  await db.exec("update public.services set staff_selection='optional' where id='recording'");
   await assert.rejects(save('u1',profile),/STAFF_SCHEDULE_CONFLICT/);
   const engineerSession=await value("insert into public.crm_staff_sessions(user_id) values('u2') returning token");
   await assert.rejects(value('select public.krug_crm_staff_schedule($1,$2)',[engineerSession,'u1']),/CRM_FORBIDDEN/);
@@ -57,20 +95,35 @@ test('staff scheduling SQL: migrations, schedules, qualification, room, assignme
   await db.query("update public.staff_booking_profiles set schedule=$1 where staff_id='u1'",[JSON.stringify(schedule)]);
   const bookingArgs=['11111111-1111-4111-8111-111111111111','recording',date,'10:00',1,'Анна','+79991234567',null,123,'',false,'u2'];
   const create=args=>value('select public.krug_create_booking_v4($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',args);
+  const restBooking=[...bookingArgs];restBooking[0]='55555555-5555-4555-8555-555555555555';restBooking[2]=rest;
+  await assert.rejects(create(restBooking),/STAFF_UNAVAILABLE/);
+  await db.exec("update public.services set staff_selection='required' where id='recording'");
+  await assert.rejects(create(restBooking),/STAFF_UNAVAILABLE/);
+  await db.exec("update public.services set staff_selection='optional' where id='recording'");
+  restBooking[11]=null;assert.equal((await create(restBooking)).staffId,null);
+  const noneBooking=[...restBooking];noneBooking[0]='66666666-6666-4666-8666-666666666666';noneBooking[1]='rental';noneBooking[3]='11:00';noneBooking[11]='u1';
+  await assert.rejects(create(noneBooking),/STAFF_NOT_SUPPORTED/);
+  noneBooking[11]=null;assert.equal((await create(noneBooking)).staffId,null);
+  const requiredBooking=[...bookingArgs];requiredBooking[0]='77777777-7777-4777-8777-777777777777';requiredBooking[3]='17:00';requiredBooking[11]='u1';
+  await db.exec("update public.services set staff_selection='required' where id='recording'");
+  assert.equal((await create(requiredBooking)).staffId,'u1');
+  await db.exec("update public.services set staff_selection='optional' where id='recording'");
+  requiredBooking[0]='88888888-8888-4888-8888-888888888888';requiredBooking[11]=null;
+  await assert.rejects(create(requiredBooking),/SLOT_UNAVAILABLE/);
   const booking=await create(bookingArgs);assert.equal(booking.staffId,'u2');assert.equal(booking.staffName,'Миша');
   assert.equal((await availability()).slots.includes('10:00'),false);
   const retry=await create(bookingArgs);assert.equal(retry.id,booking.id);assert.equal(retry.staffId,'u2');
   await assert.rejects(create([...bookingArgs.slice(0,8),999,...bookingArgs.slice(9)]),/INVALID_REQUEST_ID/);
   await assert.rejects(create(['22222222-2222-4222-8222-222222222222',...bookingArgs.slice(1)]),/STAFF_UNAVAILABLE/);
-  const history=await value('select public.krug_list_bookings_for_telegram(123)');assert.equal(history[0].staffId,'u2');
+  const history=await value('select public.krug_list_bookings_for_telegram(123)');assert.equal(history.find(row=>row.id===booking.id).staffId,'u2');
   const any=[...bookingArgs];any[0]='33333333-3333-4333-8333-333333333333';any[3]='11:00';any[11]=null;
-  assert.equal((await create(any)).staffId,'u1');
+  assert.equal((await create(any)).staffId,null);
   await db.exec("update public.services set staff_selection='required' where id='recording'");
   any[0]='44444444-4444-4444-8444-444444444444';any[3]='12:00';
   await assert.rejects(create(any),/STAFF_REQUIRED/);
   await db.exec("update public.services set staff_selection='optional' where id='recording'");
   await db.exec('set role service_role');
-  assert.equal((await create(any)).staffId,'u1');
+  assert.equal((await create(any)).staffId,null);
   await db.exec('reset role');
   assert.equal(Number(await value("select extract(epoch from (upper(private.krug_crm_interval($1))-lower(private.krug_crm_interval($1))))/60",[JSON.stringify({date,time:'16:00',duration:'90 мин'})])),90);
   const crm={bookings:[{id:'crm-one',date,time:'13:00',duration:'2 часа',status:'подтверждено'}]};
@@ -88,6 +141,7 @@ test('staff scheduling SQL: migrations, schedules, qualification, room, assignme
   const rental=await value('select public.krug_available_slots($1,1,$2)',[date,'rental']);
   assert.equal(rental.staffSelection,'none');assert.ok(rental.slots.length);
   for(const role of ['anon','authenticated']) {
+    assert.equal(await value("select has_function_privilege($1,'private.krug_staff_day_intervals(jsonb,date)','execute')",[role]),false);
     assert.equal(await value("select has_function_privilege($1,'public.krug_create_booking_v4(uuid,text,date,time,numeric,text,text,text,bigint,text,boolean,text)','execute')",[role]),false);
     assert.equal(await value("select has_table_privilege($1,'public.staff_booking_profiles','select')",[role]),false);
   }

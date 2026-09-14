@@ -6,7 +6,7 @@ const server=http.createServer((req,res)=>{const file=path.resolve(base,'.'+(req
 (async()=>{
  await new Promise(r=>server.listen(0,'127.0.0.1',r));let browser;
  try{
-  browser=await chromium.launch({headless:true,channel:'msedge'});
+  browser=await chromium.launch({headless:true,...(process.env.CI?{}:{channel:'msedge'})});
   for(const width of [390,900]){
    const context=await browser.newContext({viewport:{width,height:900},reducedMotion:'reduce'}),page=await context.newPage();
    const errors=[],calls=[];let booking=null,failSync=false;
@@ -19,7 +19,7 @@ const server=http.createServer((req,res)=>{const file=path.resolve(base,'.'+(req
     if(url.pathname==='/api/services')result.services=[{id:'recording',name:'Запись',publicName:'Запись',publicVisible:true,publicCategory:'primary',active:true,pricingType:'hourly',priceTiers:[{durationHours:1,totalPrice:2345}],pricingRules:{hourlyRate:2345}}];
     else if(url.pathname==='/api/availability')result.availability={date:url.searchParams.get('date'),closed:false,slots:['10:00','12:00'],staffSelection:'optional',staffBySlot:{'10:00':{defaultStaffId:'u1',staff:[{id:'u1',name:'AE XL',scheduled:true,experienceSince:2018,genres:'Hip-hop · Pop',bio:'Запись вокала и сведение'},{id:'u2',name:'Миша',scheduled:true,genres:'Rock'}]},'12:00':{defaultStaffId:'u2',staff:[{id:'u2',name:'Миша',scheduled:true}]}}};
     else if(url.pathname==='/api/loyalty')result.loyalty={balance:0,enabled:true,accrualPercent:7,history:[]};
-    else if(url.pathname==='/api/bookings'){booking={id:'server-booking',requestId:body.requestId,serviceId:body.serviceId,serviceName:'Запись',staffId:body.staffId||'u1',staffName:body.staffId==='u2'?'Миша':'AE XL',date:body.date,startTime:body.startTime,durationHours:body.durationHours,price:2500,amountDue:2500,status:'request',paymentStatus:'unpaid',createdAt:new Date().toISOString()};result.booking=booking;}
+    else if(url.pathname==='/api/bookings'){booking={id:'server-booking',requestId:body.requestId,serviceId:body.serviceId,serviceName:'Запись',staffId:body.staffId||null,staffName:body.staffId?(body.staffId==='u2'?'Миша':'AE XL'):null,date:body.date,startTime:body.startTime,durationHours:body.durationHours,price:2500,amountDue:2500,status:'request',paymentStatus:'unpaid',createdAt:new Date().toISOString()};result.booking=booking;}
     else if(url.pathname==='/api/bookings/sync'){if(failSync){result={ok:false,error:'TELEGRAM_AUTH_EXPIRED',message:'Открой Mini App заново'};status=401;}else result.bookings=booking?[booking]:[];}
     else if(url.pathname==='/api/bookings/cancel'){booking={...booking,status:'cancelled',bonusReserved:0};result.booking={id:booking.id,requestId:booking.requestId,status:'cancelled',bonusReserved:0,amountDue:2500};}
     else throw Error('Unexpected API '+url.pathname);

@@ -2,16 +2,18 @@
 const {chromium}=require(process.argv[2]||'playwright');
 const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 (async()=>{
- const browser=await chromium.launch({headless:true,channel:'msedge'});
+ const browser=await chromium.launch({headless:true,...(process.env.CI?{}:{channel:'msedge'})});
  try {
   for(const width of [390,1100]) {
    const page=await browser.newPage({viewport:{width,height:900}}),errors=[],calls=[];
+   let stored;
    page.on('pageerror',e=>errors.push(e.message));
    await page.route('https://crm.test/**',async r=>{
     if(!r.request().url().endsWith('/api/crm-auth'))return r.fulfill({contentType:'text/html; charset=utf-8',body:'<html><head><meta charset="utf-8"></head><body><button data-staff-schedule="u1">График работы</button></body></html>'});
     const body=r.request().postDataJSON();calls.push(body);
+    if(body.action==='staffScheduleSave') stored=body.profile.schedule;
     assert.equal(r.request().headers().authorization,'Bearer session-test');
-    await r.fulfill({contentType:'application/json',body:JSON.stringify({ok:true,data:{staffId:'u1',name:'AE XL',photoUrl:'',experienceSince:2018,genres:'Hip-hop',bio:'',published:true,priority:10,version:7,schedule:{weekly:{1:[{start:'12:00',end:'22:00'}]},exceptions:{}},serviceIds:['recording'],services:[{id:'recording',name:'Запись',staffSelection:'optional'}]}})});
+    await r.fulfill({contentType:'application/json',body:JSON.stringify({ok:true,data:{staffId:'u1',name:'AE XL',photoUrl:'',experienceSince:2018,genres:'Hip-hop',bio:'',published:true,priority:10,version:7,schedule:stored||{weekly:{1:[{start:'12:00',end:'22:00'}]},exceptions:{}},serviceIds:['recording'],services:[{id:'recording',name:'Запись',staffSelection:'optional'}]}})});
    });
    await page.goto('https://crm.test/');
    await page.evaluate(()=>window.KrugCrmAuth={sessionToken:()=> 'session-test'});
@@ -33,7 +35,35 @@ const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('n
    assert.deepEqual(saved.profile.serviceIds,['recording']);assert.equal(saved.profile.published,true);
    await page.locator('[data-staff-schedule]').click();await page.locator('.staff-week').waitFor();await page.keyboard.press('Escape');
    assert.equal(calls.filter(c=>c.action==='staffScheduleSave').length,1);
-   assert.deepEqual(errors,[]);await page.close();console.log(`PASS CRM schedule ${width}px: weekly, overnight, leave, save, cancel`);
+   await page.locator('[data-staff-schedule]').click();await page.locator('.staff-week').waitFor();
+   await page.locator('[name="scheduleMode"]').selectOption('cyclic');
+   for(const key of ['2/2','2/4','3/3','4/2']) {
+     await page.locator('[data-cycle-preset]').selectOption(key);
+     assert.equal(await page.locator('[name="workDays"]').inputValue(),key.split('/')[0]);
+     assert.equal(await page.locator('[name="offDays"]').inputValue(),key.split('/')[1]);
+   }
+   await page.locator('[name="workDays"]').fill('5');await page.locator('[name="offDays"]').fill('7');
+   assert.equal(await page.locator('[data-cycle-preset]').inputValue(),'custom');
+   await page.locator('[name="startDate"]').fill('2030-01-02');
+   await page.locator('[data-cycle-panel] [data-start]').fill('22:00');
+   await page.locator('[data-cycle-panel] [data-end]').fill('02:00');
+   await page.locator('[name="scheduleMode"]').selectOption('weekly');
+   assert.equal(await page.locator('[data-day="1"] [data-start]').first().inputValue(),'12:00');
+   await page.locator('[name="scheduleMode"]').selectOption('cyclic');
+   assert.equal(await page.locator('[name="workDays"]').inputValue(),'5');
+   if(process.argv[3]){await page.locator('dialog').evaluate(el=>el.scrollTop=0);await page.screenshot({path:path.join(process.argv[3],`staff-cycle-${width}.png`),animations:'disabled'});}
+   assert.equal(await page.locator('dialog').evaluate(el=>el.scrollWidth<=el.clientWidth),true);
+   await page.locator('[type="submit"]').click();await page.locator('dialog').waitFor({state:'detached'});
+   assert.deepEqual(stored.cycle,{workDays:5,offDays:7,startDate:'2030-01-02',intervals:[{start:'22:00',end:'02:00'}]});
+   assert.equal(stored.mode,'cyclic');assert.deepEqual(stored.weekly,saved.profile.schedule.weekly);
+   assert.deepEqual(stored.exceptions,saved.profile.schedule.exceptions);
+   await page.locator('[data-staff-schedule]').click();await page.locator('[data-cycle-panel]').waitFor();
+   assert.equal(await page.locator('[name="workDays"]').inputValue(),'5');
+   await page.locator('[name="scheduleMode"]').selectOption('weekly');
+   const preservedCycle=stored.cycle;
+   await page.locator('[type="submit"]').click();await page.locator('dialog').waitFor({state:'detached'});
+   assert.equal(stored.mode,'weekly');assert.deepEqual(stored.cycle,preservedCycle);
+   assert.deepEqual(errors,[]);await page.close();console.log(`PASS CRM schedule ${width}px: weekly, presets, custom cycle, overnight, leave, save, cancel`);
   }
  } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});
