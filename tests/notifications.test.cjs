@@ -39,7 +39,8 @@ test('staff gets general blocks but no administrative events', () => {t.run("sta
 test('own payout visibility', () => {t.run("state.sessionUserId='u1';state.payouts.push({id:'p1',employeeId:'u2',employeeName:'Сотрудник',amount:300,paidAt:'2099-09-12',status:'Выплачено'});saveState();state.sessionUserId='u2';");assert.equal(t.run("notificationsForCurrentUser().filter(n=>n.entityType==='payout').length"),1);t.run("state.sessionUserId='u3';");assert.equal(t.run("notificationsForCurrentUser().filter(n=>n.entityType==='payout').length"),0);});
 test('critical warnings captured once', () => {assert.ok(t.run("state.notifications.some(n=>n.severity==='critical')"));const n=t.run('state.notifications.length');t.run('saveState();');assert.equal(t.run('state.notifications.length'),n);});
 t.run(`state.sessionUserId='u1';state.notifications=[];state.bookings=[{id:'rem',client:'Напоминание',date:'2099-09-12',time:'18:00',employeeId:'u2',service:'Запись',status:'подтверждено'}];state.sentReminderKeys={};notificationSnapshot=notificationTakeSnapshot();notificationNativeSave();`);
-const start = t.run("new Date('2099-09-12T18:00').getTime()");
+// Booking times use Moscow time regardless of the test runner's local timezone.
+const start = t.run("new Date('2099-09-12T18:00:00+03:00').getTime()");
 test('31 minutes: no reminder',()=>assert.equal(t.run(`checkUpcomingBookingReminders(${start-31*60000}).length`),0));
 test('30 minute threshold and no duplicate',()=>{assert.equal(t.run(`checkUpcomingBookingReminders(${start-30*60000}).length`),1);assert.equal(t.run(`checkUpcomingBookingReminders(${start-29*60000}).length`),0);});
 test('15 and 5 thresholds',()=>{assert.equal(t.run(`checkUpcomingBookingReminders(${start-15*60000}).length`),1);assert.equal(t.run(`checkUpcomingBookingReminders(${start-5*60000}).length`),1);});
