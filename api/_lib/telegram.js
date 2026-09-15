@@ -5,6 +5,7 @@ const content=require('../../telegram-content');
 const rpc=(name,payload)=>supabaseServer(`rpc/${name}`,{method:'POST',body:JSON.stringify(payload),signal:AbortSignal.timeout(5000)});
 function safeEqual(a,b){const l=Buffer.from(String(a||'')),r=Buffer.from(String(b||''));return l.length>0&&l.length===r.length&&crypto.timingSafeEqual(l,r);}
 function requireSecret(){if(!hasServerSecret())throw Error('SUPABASE_SERVER_SECRET_REQUIRED');}
+async function staged(stage,fn){try{return await fn();}catch(error){if(!error.stage)error.stage=stage;throw error;}}
 async function botCall(method,payload={}){
   const token=process.env.TELEGRAM_BOT_TOKEN;
   if(!token)throw Error('TELEGRAM_BOT_TOKEN_REQUIRED');
@@ -42,11 +43,12 @@ async function health(){
 async function processDueNotifications(limit=10){
   requireSecret();if(!process.env.TELEGRAM_BOT_TOKEN)throw Error('TELEGRAM_BOT_TOKEN_REQUIRED');
   const started=Date.now();
-  const templates=await supabaseServer('telegram_templates?select=*',{signal:AbortSignal.timeout(5000)});
+  const templates=await staged('load_templates',()=>supabaseServer('telegram_templates?select=*',{signal:AbortSignal.timeout(5000)}));
   const map=new Map((templates||[]).map(t=>[t.kind,t]));
   const stats={picked:0,sent:0,failed:0,skipped:0};
   for(let i=0;i<Math.min(10,Math.max(1,Number(limit)||10))&&Date.now()-started<30000;i++){
-    const [row]=await rpc('krug_telegram_claim',{p_limit:1});
+    const claimed=await staged('claim',()=>rpc('krug_telegram_claim',{p_limit:1}));
+    const row=Array.isArray(claimed)?claimed[0]:null;
     if(!row)break;stats.picked++;
     let payload;
     try{
@@ -57,24 +59,26 @@ async function processDueNotifications(limit=10){
         payload=template?content.render(template,row.context):{text:row.text,button_text:row.button_text,button_target:row.button_target,button_url:row.button_url};
         if(!payload.text)throw Error('TEMPLATE_INVALID');
         if(row.kind==='settings'){
-          const p=await rpc('krug_telegram_preferences',{p_telegram_user_id:row.telegram_user_id});
+          const p=await staged('load_preferences',()=>rpc('krug_telegram_preferences',{p_telegram_user_id:row.telegram_user_id}));
           payload.text+=`\n\nНовости: ${p.marketing_enabled?'вкл':'выкл'}. Напоминания: ${p.reminders_enabled?'вкл':'выкл'}. За 30 мин: ${p.reminder_30m_enabled?'вкл':'выкл'}.`;
         }
       }
-    }catch{
-      await rpc('krug_telegram_finish',{p_id:row.id,p_lease:row.lease_token,p_result:'failed',p_code:'TEMPLATE_INVALID'});stats.failed++;continue;
+    }catch(error){
+      if(error?.stage)throw error;
+      await staged('finish_template_invalid',()=>rpc('krug_telegram_finish',{p_id:row.id,p_lease:row.lease_token,p_result:'failed',p_code:'TEMPLATE_INVALID'}));stats.failed++;continue;
     }
-    if(!await rpc('krug_telegram_delivery_check',{p_id:row.id,p_lease:row.lease_token})){stats.skipped++;continue;}
+    const canDeliver=await staged('delivery_check',()=>rpc('krug_telegram_delivery_check',{p_id:row.id,p_lease:row.lease_token}));
+    if(!canDeliver){stats.skipped++;continue;}
     let result;
-    try{result=await sendMessage({...row,...payload});}
+    try{result=await staged('telegram_send',()=>sendMessage({...row,...payload}));}
     catch(error){
+      if(error?.stage&&error.stage!=='telegram_send')throw error;
       const outcome=error.status===403?'blocked':error.status===429?'retry':'failed';
-      await rpc('krug_telegram_finish',{p_id:row.id,p_lease:row.lease_token,p_result:outcome,
-        p_code:error.uncertain?'DELIVERY_UNCERTAIN':error.status?`TELEGRAM_${error.status}`:'DELIVERY_FAILED',p_retry_after:error.retryAfter||60});
+      await staged('finish_delivery_error',()=>rpc('krug_telegram_finish',{p_id:row.id,p_lease:row.lease_token,p_result:outcome,
+        p_code:error.uncertain?'DELIVERY_UNCERTAIN':error.status?`TELEGRAM_${error.status}`:'DELIVERY_FAILED',p_retry_after:error.retryAfter||60}));
       stats.failed++;continue;
     }
-    // A lost success acknowledgement leaves an ambiguous lease, never an automatic retry.
-    await rpc('krug_telegram_finish',{p_id:row.id,p_lease:row.lease_token,p_result:'sent',p_message_id:result.message_id});stats.sent++;
+    await staged('finish_sent',()=>rpc('krug_telegram_finish',{p_id:row.id,p_lease:row.lease_token,p_result:'sent',p_message_id:result.message_id}));stats.sent++;
   }
   return stats;
 }
