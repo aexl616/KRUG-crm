@@ -37,7 +37,8 @@ module.exports=async function(req,res){
     return res.status(200).json({ok:true,stats});
   }catch(error){
     const code=String(error.details?.code||'');
-    console.error('TELEGRAM_PROCESS_FAILED',JSON.stringify({database_code:/^[A-Z0-9]{3,12}$/.test(code)?code:null,status:Number(error.status)||null,error_type:['TimeoutError','AbortError','TypeError'].includes(error.name)?error.name:null}));
+    const stage=String(error.stage||'unknown').replace(/[^a-z0-9_]/gi,'').slice(0,40)||'unknown';
+    console.error('TELEGRAM_PROCESS_FAILED',JSON.stringify({stage,database_code:/^[A-Z0-9]{3,12}$/.test(code)?code:null,status:Number(error.status)||null,error_type:['TimeoutError','AbortError','TypeError'].includes(error.name)?error.name:null}));
     const unavailable=['SUPABASE_SERVER_SECRET_REQUIRED','TELEGRAM_BOT_TOKEN_REQUIRED'].includes(error.message);
     return apiError(res,unavailable?503:502,unavailable?error.message:'TELEGRAM_PROCESS_FAILED');
   }
