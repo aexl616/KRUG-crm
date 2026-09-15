@@ -137,9 +137,9 @@
   }
 
   document.addEventListener('click', event => {
-    const button = event.target.closest?.('[data-side-status-booking]');
+    const button = event.target.closest?.('[data-side-status-booking], [data-booking-status], [data-action="cancelBookingFromModal"]');
     if (!button) return;
-    const booking = findBooking(button.dataset.sideStatusBooking);
+    const booking = findBooking(button.dataset.sideStatusBooking || button.dataset.bookingStatus || editingBookingId);
     if (!isRemote(booking)) return;
 
     // Stop the legacy localStorage-only handler. A Mini App booking may change
@@ -147,7 +147,7 @@
     event.preventDefault();
     event.stopImmediatePropagation();
 
-    const targetStatus = String(button.dataset.status || '');
+    const targetStatus = String(button.dataset.status || (button.dataset.action==='cancelBookingFromModal'?'отменено':''));
     if (targetStatus === 'завершено') {
       openSettlement(booking);
       return;

@@ -582,7 +582,7 @@ function canEditBooking(booking) {
 }
 
 function canDeleteBooking(booking) {
-  return isManagerRole() && canViewBooking(booking);
+  return isManagerRole() && canViewBooking(booking) && booking?.source !== "miniapp";
 }
 
 function canChangeBookingStatus(booking) {
