@@ -10,6 +10,21 @@ function load(route,db=async()=>({}),hasSecret=true){
  return {handler:require(path.join(base,route)),calls};
 }
 const req=(body={},headers={authorization:`Bearer ${session}`})=>({method:'POST',headers,body,query:{}});
+test('deployment setup requires cron authentication, uses configured webhook only, and sends no client messages',async()=>{
+ const original=global.fetch,calls=[];
+ process.env.TELEGRAM_CRON_SECRET='setup-cron';process.env.TELEGRAM_WEBHOOK_SECRET='a'.repeat(64);
+ process.env.TELEGRAM_WEBHOOK_URL='https://krug-crm.vercel.app/api/telegram/process?mode=webhook';process.env.TELEGRAM_BOT_TOKEN='fixture';
+ try{
+  global.fetch=async(url,options)=>{calls.push({method:url.split('/').pop(),body:JSON.parse(options.body)});return {ok:true,json:async()=>({ok:true,result:{username:'fixture_bot',url:process.env.TELEGRAM_WEBHOOK_URL}})};};
+  delete require.cache[require.resolve('../../scripts/setup-telegram.cjs')];
+  const {handler}=load('telegram/process.js');
+  const run=async(method,token)=>{const res=response();await handler({...req({url:'https://wrong.example'},{authorization:`Bearer ${token}`}),method,query:{mode:'setup'}},res);return res;};
+  assert.equal((await run('POST','wrong')).statusCode,401);assert.equal((await run('GET','setup-cron')).statusCode,405);assert.equal(calls.length,0);
+  const result=await run('POST','setup-cron');assert.equal(result.statusCode,200);assert.equal(result.body.health.webhook_matches,true);
+  assert.equal(calls.find(c=>c.method==='setWebhook').body.url,process.env.TELEGRAM_WEBHOOK_URL);
+  assert.equal(calls.some(c=>c.method==='sendMessage'),false);
+ }finally{global.fetch=original;}
+});
 test('webhook authenticates independently of cron and CRM; signed updates bind private chat identity',async()=>{
  process.env.TELEGRAM_WEBHOOK_SECRET='webhook-fixture';process.env.TELEGRAM_CRON_SECRET='cron-fixture';
  const {handler,calls}=load('telegram/process.js');

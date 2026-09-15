@@ -1,5 +1,12 @@
 -- KRUG 0.12.0 — reproducible Telegram lifecycle, templates and campaigns.
 begin;
+-- Production 0.11.4 had checks not present in the historical repository schema.
+alter table public.telegram_notifications drop constraint if exists telegram_notifications_status_check;
+alter table public.telegram_notifications add constraint telegram_notifications_status_check
+  check(status in ('pending','processing','sent','failed','cancelled','skipped'));
+alter table public.telegram_campaigns drop constraint if exists telegram_campaigns_segment_check;
+alter table public.telegram_campaigns add constraint telegram_campaigns_segment_check
+  check(segment in ('all','app_registered','app_visited','miniapp','visited'));
 alter table public.clients add column if not exists telegram_started_at timestamptz,
   add column if not exists telegram_blocked_at timestamptz;
 alter table public.notification_preferences alter column marketing_enabled set default false;

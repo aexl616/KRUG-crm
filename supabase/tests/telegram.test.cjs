@@ -12,6 +12,9 @@ test('0.12.0 SQL: lifecycle, consent, campaigns, leases, RBAC and idempotency',a
    create function extensions.digest(text,text) returns bytea language sql as $$select decode(md5($1),'hex')$$;`);
   const directory=path.resolve(__dirname,'../migrations');
   for(const file of fs.readdirSync(directory).filter(f=>f.endsWith('.sql')).sort()){
+   if(file==='20260914165321_telegram_bot_experience.sql')await db.exec(`
+    alter table telegram_notifications add constraint telegram_notifications_status_check check(status in ('pending','processing','sent','failed','cancelled'));
+    alter table telegram_campaigns add constraint telegram_campaigns_segment_check check(segment in ('all','app_registered','app_visited'));`);
    try{await db.exec(fs.readFileSync(path.join(directory,file),'utf8').replace('create extension if not exists pgcrypto;',''));}
    catch(e){throw Error(file+': '+e.message,{cause:e});}
   }

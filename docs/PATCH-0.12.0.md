@@ -46,6 +46,7 @@ Removed: browser-driven queue polling, manual queue processing button, legacy ke
 
    The tick reads Vault at execution time. With missing Vault values it makes no network request. The worker URL must be reachable by Supabase and not require Vercel deployment-protection login. Queue status in CRM must show a recent automatic run; a successful SQL cron tick alone does not prove HTTP delivery.
 6. Supply bot token, webhook secret and webhook URL through the operator's environment and run `node scripts/setup-telegram.cjs`. It registers webhook and bot commands; it does not send a message, discard pending updates or print secrets. Keep Main Mini App configured in BotFather.
+   Alternatively POST to the existing `/api/telegram/process?mode=setup` with the cron bearer secret. This uses only server-configured values, allowing deployment without extracting the existing bot token from Vercel. The same authentication protects `?mode=health`; neither mode processes the queue.
 7. Verify with an explicitly chosen test client: `/start` twice, `/settings`, opt-in/out, CRM test-send, draft recipient count, one targeted test campaign, cancellation/confirmation/reminder and block/unblock. Never use a real all-client campaign as a smoke test. No Mini App frontend deployment is necessary for the bot preference commands.
 
 ## Verification

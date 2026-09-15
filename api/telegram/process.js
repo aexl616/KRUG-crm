@@ -1,5 +1,5 @@
 'use strict';
-const {rpc,safeEqual,requireSecret,processDueNotifications}=require('../_lib/telegram');
+const {rpc,safeEqual,requireSecret,processDueNotifications,health}=require('../_lib/telegram');
 const {apiError,readJsonBody}=require('../_lib/http');
 module.exports=async function(req,res){
   res.setHeader('Cache-Control','no-store');
@@ -27,6 +27,12 @@ module.exports=async function(req,res){
     const bearer=String(req.headers.authorization||'').replace(/^Bearer\s+/i,'');
     if(!safeEqual(bearer,process.env.TELEGRAM_CRON_SECRET))return apiError(res,401,'CRON_UNAUTHORIZED');
     requireSecret();
+    if(req.query?.mode==='setup'){
+      if(req.method!=='POST')return apiError(res,405,'METHOD_NOT_ALLOWED');
+      await require('../../scripts/setup-telegram.cjs').setupTelegram();
+      return res.status(200).json({ok:true,health:await health()});
+    }
+    if(req.query?.mode==='health')return res.status(200).json({ok:true,health:await health()});
     const stats=await processDueNotifications(10);
     return res.status(200).json({ok:true,stats});
   }catch(error){
