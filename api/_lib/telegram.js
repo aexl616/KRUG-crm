@@ -47,8 +47,7 @@ async function processDueNotifications(limit=10){
   const map=new Map((templates||[]).map(t=>[t.kind,t]));
   const stats={picked:0,sent:0,failed:0,skipped:0};
   for(let i=0;i<Math.min(10,Math.max(1,Number(limit)||10))&&Date.now()-started<30000;i++){
-    const claimed=await staged('claim',()=>rpc('krug_telegram_claim',{p_limit:1}));
-    const row=Array.isArray(claimed)?claimed[0]:null;
+    const row=await staged('claim',()=>rpc('krug_telegram_claim_one',{}));
     if(!row)break;stats.picked++;
     let payload;
     try{
