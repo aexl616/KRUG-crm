@@ -8,7 +8,7 @@ function setup(error=null){
  const mock=(file,exports)=>{const p=path.join(base,file);require.cache[p]={id:p,filename:p,loaded:true,exports};};
  mock('_lib/supabase-server.js',{supabaseServer:async(route,options)=>{calls.push({route,body:JSON.parse(options.body)});if(error)throw Error(error);return {id:'booking',staffId:'u1'};}});
  mock('_lib/telegram-auth.js',{resolveTelegramUser:()=>({id:123}),mapTelegramAuthError:()=>null});
- mock('_lib/telegram.js',{processDueNotifications:async()=>{}});
+ mock('_lib/telegram.js',{processDueNotificationsQuietly:async()=>{}});
  mock('_lib/http.js',{applyPublicCors:()=>false,readJsonBody:r=>r.body,apiError:(r,n,error,message)=>r.status(n).json({ok:false,error,message})});
  const p=path.join(base,'bookings.js');delete require.cache[p];return {handler:require(p),calls};
 }

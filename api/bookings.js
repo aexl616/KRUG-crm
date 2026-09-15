@@ -3,6 +3,7 @@
 const { supabaseServer } = require('./_lib/supabase-server');
 const { applyPublicCors, readJsonBody, apiError } = require('./_lib/http');
 const { resolveTelegramUser, mapTelegramAuthError } = require('./_lib/telegram-auth');
+const { processDueNotificationsQuietly } = require('./_lib/telegram');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -86,7 +87,9 @@ module.exports = async function handler(req, res) {
         p_staff_id: staffId
       })
     });
-    return res.status(201).json({ ok: true, booking });
+    const response = res.status(201).json({ ok: true, booking });
+    await processDueNotificationsQuietly(1);
+    return response;
   } catch (error) {
     const [status, code, message] = mapBookingError(error);
     console.error('[KRUG API] booking failed', code, error.status || error.name || 'Error');

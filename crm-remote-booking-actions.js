@@ -154,7 +154,7 @@
     }
     const action = actionByStatus[targetStatus];
     if (!action) return;
-    if (targetStatus === 'отменено' && !confirm('Отменить эту запись?')) return;
+    if (targetStatus === 'отменено' && String(prompt('Отменить эту запись?\n\nДля подтверждения введи ОТМЕНА') || '').trim().toUpperCase() !== 'ОТМЕНА') return;
     mutate(button, booking, action);
   }, true);
 })();

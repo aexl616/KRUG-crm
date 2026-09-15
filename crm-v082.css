@@ -77,10 +77,17 @@
   min-width: 0 !important;
   max-width: 100% !important;
 }
+.calendar-workspace {
+  grid-template-columns: minmax(0,1fr) !important;
+}
+.calendar-workspace .booking-details {
+  position: static !important;
+}
 .calendar-grid {
   width: 100% !important;
   max-width: 100% !important;
-  overflow-x: auto !important;
+  grid-template-columns: 62px repeat(var(--calendar-days,7),minmax(0,1fr)) !important;
+  overflow: visible !important;
 }
 
 /* BOOKINGS — title/count is a compact block; filters form one predictable row. */

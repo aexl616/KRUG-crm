@@ -28,6 +28,7 @@ async function sendMessage(row){
   const target=row.button_target||'miniapp';
   const button=target==='miniapp'?{web_app:{url:miniappUrl()}}:{url:row.button_url};
   return botCall('sendMessage',{chat_id:row.telegram_user_id,text:row.text,disable_web_page_preview:true,
+    ...(row.parse_mode?{parse_mode:row.parse_mode}:{}),
     ...(row.button_text&&target!=='none'?{reply_markup:{inline_keyboard:[[{text:row.button_text,...button}]]}}:{})});
 }
 async function health(){
@@ -81,4 +82,13 @@ async function processDueNotifications(limit=10){
   }
   return stats;
 }
-module.exports={rpc,safeEqual,requireSecret,botCall,health,sendMessage,processDueNotifications};
+async function processDueNotificationsQuietly(limit=1){
+  if(!process.env.TELEGRAM_BOT_TOKEN)return null;
+  try{return await processDueNotifications(limit);}
+  catch(error){
+    const stage=String(error.stage||'inline').replace(/[^a-z0-9_]/gi,'').slice(0,40)||'inline';
+    console.error('TELEGRAM_INLINE_PROCESS_FAILED',JSON.stringify({stage,status:Number(error.status)||null}));
+    return null;
+  }
+}
+module.exports={rpc,safeEqual,requireSecret,botCall,health,sendMessage,processDueNotifications,processDueNotificationsQuietly};

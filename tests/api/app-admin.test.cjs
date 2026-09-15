@@ -67,3 +67,15 @@ test('missing admin token is rejected before any RPC',async()=>{
   await handler({method:'POST',headers:{},body:{action:'startBooking',bookingId}},res);
   assert.equal(res.statusCode,401);assert.equal(res.body.error,'ADMIN_TOKEN_REQUIRED');assert.equal(calls.length,0);
 });
+
+test('client import drops Mini App rows on the server before calling the import RPC',async()=>{
+  const {handler,calls}=load({rpcResult:{imported:1}});const res=response();
+  await handler(req({action:'importClients',clients:[
+    {id:'crm-client-1',name:'CRM'},
+    {id:'miniapp-client-11111111-1111-4111-8111-111111111111',name:'Loop'},
+    {id:'crm-client-2',name:'Loop source',source:'miniapp'},
+    {id:'crm-client-3',name:'Loop link',miniAppClientId:'11111111-1111-4111-8111-111111111111'}
+  ]}),res);
+  assert.equal(res.statusCode,200);assert.equal(calls[0].route,'rpc/krug_admin_import_clients');
+  assert.deepEqual(calls[0].body.p_clients,[{id:'crm-client-1',name:'CRM'}]);
+});

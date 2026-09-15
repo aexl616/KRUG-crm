@@ -10,7 +10,7 @@ function boot(saved) {
   const context = vm.createContext({ console, crypto: webcrypto, structuredClone, Date, setTimeout: () => 0, setInterval: () => 0,
     document: { querySelector: () => null, querySelectorAll: () => [], addEventListener: (name, cb) => { (listeners[name] ||= []).push(cb); }, hidden: false },
     window: { isSecureContext: true, addEventListener() {}, matchMedia: () => ({matches:false}) },
-    localStorage: { getItem: key => storage.get(key) || null, setItem: (key, val) => storage.set(key, val) }, confirm: () => true, alert() {} });
+    localStorage: { getItem: key => storage.get(key) || null, setItem: (key, val) => storage.set(key, val) }, confirm: () => true, prompt: message => message.includes('УДАЛИТЬ') ? 'УДАЛИТЬ' : 'ОТМЕНА', alert() {} });
   vm.runInContext(fs.readFileSync(path.join(root, 'hourly-core.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(path.join(root, 'settings-core.js'), 'utf8'), context);
   vm.runInContext(fs.readFileSync(path.join(root, 'data-store.js'), 'utf8'), context);

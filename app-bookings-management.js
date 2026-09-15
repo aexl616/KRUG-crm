@@ -119,7 +119,7 @@
     }));
     panel.querySelectorAll('[data-booking-settle]').forEach(button => button.addEventListener('click', () => showSettlement(button.dataset.bookingSettle, button.dataset.defaultPaid)));
     panel.querySelectorAll('[data-booking-cancel]').forEach(button => button.addEventListener('click', async () => {
-      if (!confirm('Отменить эту запись?')) return;
+      if (String(prompt('Отменить эту запись?\n\nДля подтверждения введи ОТМЕНА') || '').trim().toUpperCase() !== 'ОТМЕНА') return;
       button.disabled = true;
       try { await request('cancelBooking', { bookingId:button.dataset.bookingCancel }); await load(panel, true); document.querySelector('#appMgmtRefresh')?.click(); }
       catch (error) { button.disabled = false; alert(error.message); }

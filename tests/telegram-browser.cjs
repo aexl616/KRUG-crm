@@ -27,6 +27,7 @@ const content=require('../telegram-content'),dir=path.resolve(__dirname,'..');
     else if(b.action==='saveCampaign'){
      const c={id:'campaign1',...b.content,message:b.content.body,audience:b.audience,status:'draft',queued_count:0,sent_count:0,failed_count:0,skipped_count:0};data.campaigns.unshift(c);result=c;
     }else if(b.action==='launchCampaign'){Object.assign(data.campaigns[0],{status:'scheduled',queued_count:2,scheduled_at:b.scheduled_at});result=data.campaigns[0];}
+    else if(b.action==='cancelCampaign'){Object.assign(data.campaigns[0],{status:'cancelled'});result=data.campaigns[0];}
     else if(b.action==='retry')result={retried:1};else if(b.action==='testSend')result={queued:true};else throw Error('Unexpected action '+b.action);
     await route.fulfill({contentType:'application/json',body:JSON.stringify({ok:true,data:result})});
    });
@@ -41,7 +42,7 @@ const content=require('../telegram-content'),dir=path.resolve(__dirname,'..');
    page.once('dialog',d=>d.accept());await page.locator('[data-retry]').click();await page.getByText('Повторно в очереди: 1.').waitFor();
    assert.equal(calls.find(c=>c.action==='retry').acknowledge_uncertain,true);
    await page.locator('[data-tab="templates"]').click();await page.locator('[name="body"]').fill('Привет, {secret}');await page.locator('[data-preview]').click();await page.getByText('Неизвестная переменная или незакрытая скобка.').waitFor();
-   await page.locator('[name="body"]').fill('Привет, {client_name}! До встречи.');await page.locator('[data-preview]').click();await page.locator('[data-preview-output]').filter({hasText:'Привет, Анна!'}).waitFor();
+   await page.locator('[name="body"]').fill('<b>Привет, {client_name}!</b> До встречи.');await page.locator('[data-preview]').click();await page.locator('[data-preview-output] b').filter({hasText:'Привет, Анна!'}).waitFor();
    await page.locator('[type="submit"]').click();await page.getByText('Шаблон сохранён.').waitFor();assert.equal(calls.find(c=>c.action==='saveTemplate').version,1);
    await page.locator('[data-tab="campaigns"]').click();await page.locator('[data-source]').selectOption('campaign');
    await page.locator('[name="tag"]').selectOption('VIP');
@@ -52,6 +53,8 @@ const content=require('../telegram-content'),dir=path.resolve(__dirname,'..');
    if(process.argv[3])await page.screenshot({path:path.join(process.argv[3],`telegram-campaign-${width}.png`),animations:'disabled'});
    page.once('dialog',d=>d.accept());await page.locator('[data-launch]').click();await page.getByText('Рассылка запущена. Доставку выполняет автоматическая очередь.').waitFor();
    assert.ok(calls.find(c=>c.action==='launchCampaign').scheduled_at.endsWith('Z'));assert.ok((await page.locator('.tg-dialog').innerText()).includes('Запланирована'));
+   page.once('dialog',d=>d.accept());await page.locator('[data-cancel-campaign]').click();await page.getByText('Запланированная рассылка отменена.').waitFor();
+   assert.ok(calls.find(c=>c.action==='cancelCampaign'));assert.ok((await page.locator('.tg-dialog').innerText()).includes('Отменена'));
    await page.locator('[data-tab="clients"]').click();assert.equal(await page.locator('.tg-dialog img').count(),0);assert.equal(await page.evaluate(()=>window.injected),undefined);
    await page.locator('[data-test]').click();await page.getByText('Тестовое сообщение добавлено в очередь.').waitFor();
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);

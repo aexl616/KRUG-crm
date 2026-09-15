@@ -1,6 +1,8 @@
 const STORAGE_KEY = KrugData.STORAGE_KEY;
 const PAYOUT_RESET_VERSION = 2;
 const CALENDAR_HOUR_HEIGHT = 72;
+const CALENDAR_VISIBLE_START_HOUR = 0;
+const CALENDAR_VISIBLE_END_HOUR = 24;
 const studioBlockTypes = ["Тех. блок", "Уборка", "Ремонт", "Контент", "Личное", "Закрыто", "Другое"];
 const accessRoles = [
   { id: "owner", label: "Владелец" },
@@ -695,6 +697,11 @@ function captureSettingsSnapshots() {
   for(const p of state.payments)if(!p.distributionSnapshot){const b=state.bookings.find(b=>b.id===p.bookingId),s=serviceById(b?.serviceId)||serviceByName(p.service);const category=/онлайн/i.test(p.service||'')?'online':b?.serviceCategoryId||s?.categoryId||'extra';p.distributionSnapshot=KrugSettings.distributionSnapshot(p.amount,category,state.settings.distribution);}
 }
 function confirmDestructive(message) { return !generalSettings().confirmDestructiveActions || confirm(message); }
+function confirmBookingPhrase(booking, phrase, message) {
+  const details = [booking?.client, booking?.date && formatDate(booking.date), booking?.time].filter(Boolean).join(" · ");
+  const entered = prompt(`${message}${details ? `\n${details}` : ""}\n\nДля подтверждения введи ${phrase}`);
+  return String(entered || '').trim().toUpperCase() === phrase;
+}
 function isWorkingDay(date) { return generalSettings().workingDays.includes(new Date(date+'T12:00:00').getDay()); }
 function calendarStartHour() { return generalSettings().calendarStartHour; }
 function calendarEndHour() { return generalSettings().calendarEndHour; }
@@ -2395,7 +2402,7 @@ function employeeConflictsForBooking(booking, excludeId = booking?.id) {
 
 function calendarBookingGeometry(booking) {
   const startMinutes = bookingStartMinutes(booking);
-  const visibleEndMinutes = calendarEndHour() * 60;
+  const visibleEndMinutes = CALENDAR_VISIBLE_END_HOUR * 60;
   const durationMinutes = Math.min(bookingDurationMinutes(booking), Math.max(15, visibleEndMinutes - startMinutes));
   const minuteOffset = startMinutes % generalSettings().calendarSlotMinutes;
   const top = (minuteOffset / 60) * CALENDAR_HOUR_HEIGHT;
@@ -2477,7 +2484,7 @@ function renderCalendar() {
   const today = todayKey();
   calendarWeekStart = weekStart(calendarDate);
   const days = calendarMode === "day" ? [calendarDate] : weekDays(calendarWeekStart);
-  const hours = Array.from({ length: (calendarEndHour()-calendarStartHour())*60/generalSettings().calendarSlotMinutes }, (_, index) => calendarStartHour()+index*generalSettings().calendarSlotMinutes/60);
+  const hours = Array.from({ length: (CALENDAR_VISIBLE_END_HOUR-CALENDAR_VISIBLE_START_HOUR)*60/generalSettings().calendarSlotMinutes }, (_, index) => CALENDAR_VISIBLE_START_HOUR+index*generalSettings().calendarSlotMinutes/60);
   const visibleBookings = calendarBookings();
   if (selectedBookingId && !visibleBookings.some((booking) => booking.id === selectedBookingId)) selectedBookingId = null;
   if (selectedStudioBlockId && !(state.studioBlocks || []).some((block) => block.id === selectedStudioBlockId && days.includes(block.date))) selectedStudioBlockId = null;
@@ -2505,7 +2512,6 @@ function renderCalendar() {
         </div>
       </div>
       ${renderCalendarFilters()}
-      ${visibleBookings.some(b=>days.includes(b.date)&&(bookingStartMinutes(b)<calendarStartHour()*60||bookingStartMinutes(b)>=calendarEndHour()*60))?`<section class="card section"><h3>Записи вне рабочих часов</h3>${visibleBookings.filter(b=>days.includes(b.date)&&(bookingStartMinutes(b)<calendarStartHour()*60||bookingStartMinutes(b)>=calendarEndHour()*60)).map(b=>`<button class="btn secondary" data-open-booking="${b.id}">${formatDate(b.date)} · ${displayTime(b.time)} · ${b.client}</button>`).join('')}</section>`:''}
       ${calendarMode === "day" ? renderDaySummary(calendarDate, visibleBookings.filter((booking) => booking.date === calendarDate)) : ""}
       ${calendarMode === "day" ? renderDayAvailability(calendarDate) : ""}
       <div class="calendar-workspace">
@@ -4112,7 +4118,7 @@ function deleteBookingSafely(bookingId) {
   const message = linkedPayments.length
     ? "У этой записи есть связанный платёж. Удалить только запись? Платёж останется в финансах."
     : "Удалить запись?";
-  if (!confirmDestructive(message)) return false;
+  if (!confirmBookingPhrase(booking, "УДАЛИТЬ", message)) return false;
 
   if (linkedPayments.length) {
     const marker = "Исходная запись удалена";
@@ -4501,6 +4507,7 @@ function bindViewEvents() {
     button.addEventListener("click", () => {
       const booking = state.bookings.find((item) => item.id === button.dataset.sideStatusBooking);
       if (!canChangeBookingStatus(booking)) return;
+      if (button.dataset.status === "отменено" && !confirmBookingPhrase(booking, "ОТМЕНА", "Отменить эту запись?")) return;
       updateBookingStatus(button.dataset.sideStatusBooking, button.dataset.status);
       saveState();
       render();
@@ -4594,6 +4601,8 @@ function bindViewEvents() {
   document.querySelector("[data-action='cancelBookingFromModal']")?.addEventListener("click", () => {
     if (!editingBookingId) return;
     if (!isManagerRole()) return;
+    const booking = state.bookings.find((item) => item.id === editingBookingId);
+    if (!confirmBookingPhrase(booking, "ОТМЕНА", "Отменить эту запись?")) return;
     updateBookingStatus(editingBookingId, "отменено");
     bookingModalOpen = false;
     editingBookingId = null;
@@ -5179,6 +5188,7 @@ function bindViewEvents() {
       const status = button.dataset.status;
       const booking = state.bookings.find((item) => item.id === bookingId);
       if (!canChangeBookingStatus(booking)) return;
+      if (status === "отменено" && !confirmBookingPhrase(booking, "ОТМЕНА", "Отменить эту запись?")) return;
       updateBookingStatus(bookingId, status);
       saveState();
       render();

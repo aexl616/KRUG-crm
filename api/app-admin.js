@@ -2,6 +2,7 @@
 
 const { supabaseServer } = require('./_lib/supabase-server');
 const { readJsonBody, apiError } = require('./_lib/http');
+const { processDueNotificationsQuietly } = require('./_lib/telegram');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -94,7 +95,10 @@ module.exports = async function handler(req, res) {
       if (!Number.isSafeInteger(telegramUserId) || telegramUserId <= 0) return apiError(res, 400, 'INVALID_TELEGRAM_USER_ID');
       data = await rpc('krug_admin_set_ban', { p_token: token, p_telegram_user_id: telegramUserId, p_banned: banned, p_reason: reason });
     } else if (action === 'importClients') {
-      const clients = Array.isArray(body.clients) ? body.clients.slice(0, 1000) : null;
+      const clients = Array.isArray(body.clients) ? body.clients.slice(0, 1000).filter(client => {
+        if (!client || typeof client !== 'object' || Array.isArray(client)) return false;
+        return client.source !== 'miniapp' && !client.miniAppClientId && !String(client.id || '').startsWith('miniapp-client-');
+      }) : null;
       if (!clients) return apiError(res, 400, 'INVALID_CLIENTS');
       data = await rpc('krug_admin_import_clients', { p_token: token, p_clients: clients });
     } else if (action === 'merge') {
@@ -110,7 +114,11 @@ module.exports = async function handler(req, res) {
     }
 
     res.setHeader('Cache-Control', 'no-store');
-    return res.status(200).json({ ok: true, data });
+    const response = res.status(200).json({ ok: true, data });
+    if (['confirmBooking', 'startBooking', 'settleBooking', 'cancelBooking'].includes(action)) {
+      await processDueNotificationsQuietly(1);
+    }
+    return response;
   } catch (error) {
     const [status, code, message] = mapError(error);
     console.error('[KRUG API] app admin failed', action, code, error.status || error.name || 'Error');

@@ -36,7 +36,7 @@ test('webhook authenticates independently of cron and CRM; signed updates bind p
  const res=response();await handler({...req(body,{'x-telegram-bot-api-secret-token':'webhook-fixture'}),query:{mode:'webhook'}},res);
  assert.equal(res.statusCode,200);assert.equal(calls[0].p,'rpc/krug_telegram_update');assert.equal(calls[0].b.p_user_id,99);assert.equal(calls[0].b.p_command,'/start');
  const mismatch=response();await handler({...req({...body,message:{...body.message,from:{id:100}}},{'x-telegram-bot-api-secret-token':'webhook-fixture'}),query:{mode:'webhook'}},mismatch);assert.equal(mismatch.statusCode,400);
- const group=response();await handler({...req({...body,message:{...body.message,chat:{id:-9,type:'group'}}},{'x-telegram-bot-api-secret-token':'webhook-fixture'}),query:{mode:'webhook'}},group);assert.equal(group.statusCode,200);assert.equal(calls.length,1);
+ const group=response();await handler({...req({...body,message:{...body.message,chat:{id:-9,type:'group'}}},{'x-telegram-bot-api-secret-token':'webhook-fixture'}),query:{mode:'webhook'}},group);assert.equal(group.statusCode,200);assert.equal(calls.filter(c=>c.p==='rpc/krug_telegram_update').length,1);
 });
 test('empty cron secret and legacy Mini App key cannot process queue',async()=>{
  delete process.env.TELEGRAM_CRON_SECRET;const {handler,calls}=load('telegram/process.js');
@@ -50,6 +50,11 @@ test('CRM session is forwarded and role/session errors stay explicit',async()=>{
  const {handler,calls}=load('telegram/admin.js');const res=response();await handler(req({action:'testSend',client_id:'fixture'}),res);
  assert.equal(calls[0].b.p_session,session);assert.equal(calls[0].b.p_action,'testSend');
  const legacy=response();await handler(req({}, {authorization:'Bearer krug_old'}),legacy);assert.equal(legacy.statusCode,401);
+});
+test('scheduled campaign cancellation uses its role-scoped RPC',async()=>{
+ const campaign='22222222-2222-4222-8222-222222222222';const {handler,calls}=load('telegram/admin.js');const res=response();
+ await handler(req({action:'cancelCampaign',id:campaign}),res);assert.equal(res.statusCode,200);
+ assert.equal(calls[0].p,'rpc/krug_telegram_cancel_campaign');assert.deepEqual(calls[0].b,{p_session:session,p_id:campaign});
 });
 test('preview validates safe placeholders, and preferences require real Telegram initData even in test mode',async()=>{
  process.env.TELEGRAM_BOT_TOKEN='fixture-bot';delete process.env.TELEGRAM_AUTH_REQUIRED;
@@ -67,11 +72,11 @@ test('worker sends rendered Mini App buttons, rechecks eligibility, and records 
  try{
   global.fetch=async(url,o)=>{sends.push(JSON.parse(o.body));return {ok:true,json:async()=>({ok:true,result:{message_id:7}})};};
   const {calls}=load('_lib/telegram.js',async(p)=>{
-   if(p.startsWith('telegram_templates'))return [{kind:'welcome',title:'КРУГ',body:'Привет, {client_name}',button_text:'Открыть',button_target:'miniapp'}];
-   if(p.endsWith('krug_telegram_claim')){if(claimed)return [];claimed=true;return [{id:session,lease_token:session,telegram_user_id:99,kind:'welcome',context:{client_name:'Анна'}}];}
+   if(p.startsWith('telegram_templates'))return [{kind:'welcome',title:'<b>КРУГ</b>',body:'Привет, {client_name}',button_text:'Открыть',button_target:'miniapp'}];
+   if(p.endsWith('krug_telegram_claim_one')){if(claimed)return null;claimed=true;return {id:session,lease_token:session,telegram_user_id:99,kind:'welcome',context:{client_name:'Анна'}};}
    return true;
   });
-  const result=await require(lib).processDueNotifications();assert.equal(result.sent,1);assert.equal(sends.length,1);assert.equal(sends[0].text,'КРУГ\n\nПривет, Анна');assert.ok(sends[0].reply_markup.inline_keyboard[0][0].web_app.url.startsWith('https://'));
+  const result=await require(lib).processDueNotifications();assert.equal(result.sent,1);assert.equal(sends.length,1);assert.equal(sends[0].text,'<b>КРУГ</b>\n\nПривет, Анна');assert.equal(sends[0].parse_mode,'HTML');assert.ok(sends[0].reply_markup.inline_keyboard[0][0].web_app.url.startsWith('https://'));
   assert.ok(calls.find(c=>c.p.endsWith('delivery_check')));assert.equal(calls.find(c=>c.p.endsWith('finish')).b.p_message_id,7);
  }finally{global.fetch=original;}
 });
@@ -83,7 +88,7 @@ test('worker respects 429 retry_after, marks blocks, redacts descriptions, and n
    global.fetch=async()=>{if(!status)throw Error('https://secret-token/private');return {ok:false,status,json:async()=>({ok:false,error_code:status,description:'private-token',parameters:{retry_after:125}})};};
    const {calls}=load('_lib/telegram.js',async(p)=>{
     if(p.startsWith('telegram_templates'))return [{kind:'test',body:'Тест',button_target:'none'}];
-    if(p.endsWith('claim')){if(claimed)return [];claimed=true;return [{id:session,lease_token:session,kind:'test',context:{},telegram_user_id:99}];}return true;
+    if(p.endsWith('claim_one')){if(claimed)return null;claimed=true;return {id:session,lease_token:session,kind:'test',context:{},telegram_user_id:99};}return true;
    });
    await require(lib).processDueNotifications();const finish=calls.find(c=>c.p.endsWith('finish')).b;
    assert.equal(finish.p_result,result);assert.equal(finish.p_code,code);assert.ok(!JSON.stringify(calls).includes('private-token'));if(status===429)assert.equal(finish.p_retry_after,125);
@@ -96,7 +101,7 @@ test('lost database acknowledgement cannot cause a second send or requeue',async
   global.fetch=async()=>{sends++;return {ok:true,json:async()=>({ok:true,result:{message_id:8}})};};
   load('_lib/telegram.js',async(p)=>{
    if(p.startsWith('telegram_templates'))return [{kind:'test',body:'Тест',button_target:'none'}];
-   if(p.endsWith('claim'))return [{id:session,lease_token:session,kind:'test',context:{},telegram_user_id:99}];
+   if(p.endsWith('claim_one'))return {id:session,lease_token:session,kind:'test',context:{},telegram_user_id:99};
    if(p.endsWith('finish')){finishes++;throw Error('database unavailable');}return true;
   });
   await assert.rejects(require(lib).processDueNotifications(),/database unavailable/);assert.equal(sends,1);assert.equal(finishes,1);

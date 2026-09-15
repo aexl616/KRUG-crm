@@ -70,6 +70,7 @@
     const state = readLocalState();
     return (Array.isArray(state.clients) ? state.clients : [])
       .filter(client => client && client.id && String(client.name || '').trim())
+      .filter(client => client.source !== 'miniapp' && !client.miniAppClientId && !String(client.id).startsWith('miniapp-client-'))
       .slice(0, 1000)
       .map(client => ({
         id: String(client.id),

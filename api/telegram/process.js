@@ -1,5 +1,5 @@
 'use strict';
-const {rpc,safeEqual,requireSecret,processDueNotifications,health}=require('../_lib/telegram');
+const {rpc,safeEqual,requireSecret,processDueNotifications,processDueNotificationsQuietly,health}=require('../_lib/telegram');
 const {apiError,readJsonBody}=require('../_lib/http');
 module.exports=async function(req,res){
   res.setHeader('Cache-Control','no-store');
@@ -22,7 +22,9 @@ module.exports=async function(req,res){
       if(!member&&!accepted.includes(command))return res.status(200).json({ok:true});
       const blocked=member?member.new_chat_member?.status==='kicked':null;
       await rpc('krug_telegram_update',{p_update_id:body.update_id,p_user_id:userId,p_name:user?.first_name||'Гость',p_username:user?.username||null,p_command:command,p_blocked:blocked});
-      return res.status(200).json({ok:true});
+      const response=res.status(200).json({ok:true});
+      await processDueNotificationsQuietly(1);
+      return response;
     }
     const bearer=String(req.headers.authorization||'').replace(/^Bearer\s+/i,'');
     if(!safeEqual(bearer,process.env.TELEGRAM_CRON_SECRET))return apiError(res,401,'CRON_UNAUTHORIZED');
