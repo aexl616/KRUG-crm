@@ -27,16 +27,27 @@ test('deployment setup requires cron authentication, uses configured webhook onl
 });
 test('webhook authenticates independently of cron and CRM; signed updates bind private chat identity',async()=>{
  process.env.TELEGRAM_WEBHOOK_SECRET='webhook-fixture';process.env.TELEGRAM_CRON_SECRET='cron-fixture';
- const {handler,calls}=load('telegram/process.js');
- const body={update_id:1,message:{chat:{id:99,type:'private'},from:{id:99,first_name:'Анна'},text:'/start payload'}};
- for(const headers of [{},{authorization:'Bearer cron-fixture'},{'x-telegram-bot-api-secret-token':'wrong'}]){
-  const res=response();await handler({...req(body,headers),query:{mode:'webhook'}},res);assert.equal(res.statusCode,401);
- }
- assert.equal(calls.length,0);
- const res=response();await handler({...req(body,{'x-telegram-bot-api-secret-token':'webhook-fixture'}),query:{mode:'webhook'}},res);
- assert.equal(res.statusCode,200);assert.equal(calls[0].p,'rpc/krug_telegram_update');assert.equal(calls[0].b.p_user_id,99);assert.equal(calls[0].b.p_command,'/start');
- const mismatch=response();await handler({...req({...body,message:{...body.message,from:{id:100}}},{'x-telegram-bot-api-secret-token':'webhook-fixture'}),query:{mode:'webhook'}},mismatch);assert.equal(mismatch.statusCode,400);
- const group=response();await handler({...req({...body,message:{...body.message,chat:{id:-9,type:'group'}}},{'x-telegram-bot-api-secret-token':'webhook-fixture'}),query:{mode:'webhook'}},group);assert.equal(group.statusCode,200);assert.equal(calls.filter(c=>c.p==='rpc/krug_telegram_update').length,1);
+ const original=global.fetch,botCalls=[];
+ try{
+  global.fetch=async(url,options)=>{botCalls.push({url,body:JSON.parse(options.body)});return {ok:true,json:async()=>({ok:true,result:{message_id:9}})};};
+  const {handler,calls}=load('telegram/process.js',async p=>p.startsWith('telegram_templates')?[]:p.endsWith('claim_one')?null:p.endsWith('telegram_update')?{accepted:true}:{});
+  const body={update_id:1,message:{chat:{id:99,type:'private'},from:{id:99,first_name:'Анна'},text:'/start payload'}};
+  for(const headers of [{},{authorization:'Bearer cron-fixture'},{'x-telegram-bot-api-secret-token':'wrong'}]){
+   const res=response();await handler({...req(body,headers),query:{mode:'webhook'}},res);assert.equal(res.statusCode,401);
+  }
+  assert.equal(calls.length,0);
+  const res=response();await handler({...req(body,{'x-telegram-bot-api-secret-token':'webhook-fixture'}),query:{mode:'webhook'}},res);
+  assert.equal(res.statusCode,200);assert.equal(calls[0].p,'rpc/krug_telegram_update');assert.equal(calls[0].b.p_user_id,99);assert.equal(calls[0].b.p_command,'/start');
+  const button=response();await handler({...req({...body,update_id:2,message:{...body.message,text:'Старт'}},{'x-telegram-bot-api-secret-token':'webhook-fixture'}),query:{mode:'webhook'}},button);
+  assert.equal(button.statusCode,200);assert.deepEqual(calls.filter(c=>c.p==='rpc/krug_telegram_update').map(c=>c.b.p_command),['/start','/start']);
+  const links=botCalls.find(call=>call.body.reply_markup?.inline_keyboard?.flat().some(item=>item.text==='Помощь'));
+  assert.equal(links.body.reply_markup.inline_keyboard[0][0].url,'https://telegra.ph/Voprosy-i-Otvety-09-15');assert.equal(links.body.reply_markup.inline_keyboard[0][1].url,'https://t.me/ae_xl');
+  const hide=response();await handler({...req({...body,update_id:3,message:{...body.message,text:'Скрыть меню'}},{'x-telegram-bot-api-secret-token':'webhook-fixture'}),query:{mode:'webhook'}},hide);
+  assert.equal(hide.statusCode,200);assert.deepEqual(calls.filter(c=>c.p==='rpc/krug_telegram_update').map(c=>c.b.p_command),['/start','/start','/hide_menu']);
+  assert.ok(botCalls.some(call=>call.body.reply_markup?.remove_keyboard===true));
+  const mismatch=response();await handler({...req({...body,message:{...body.message,from:{id:100}}},{'x-telegram-bot-api-secret-token':'webhook-fixture'}),query:{mode:'webhook'}},mismatch);assert.equal(mismatch.statusCode,400);
+  const group=response();await handler({...req({...body,message:{...body.message,chat:{id:-9,type:'group'}}},{'x-telegram-bot-api-secret-token':'webhook-fixture'}),query:{mode:'webhook'}},group);assert.equal(group.statusCode,200);assert.equal(calls.filter(c=>c.p==='rpc/krug_telegram_update').length,3);
+ }finally{global.fetch=original;}
 });
 test('empty cron secret and legacy Mini App key cannot process queue',async()=>{
  delete process.env.TELEGRAM_CRON_SECRET;const {handler,calls}=load('telegram/process.js');
@@ -78,6 +89,22 @@ test('worker sends rendered Mini App buttons, rechecks eligibility, and records 
   });
   const result=await require(lib).processDueNotifications();assert.equal(result.sent,1);assert.equal(sends.length,1);assert.equal(sends[0].text,'<b>КРУГ</b>\n\nПривет, Анна');assert.equal(sends[0].parse_mode,'HTML');assert.ok(sends[0].reply_markup.inline_keyboard[0][0].web_app.url.startsWith('https://'));
   assert.ok(calls.find(c=>c.p.endsWith('delivery_check')));assert.equal(calls.find(c=>c.p.endsWith('finish')).b.p_message_id,7);
+ }finally{global.fetch=original;}
+});
+test('command responses attach the persistent role-aware Reply Keyboard',async()=>{
+ process.env.TELEGRAM_BOT_TOKEN='fixture-secret';let claimed=false,send;
+ const original=global.fetch;
+ try{
+  global.fetch=async(url,o)=>{send=JSON.parse(o.body);return {ok:true,json:async()=>({ok:true,result:{message_id:10}})};};
+  load('_lib/telegram.js',async(p)=>{
+   if(p.startsWith('telegram_templates'))return [{kind:'settings',body:'Настройки',button_text:'Открыть',button_target:'miniapp'}];
+   if(p.endsWith('claim_one')){if(claimed)return null;claimed=true;return {id:session,lease_token:session,telegram_user_id:99,kind:'settings',context:{_command_menu:true,_menu_started:true,_menu_role:'user'}};}
+   if(p.endsWith('preferences'))return {marketing_enabled:false,reminders_enabled:true,reminder_30m_enabled:false};
+   return true;
+  });
+  await require(lib).processDueNotifications();const labels=send.reply_markup.keyboard.flat().map(button=>button.text);
+  assert.equal(send.reply_markup.is_persistent,true);assert.ok(labels.includes('Настройки'));assert.ok(labels.includes('Скрыть меню'));assert.ok(!labels.includes('Старт'));
+  assert.equal(send.reply_markup.inline_keyboard,undefined);
  }finally{global.fetch=original;}
 });
 test('worker respects 429 retry_after, marks blocks, redacts descriptions, and never retries unknown delivery automatically',async()=>{

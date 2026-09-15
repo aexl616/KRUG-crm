@@ -1,5 +1,6 @@
 'use strict';
-const {rpc,safeEqual,requireSecret,processDueNotifications,processDueNotificationsQuietly,health}=require('../_lib/telegram');
+const {rpc,safeEqual,requireSecret,processDueNotifications,processDueNotificationsQuietly,sendCommandLinks,hideCommandMenu,health}=require('../_lib/telegram');
+const {commandFromInput}=require('../_lib/telegram-commands');
 const {apiError,readJsonBody}=require('../_lib/http');
 module.exports=async function(req,res){
   res.setHeader('Cache-Control','no-store');
@@ -17,13 +18,17 @@ module.exports=async function(req,res){
       const user=msg?.from||member?.from;
       const userId=Number(chat.id);
       if(!Number.isSafeInteger(userId)||userId<=0||msg&&(Number(user?.id)!==userId||user.is_bot))return apiError(res,400,'INVALID_USER');
-      const command=String(msg?.text||'').trim().split(/\s/)[0].split('@')[0].toLowerCase();
-      const accepted=['/start','/settings','/marketing_on','/marketing_off','/reminders_on','/reminders_off','/30m_on','/30m_off'];
-      if(!member&&!accepted.includes(command))return res.status(200).json({ok:true});
+      const command=commandFromInput(msg?.text);
+      if(!member&&!command)return res.status(200).json({ok:true});
       const blocked=member?member.new_chat_member?.status==='kicked':null;
-      await rpc('krug_telegram_update',{p_update_id:body.update_id,p_user_id:userId,p_name:user?.first_name||'Гость',p_username:user?.username||null,p_command:command,p_blocked:blocked});
+      const update=await rpc('krug_telegram_update',{p_update_id:body.update_id,p_user_id:userId,p_name:user?.first_name||'Гость',p_username:user?.username||null,p_command:command,p_blocked:blocked});
       const response=res.status(200).json({ok:true});
+      if(update?.duplicate)return response;
+      if(command==='/hide_menu'){
+        await hideCommandMenu(userId).catch(()=>null);return response;
+      }
       await processDueNotificationsQuietly(1);
+      if(command==='/start')await sendCommandLinks(userId).catch(()=>null);
       return response;
     }
     const bearer=String(req.headers.authorization||'').replace(/^Bearer\s+/i,'');

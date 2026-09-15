@@ -2,6 +2,7 @@
 const crypto=require('node:crypto');
 const {supabaseServer,hasServerSecret}=require('./supabase-server');
 const content=require('../../telegram-content');
+const {commandReplyKeyboard,linksReplyKeyboard}=require('./telegram-commands');
 const rpc=(name,payload)=>supabaseServer(`rpc/${name}`,{method:'POST',body:JSON.stringify(payload),signal:AbortSignal.timeout(5000)});
 function safeEqual(a,b){const l=Buffer.from(String(a||'')),r=Buffer.from(String(b||''));return l.length>0&&l.length===r.length&&crypto.timingSafeEqual(l,r);}
 function requireSecret(){if(!hasServerSecret())throw Error('SUPABASE_SERVER_SECRET_REQUIRED');}
@@ -27,10 +28,13 @@ function miniappUrl(){
 async function sendMessage(row){
   const target=row.button_target||'miniapp';
   const button=target==='miniapp'?{web_app:{url:miniappUrl()}}:{url:row.button_url};
+  const replyMarkup=row.reply_markup||(row.button_text&&target!=='none'?{inline_keyboard:[[{text:row.button_text,...button}]]}:null);
   return botCall('sendMessage',{chat_id:row.telegram_user_id,text:row.text,disable_web_page_preview:true,
     ...(row.parse_mode?{parse_mode:row.parse_mode}:{}),
-    ...(row.button_text&&target!=='none'?{reply_markup:{inline_keyboard:[[{text:row.button_text,...button}]]}}:{})});
+    ...(replyMarkup?{reply_markup:replyMarkup}:{})});
 }
+async function sendCommandLinks(userId){return botCall('sendMessage',{chat_id:userId,text:'Полезные ссылки КРУГ',disable_web_page_preview:true,reply_markup:linksReplyKeyboard()});}
+async function hideCommandMenu(userId){return botCall('sendMessage',{chat_id:userId,text:'Меню скрыто. Slash-команды продолжают работать.',reply_markup:{remove_keyboard:true}});}
 async function health(){
   const configured=Boolean(process.env.TELEGRAM_BOT_TOKEN);
   if(!configured)return {configured:false,connected:false};
@@ -58,6 +62,7 @@ async function processDueNotifications(limit=10){
         const template=map.get(row.kind);
         payload=template?content.render(template,row.context):{text:row.text,button_text:row.button_text,button_target:row.button_target,button_url:row.button_url};
         if(!payload.text)throw Error('TEMPLATE_INVALID');
+        if(row.context?._command_menu)payload.reply_markup=commandReplyKeyboard({started:Boolean(row.context._menu_started),role:String(row.context._menu_role||'user')});
         if(row.kind==='settings'){
           const p=await staged('load_preferences',()=>rpc('krug_telegram_preferences',{p_telegram_user_id:row.telegram_user_id}));
           payload.text+=`\n\nНовости: ${p.marketing_enabled?'вкл':'выкл'}. Напоминания: ${p.reminders_enabled?'вкл':'выкл'}. За 30 мин: ${p.reminder_30m_enabled?'вкл':'выкл'}.`;
@@ -91,4 +96,4 @@ async function processDueNotificationsQuietly(limit=1){
     return null;
   }
 }
-module.exports={rpc,safeEqual,requireSecret,botCall,health,sendMessage,processDueNotifications,processDueNotificationsQuietly};
+module.exports={rpc,safeEqual,requireSecret,botCall,health,sendMessage,sendCommandLinks,hideCommandMenu,processDueNotifications,processDueNotificationsQuietly};
